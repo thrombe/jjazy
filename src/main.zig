@@ -136,7 +136,6 @@ const Model = struct {
     /// This function will be called from the vxfw runtime.
     fn handleEvent(ptr: *anyopaque, ctx: *vxfw.EventContext, event: vxfw.Event) !void {
         const self: *Model = @ptrCast(@alignCast(ptr));
-        _ = self;
         switch (event) {
             // The root widget is always sent an init event as the first event. Users of the
             // library can also send this event to other widgets they create if they need to do
@@ -147,6 +146,15 @@ const Model = struct {
                     ctx.quit = true;
                     return;
                 }
+                if (key.matches('l', .{ .ctrl = true })) {
+                    self.separator += 0.1;
+                    self.separator = @min(self.separator, 1.0);
+                }
+                if (key.matches('h', .{ .ctrl = true })) {
+                    self.separator -= 0.1;
+                    self.separator = @max(self.separator, 0.0);
+                }
+                try ctx.queueRefresh();
             },
             // We can request a specific widget gets focus. In this case, we always want to focus
             // our button. Having focus means that key events will be sent up the widget tree to

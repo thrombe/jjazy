@@ -31,7 +31,77 @@ pub inline fn cast(typ: type, val: anytype) typ {
     @compileError("can't cast from '" ++ @typeName(@TypeOf(val)) ++ "' to '" ++ @typeName(typ) ++ "'");
 }
 
+fn jjcall(args: []const []const u8, alloc: std.mem.Allocator) ![]u8 {
+    var child = std.process.Child.init(args.items, alloc);
+    child.stdin_behavior = .Pipe;
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+
+    try child.spawn();
+
+    const stdin = child.stdin orelse return error.NoStdin;
+    child.stdin = null;
+    const stdout = child.stdout orelse return error.NoStdout;
+    child.stdout = null;
+    const stderr = child.stderr orelse return error.NoStderr;
+    child.stderr = null;
+    defer stdout.close();
+    defer stderr.close();
+    stdin.close();
+
+    // similar to child.collectOutput
+    const max_output_bytes = 1000 * 1000;
+    var poller = std.io.poll(alloc, enum { stdout, stderr }, .{
+        .stdout = stdout,
+        .stderr = stderr,
+    });
+    defer poller.deinit();
+
+    while (try poller.poll()) {
+        if (poller.fifo(.stdout).count > max_output_bytes)
+            return error.StdoutStreamTooLong;
+        if (poller.fifo(.stderr).count > max_output_bytes)
+            return error.StderrStreamTooLong;
+    }
+
+    const err = try child.wait();
+    blk: {
+        var err_buf = std.ArrayList(u8).init(alloc);
+        defer err_buf.deinit();
+
+        switch (err) {
+            .Exited => |e| {
+                if (e != 0) {
+                    _ = try err_buf.writer().print("exited with code: {}\n", .{e});
+                } else {
+                    err_buf.deinit();
+                    break :blk;
+                }
+            },
+            // .Signal => |code| {},
+            // .Stopped => |code| {},
+            // .Unknown => |code| {},
+            else => |e| {
+                try err_buf.writer().print("exited with code: {}\n", .{e});
+            },
+        }
+
+        const fifo = poller.fifo(.stderr);
+        try err_buf.appendSlice(fifo.buf[fifo.head..][0..fifo.count]);
+
+        std.debug.print("{s}\n", .{err_buf.items});
+        return error.SomeErrorIdk;
+    }
+
+    const fifo = poller.fifo(.stdout);
+    var out = std.ArrayList(u8).init(alloc);
+    try out.appendSlice(fifo.buf[fifo.head..][0..fifo.count]);
+    return try out.toOwnedSlice();
+}
+
 const Status = struct {
+    buf: []u8,
+
     fn draw(ptr: *anyopaque, ctx: vxfw.DrawContext) std.mem.Allocator.Error!vxfw.Surface {
         const self: *@This() = @ptrCast(@alignCast(ptr));
         const max_size = ctx.max.size();
@@ -40,8 +110,7 @@ const Status = struct {
         errdefer children.deinit();
         try children.ensureTotalCapacity(20);
 
-        const count_text = try std.fmt.allocPrint(ctx.arena, "lol. lmao even", .{});
-        const text: vxfw.Text = .{ .text = count_text };
+        const text: vxfw.Text = .{ .text = self.buf, .softwrap = false, .overflow = .clip };
 
         const border = try ctx.arena.create(vxfw.Border);
         border.* = vxfw.Border{
@@ -67,7 +136,10 @@ const Status = struct {
         };
     }
 };
+
 const Diff = struct {
+    buf: []u8,
+
     fn draw(ptr: *anyopaque, ctx: vxfw.DrawContext) std.mem.Allocator.Error!vxfw.Surface {
         const self: *@This() = @ptrCast(@alignCast(ptr));
         const max_size = ctx.max.size();
@@ -76,8 +148,7 @@ const Diff = struct {
         errdefer children.deinit();
         try children.ensureTotalCapacity(20);
 
-        const count_text = try std.fmt.allocPrint(ctx.arena, "lol. lmao even", .{});
-        const text: vxfw.Text = .{ .text = count_text };
+        const text: vxfw.Text = .{ .text = self.buf, .softwrap = false, .overflow = .clip };
 
         const border = try ctx.arena.create(vxfw.Border);
         border.* = vxfw.Border{
@@ -94,10 +165,7 @@ const Diff = struct {
 
         return .{
             .size = max_size,
-            .widget = .{
-                .userdata = self,
-                .drawFn = @This().draw,
-            },
+            .widget = border.widget(),
             .buffer = &.{},
             .children = try children.toOwnedSlice(),
         };
@@ -106,8 +174,8 @@ const Diff = struct {
 
 /// Our main application state
 const Model = struct {
-    status: Status = .{},
-    diff: Diff = .{},
+    status: Status,
+    diff: Diff,
     separator: f32 = 0.5,
 
     fn init(alloc: std.mem.Allocator) !*@This() {
@@ -115,12 +183,20 @@ const Model = struct {
         const model = try alloc.create(Model);
         errdefer alloc.destroy(model);
 
-        model.* = @This(){};
+        const status = try jjcall(alloc);
+        errdefer alloc.free(status);
+
+        const diff = try jjcall(alloc);
+        errdefer alloc.free(diff);
+
+        model.* = @This(){ .status = .{ .buf = status }, .diff = .{ .buf = diff } };
 
         return model;
     }
 
     fn deinit(self: *@This(), alloc: std.mem.Allocator) void {
+        alloc.free(self.status.buf);
+        alloc.free(self.diff.buf);
         alloc.destroy(self);
     }
 

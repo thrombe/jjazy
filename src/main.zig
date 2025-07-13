@@ -9,6 +9,33 @@ const Model = struct {
     /// The button. This widget is stateful and must live between frames
     button: vxfw.Button,
 
+    fn init(alloc: std.mem.Allocator) !*@This() {
+        // for a stable pointer
+        const model = try alloc.create(Model);
+        errdefer alloc.destroy(model);
+
+        model.* = @This(){
+            .count = 0,
+            .button = vxfw.Button{
+                .label = "Click me!",
+                .onClick = Model.onClick,
+                .userdata = model,
+                .style = .{
+                    .hover = .{},
+                    .default = .{},
+                    .mouse_down = .{},
+                    .focus = .{},
+                },
+            },
+        };
+
+        return model;
+    }
+
+    fn deinit(self: *@This(), alloc: std.mem.Allocator) void {
+        alloc.destroy(self);
+    }
+
     /// Helper function to return a vxfw.Widget struct
     pub fn widget(self: *Model) vxfw.Widget {
         return .{
@@ -27,7 +54,7 @@ const Model = struct {
             // some initialization.
             .init => return ctx.requestFocus(self.button.widget()),
             .key_press => |key| {
-                if (key.matches('c', .{ .ctrl = true })) {
+                if (key.matches('c', .{ .ctrl = true }) or key.matches('q', .{})) {
                     ctx.quit = true;
                     return;
                 }
@@ -62,6 +89,8 @@ const Model = struct {
         const count_text = try std.fmt.allocPrint(ctx.arena, "{d}", .{self.count});
         const text: vxfw.Text = .{ .text = count_text };
 
+        const children = try ctx.arena.alloc(vxfw.SubSurface, 3);
+
         // Each widget returns a Surface from its draw function. A Surface contains the rectangular
         // area of the widget, as well as some information about the surface or widget: can we focus
         // it? does it handle the mouse?
@@ -71,12 +100,12 @@ const Model = struct {
         // has two SubSurfaces: one for the text and one for the button. A SubSurface is a Surface
         // with an offset and a z-index - the offset can be negative. This lets a parent draw a
         // child and place it within itself
-        const text_child: vxfw.SubSurface = .{
+        children[0] = .{
             .origin = .{ .row = 0, .col = 0 },
             .surface = try text.draw(ctx),
         };
 
-        const button_child: vxfw.SubSurface = .{
+        children[1] = .{
             .origin = .{ .row = 2, .col = 0 },
             .surface = try self.button.draw(ctx.withConstraints(
                 ctx.min,
@@ -86,11 +115,15 @@ const Model = struct {
             )),
         };
 
-        // We also can use our arena to allocate the slice for our SubSurfaces. This slice only
-        // needs to live until the next frame, making this safe.
-        const children = try ctx.arena.alloc(vxfw.SubSurface, 2);
-        children[0] = text_child;
-        children[1] = button_child;
+        const border = try ctx.arena.create(vxfw.Border);
+        border.* = vxfw.Border{
+            .child = self.button.widget(),
+            .style = .{ .fg = .{ .index = 3 }, .bg = .default },
+        };
+        children[2] = .{
+            .origin = .{ .row = 10, .col = 10 },
+            .surface = try border.draw(ctx.withConstraints(.{}, .{ .width = max_size.width - 10, .height = max_size.height - 10 })),
+        };
 
         return .{
             // A Surface must have a size. Our root widget is the size of the screen
@@ -123,20 +156,8 @@ pub fn main() !void {
     var app = try vxfw.App.init(allocator);
     defer app.deinit();
 
-    // We heap allocate our model because we will require a stable pointer to it in our Button
-    // widget
-    const model = try allocator.create(Model);
-    defer allocator.destroy(model);
-
-    // Set the initial state of our button
-    model.* = .{
-        .count = 0,
-        .button = .{
-            .label = "Click me!",
-            .onClick = Model.onClick,
-            .userdata = model,
-        },
-    };
+    const model = try Model.init(allocator);
+    defer model.deinit(allocator);
 
     try app.run(model.widget(), .{});
 }

@@ -32,7 +32,7 @@ pub inline fn cast(typ: type, val: anytype) typ {
 }
 
 fn jjcall(args: []const []const u8, alloc: std.mem.Allocator) ![]u8 {
-    var child = std.process.Child.init(args.items, alloc);
+    var child = std.process.Child.init(args, alloc);
     child.stdin_behavior = .Pipe;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
@@ -183,10 +183,10 @@ const Model = struct {
         const model = try alloc.create(Model);
         errdefer alloc.destroy(model);
 
-        const status = try jjcall(alloc);
+        const status = try jjcall(&[_][]const u8{"jj"}, alloc);
         errdefer alloc.free(status);
 
-        const diff = try jjcall(alloc);
+        const diff = try jjcall(&[_][]const u8{ "jj", "-h" }, alloc);
         errdefer alloc.free(diff);
 
         model.* = @This(){ .status = .{ .buf = status }, .diff = .{ .buf = diff } };

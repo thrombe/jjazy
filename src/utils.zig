@@ -29,7 +29,7 @@ pub inline fn cast(typ: type, val: anytype) typ {
     @compileError("can't cast from '" ++ @typeName(@TypeOf(val)) ++ "' to '" ++ @typeName(typ) ++ "'");
 }
 
-fn jjcall(args: []const []const u8, alloc: std.mem.Allocator) ![]u8 {
+pub fn jjcall(args: []const []const u8, alloc: std.mem.Allocator) ![]u8 {
     var child = std.process.Child.init(args, alloc);
     child.stdin_behavior = .Pipe;
     child.stdout_behavior = .Pipe;
@@ -96,3 +96,35 @@ fn jjcall(args: []const []const u8, alloc: std.mem.Allocator) ![]u8 {
     try out.appendSlice(fifo.buf[fifo.head..][0..fifo.count]);
     return try out.toOwnedSlice();
 }
+
+pub const LineIterator = struct {
+    buf: []const u8,
+    index: usize = 0,
+
+    pub fn next(self: *LineIterator) ?[]const u8 {
+        if (self.index >= self.buf.len) return null;
+
+        const start = self.index;
+        const end = std.mem.indexOfAnyPos(u8, self.buf, self.index, "\r\n") orelse {
+            self.index = self.buf.len;
+            return self.buf[start..];
+        };
+
+        self.index = end;
+        self.consume_nl();
+        self.consume_cr();
+        return self.buf[start..end];
+    }
+
+    // consumes \n
+    fn consume_nl(self: *LineIterator) void {
+        if (self.index >= self.buf.len) return;
+        if (self.buf[self.index] == '\n') self.index += 1;
+    }
+
+    // consumes \r
+    fn consume_cr(self: *LineIterator) void {
+        if (self.index >= self.buf.len) return;
+        if (self.buf[self.index] == '\r') self.index += 1;
+    }
+};

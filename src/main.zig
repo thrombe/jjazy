@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const utils_mod = @import("utils.zig");
+
 const ansi = struct {
     const clear = "\x1B[2J";
     const attr_reset = "\x1B[0m";
@@ -67,7 +69,7 @@ const Term = struct {
     }
 
     fn cursor_move(self: *@This(), v: struct { y: u16 = 0, x: u16 = 0 }) !void {
-        try self.tty.writer().print(ansi.cursor.move, .{ v.y, v.x });
+        try self.tty.writer().print(ansi.cursor.move, .{ v.y + 1, v.x + 1 });
     }
 
     fn enter_raw_mode(self: *@This()) !void {
@@ -149,6 +151,7 @@ pub fn main() !void {
     var term = try Term.init();
     defer term.deinit();
 
+    const jj_output = try utils_mod.jjcall(&[_][]const u8{ "jj", "--color", "always", "st" }, temp);
     var inputs = std.ArrayList([]const u8).init(temp);
     defer {
         for (inputs.items) |line| {
@@ -178,6 +181,16 @@ pub fn main() !void {
 
     var buf = std.mem.zeroes([1]u8);
     while (true) {
+        { // render
+            var it = utils_mod.LineIterator{ .buf = jj_output };
+            var i: u16 = 0;
+            while (it.next()) |line| {
+                try term.cursor_move(.{ .y = i });
+                try term.tty.writeAll(line);
+                i += 1;
+            }
+        }
+
         const len = try term.tty.read(&buf);
         try inputs.append(try temp.dupe(u8, buf[0..len]));
 
@@ -203,26 +216,3 @@ pub fn main() !void {
         }
     }
 }
-
-// fn render() !void {
-//     const writer = tty.writer();
-//     try writeLine(writer, "foo", 0, size.width, i == 0);
-//     try writeLine(writer, "bar", 1, size.width, i == 1);
-//     try writeLine(writer, "baz", 2, size.width, i == 2);
-//     try writeLine(writer, "xyzzy", 3, size.width, i == 3);
-// }
-
-// fn writeLine(writer: anytype, txt: []const u8, y: usize, width: usize, selected: bool) !void {
-//     if (selected) {
-//         try blueBackground(writer);
-//     } else {
-//         try attributeReset(writer);
-//     }
-//     try moveCursor(writer, y, 0);
-//     try writer.writeAll(txt);
-//     try writer.writeByteNTimes(' ', width - txt.len);
-// }
-
-// fn blueBackground(writer: anytype) !void {
-//     try writer.writeAll("\x1B[44m");
-// }

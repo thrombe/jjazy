@@ -78,9 +78,15 @@ const Term = struct {
     }
 
     fn flush_writes(self: *@This()) !void {
-        try self.tty.writeAll(ansi.sync_set);
-        try self.tty.writer().writeAll(self.cmdbuf.items);
-        try self.tty.writeAll(ansi.sync_reset);
+        // cmdbuf's last command is sync reset
+        try self.writer().writeAll(ansi.sync_reset);
+
+        // flush and clear cmdbuf
+        try self.tty.writeAll(self.cmdbuf.items);
+        self.cmdbuf.clearRetainingCapacity();
+
+        // cmdbuf's first command is sync start
+        try self.writer().writeAll(ansi.sync_set);
     }
 
     fn update_size(self: *@This()) !void {

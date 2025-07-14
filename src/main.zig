@@ -25,10 +25,15 @@ const ansi = struct {
     };
 };
 
+const Vec2 = struct {
+    x: u16 = 0,
+    y: u16 = 0,
+};
+
 const Term = struct {
     tty: std.fs.File,
 
-    size: Size = undefined,
+    size: Vec2 = .{},
     cooked_termios: ?std.posix.termios = null,
     raw: ?std.posix.termios = null,
 
@@ -36,8 +41,6 @@ const Term = struct {
 
     alloc: std.mem.Allocator,
     cmdbuf: std.ArrayList(u8),
-
-    const Size = struct { width: usize, height: usize };
 
     fn init(alloc: std.mem.Allocator) !@This() {
         const tty = try std.fs.cwd().openFile("/dev/tty", .{ .mode = .read_write });
@@ -95,8 +98,7 @@ const Term = struct {
         if (std.posix.errno(err) != .SUCCESS) {
             return std.posix.unexpectedErrno(@as(std.posix.E, @enumFromInt(err)));
         }
-        const size = Size{ .height = win_size.row, .width = win_size.col };
-        self.size = size;
+        self.size = .{ .y = win_size.row, .x = win_size.col };
     }
 
     fn cursor_move(self: *@This(), v: struct { y: u16 = 0, x: u16 = 0 }) !void {
@@ -223,12 +225,12 @@ pub fn main() !void {
         }
         { // clear new window size
             const offset = .{ .x = 30, .y = 1 };
-            for (offset.y..term.size.height) |y| {
+            for (offset.y..term.size.y) |y| {
                 try term.cursor_move(.{ .y = cast(u16, y) + offset.y, .x = offset.x });
-                // for (offset.x..term.size.width) |_| {
+                // for (offset.x..term.size.x) |_| {
                 //     try term.writer().writeAll(" ");
                 // }
-                try term.writer().writeByteNTimes(' ', term.size.width - offset.x);
+                try term.writer().writeByteNTimes(' ', term.size.x - offset.x);
             }
 
             { // render again, but offset it on x and y

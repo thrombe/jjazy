@@ -6,6 +6,8 @@ const cast = utils_mod.cast;
 const ansi = struct {
     const clear = "\x1B[2J";
     const attr_reset = "\x1B[0m";
+    const sync_set = "\x1B[?2026h";
+    const sync_reset = "\x1B[?2026l";
     const cursor = struct {
         const hide = "\x1B[?25l";
         const show = "\x1B[?25h";
@@ -76,7 +78,9 @@ const Term = struct {
     }
 
     fn flush_writes(self: *@This()) !void {
+        try self.tty.writeAll(ansi.sync_set);
         try self.tty.writer().writeAll(self.cmdbuf.items);
+        try self.tty.writeAll(ansi.sync_reset);
     }
 
     fn update_size(self: *@This()) !void {
@@ -200,7 +204,6 @@ pub fn main() !void {
     try term.uncook();
     defer term.cook_restore() catch |e| utils_mod.dump_error(e);
 
-    var buf = std.mem.zeroes([1]u8);
     while (true) {
         try term.update_size();
         { // render
@@ -237,6 +240,7 @@ pub fn main() !void {
         }
         try term.flush_writes();
 
+        var buf = std.mem.zeroes([1]u8);
         const len = try term.tty.read(&buf);
         try inputs.append(try temp.dupe(u8, buf[0..len]));
 

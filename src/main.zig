@@ -92,6 +92,37 @@ const Term = struct {
         try self.writer().writeAll(ansi.sync_set ++ ansi.clear);
     }
 
+    fn clear_region(self: *@This(), offset: Vec2, size: Vec2) !void {
+        for (offset.y..offset.y + size.y) |y| {
+            try self.cursor_move(.{ .y = cast(u16, y), .x = offset.x });
+            try self.writer().writeByteNTimes(' ', size.x);
+        }
+    }
+
+    fn draw_buf(self: *@This(), buf: []const u8, offset: Vec2, size: Vec2) !void {
+        var line_it = utils_mod.LineIterator{ .buf = buf };
+        for (offset.y..offset.y + size.y) |y| {
+            const line = line_it.next() orelse break;
+            try self.cursor_move(.{ .y = cast(u16, y), .x = offset.x });
+
+            var x: u16 = 0;
+            for (line) |char| {
+                // execute all control chars
+                // but don't print beyond the size
+                if (char == '\x1B' or (char & '\x1F' >= 'a' and char & '\x1F' <= 'w') or char == '\n' or char == '\r') {
+                    try self.writer().print("{c}", .{char});
+                } else if (x < size.x) {
+                    try self.writer().print("{c}", .{char});
+                    x += 1;
+                }
+            }
+            // for (offset.x..offset.x + @min(line.len, size.x)) |x| {
+            //     const char = line[x - offset.x];
+            //     try self.writer().print("{c}", .{char});
+            // }
+        }
+    }
+
     fn update_size(self: *@This()) !void {
         var win_size = std.mem.zeroes(std.posix.winsize);
         const err = std.os.linux.ioctl(self.tty.handle, std.posix.T.IOCGWINSZ, @intFromPtr(&win_size));
@@ -184,7 +215,7 @@ pub fn main() !void {
     var term = try Term.init(alloc);
     defer term.deinit();
 
-    const jj_output = try utils_mod.jjcall(&[_][]const u8{ "jj", "--color", "always" }, temp);
+    const jj_output = try utils_mod.jjcall(&[_][]const u8{"jj"}, temp);
     var inputs = std.ArrayList([]const u8).init(temp);
     defer {
         for (inputs.items) |line| {
@@ -214,38 +245,46 @@ pub fn main() !void {
 
     while (true) {
         try term.update_size();
-        { // render
-            var it = utils_mod.LineIterator{ .buf = jj_output };
-            var i: u16 = 0;
-            while (it.next()) |line| {
-                try term.cursor_move(.{ .y = i });
-                try term.writer().writeAll(line);
-                i += 1;
-            }
-        }
-        { // clear new window size
-            const offset = .{ .x = 30, .y = 1 };
-            for (offset.y..term.size.y) |y| {
-                try term.cursor_move(.{ .y = cast(u16, y) + offset.y, .x = offset.x });
-                // for (offset.x..term.size.x) |_| {
-                //     try term.writer().writeAll(" ");
-                // }
-                try term.writer().writeByteNTimes(' ', term.size.x - offset.x);
-            }
+        // { // render
+        //     var it = utils_mod.LineIterator{ .buf = jj_output };
+        //     var i: u16 = 0;
+        //     while (it.next()) |line| {
+        //         try term.cursor_move(.{ .y = i });
+        //         try term.writer().writeAll(line);
+        //         i += 1;
+        //     }
+        // }
+        // { // clear new window size
+        //     const offset = .{ .x = 30, .y = 1 };
+        //     for (offset.y..term.size.y) |y| {
+        //         try term.cursor_move(.{ .y = cast(u16, y) + offset.y, .x = offset.x });
+        //         // for (offset.x..term.size.x) |_| {
+        //         //     try term.writer().writeAll(" ");
+        //         // }
+        //         try term.writer().writeByteNTimes(' ', term.size.x - offset.x);
+        //     }
 
-            { // render again, but offset it on x and y
-                var it = utils_mod.LineIterator{ .buf = jj_output };
-                var i: u16 = 0;
-                while (it.next()) |line| {
-                    try term.cursor_move(.{ .y = i + offset.y, .x = offset.x });
-                    // for (line) |char| {
-                    //     try term.writer().print("{c}", .{char});
-                    // }
-                    try term.writer().writeAll(line);
-                    i += 1;
-                }
-            }
-        }
+        //     { // render again, but offset it on x and y
+        //         var it = utils_mod.LineIterator{ .buf = jj_output };
+        //         var i: u16 = 0;
+        //         while (it.next()) |line| {
+        //             try term.cursor_move(.{ .y = i + offset.y, .x = offset.x });
+        //             // for (line) |char| {
+        //             //     try term.writer().print("{c}", .{char});
+        //             // }
+        //             try term.writer().writeAll(line);
+        //             i += 1;
+        //         }
+        //     }
+        // }
+        try term.clear_region(.{}, term.size);
+        try term.draw_buf(jj_output, .{}, term.size);
+
+        const offset = Vec2{ .x = 30, .y = 3 };
+        const size = Vec2{ .x = 60, .y = 20 };
+        try term.clear_region(.{ .x = offset.x - 1, .y = offset.y - 1 }, .{ .x = size.x + 2, .y = size.y + 2 });
+        try term.draw_buf(jj_output, offset, size);
+
         try term.flush_writes();
 
         var buf = std.mem.zeroes([1]u8);

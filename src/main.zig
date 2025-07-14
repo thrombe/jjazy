@@ -89,7 +89,7 @@ const Term = struct {
         self.cmdbuf.clearRetainingCapacity();
 
         // cmdbuf's first command is sync start
-        try self.writer().writeAll(ansi.sync_set);
+        try self.writer().writeAll(ansi.sync_set ++ ansi.clear);
     }
 
     fn update_size(self: *@This()) !void {

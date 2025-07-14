@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const utils_mod = @import("utils.zig");
+const cast = utils_mod.cast;
 
 const ansi = struct {
     const clear = "\x1B[2J";
@@ -25,7 +26,7 @@ const ansi = struct {
 const Term = struct {
     tty: std.fs.File,
 
-    size: Size,
+    size: Size = undefined,
     cooked_termios: ?std.posix.termios = null,
     raw: ?std.posix.termios = null,
 
@@ -37,17 +38,13 @@ const Term = struct {
         const tty = try std.fs.cwd().openFile("/dev/tty", .{ .mode = .read_write });
         errdefer tty.close();
 
-        var win_size = std.mem.zeroes(std.posix.winsize);
-        const err = std.os.linux.ioctl(tty.handle, std.posix.T.IOCGWINSZ, @intFromPtr(&win_size));
-        if (std.posix.errno(err) != .SUCCESS) {
-            return std.posix.unexpectedErrno(@as(std.posix.E, @enumFromInt(err)));
-        }
-        const size = Size{ .height = win_size.row, .width = win_size.col };
-
-        return @This(){
+        var self = @This(){
             .tty = tty,
-            .size = size,
         };
+
+        try self.update_size();
+
+        return self;
     }
 
     fn deinit(self: *@This()) void {
@@ -66,6 +63,16 @@ const Term = struct {
         self.raw = null;
         self.cooked_termios = null;
         self.unregister_signal_handlers();
+    }
+
+    fn update_size(self: *@This()) !void {
+        var win_size = std.mem.zeroes(std.posix.winsize);
+        const err = std.os.linux.ioctl(self.tty.handle, std.posix.T.IOCGWINSZ, @intFromPtr(&win_size));
+        if (std.posix.errno(err) != .SUCCESS) {
+            return std.posix.unexpectedErrno(@as(std.posix.E, @enumFromInt(err)));
+        }
+        const size = Size{ .height = win_size.row, .width = win_size.col };
+        self.size = size;
     }
 
     fn cursor_move(self: *@This(), v: struct { y: u16 = 0, x: u16 = 0 }) !void {
@@ -151,7 +158,7 @@ pub fn main() !void {
     var term = try Term.init();
     defer term.deinit();
 
-    const jj_output = try utils_mod.jjcall(&[_][]const u8{ "jj", "--color", "always", "st" }, temp);
+    const jj_output = try utils_mod.jjcall(&[_][]const u8{ "jj", "--color", "always" }, temp);
     var inputs = std.ArrayList([]const u8).init(temp);
     defer {
         for (inputs.items) |line| {
@@ -181,6 +188,7 @@ pub fn main() !void {
 
     var buf = std.mem.zeroes([1]u8);
     while (true) {
+        try term.update_size();
         { // render
             var it = utils_mod.LineIterator{ .buf = jj_output };
             var i: u16 = 0;
@@ -188,6 +196,23 @@ pub fn main() !void {
                 try term.cursor_move(.{ .y = i });
                 try term.tty.writeAll(line);
                 i += 1;
+            }
+        }
+        { // clear new window size
+            const offset = .{ .x = 30, .y = 1 };
+            for (offset.y..term.size.height) |y| {
+                try term.cursor_move(.{ .y = cast(u16, y) + offset.y, .x = offset.x });
+                try term.tty.writer().writeByteNTimes(' ', term.size.width - offset.x);
+            }
+
+            { // render again, but offset it on x and y
+                var it = utils_mod.LineIterator{ .buf = jj_output };
+                var i: u16 = 0;
+                while (it.next()) |line| {
+                    try term.cursor_move(.{ .y = i + offset.y, .x = offset.x });
+                    try term.tty.writeAll(line);
+                    i += 1;
+                }
             }
         }
 

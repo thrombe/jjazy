@@ -29,6 +29,13 @@ pub inline fn cast(typ: type, val: anytype) typ {
     @compileError("can't cast from '" ++ @typeName(@TypeOf(val)) ++ "' to '" ++ @typeName(typ) ++ "'");
 }
 
+pub inline fn dump_error(err: anyerror) void {
+    std.debug.print("error: {any}\n", .{err});
+    if (@errorReturnTrace()) |trace| {
+        std.debug.dumpStackTrace(trace.*);
+    }
+}
+
 pub fn jjcall(args: []const []const u8, alloc: std.mem.Allocator) ![]u8 {
     var child = std.process.Child.init(args, alloc);
     child.stdin_behavior = .Pipe;

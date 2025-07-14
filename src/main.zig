@@ -198,7 +198,7 @@ pub fn main() !void {
     }
 
     try term.uncook();
-    defer term.cook_restore() catch {};
+    defer term.cook_restore() catch |e| utils_mod.dump_error(e);
 
     var buf = std.mem.zeroes([1]u8);
     while (true) {

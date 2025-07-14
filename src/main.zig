@@ -202,6 +202,9 @@ pub fn main() !void {
             const offset = .{ .x = 30, .y = 1 };
             for (offset.y..term.size.height) |y| {
                 try term.cursor_move(.{ .y = cast(u16, y) + offset.y, .x = offset.x });
+                // for (offset.x..term.size.width) |_| {
+                //     try term.tty.writeAll(" ");
+                // }
                 try term.tty.writer().writeByteNTimes(' ', term.size.width - offset.x);
             }
 
@@ -210,6 +213,9 @@ pub fn main() !void {
                 var i: u16 = 0;
                 while (it.next()) |line| {
                     try term.cursor_move(.{ .y = i + offset.y, .x = offset.x });
+                    // for (line) |char| {
+                    //     try term.writer().print("{c}", .{char});
+                    // }
                     try term.tty.writeAll(line);
                     i += 1;
                 }

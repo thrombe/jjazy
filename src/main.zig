@@ -32,14 +32,19 @@ const Term = struct {
 
     i: u32 = 0,
 
+    alloc: std.mem.Allocator,
+    cmdbuf: std.ArrayList(u8),
+
     const Size = struct { width: usize, height: usize };
 
-    fn init() !@This() {
+    fn init(alloc: std.mem.Allocator) !@This() {
         const tty = try std.fs.cwd().openFile("/dev/tty", .{ .mode = .read_write });
         errdefer tty.close();
 
         var self = @This(){
             .tty = tty,
+            .alloc = alloc,
+            .cmdbuf = .init(alloc),
         };
 
         try self.update_size();
@@ -48,6 +53,7 @@ const Term = struct {
     }
 
     fn deinit(self: *@This()) void {
+        self.cmdbuf.deinit();
         self.tty.close();
     }
 
@@ -65,6 +71,14 @@ const Term = struct {
         self.unregister_signal_handlers();
     }
 
+    fn writer(self: *@This()) std.ArrayList(u8).Writer {
+        return self.cmdbuf.writer();
+    }
+
+    fn flush_writes(self: *@This()) !void {
+        try self.tty.writer().writeAll(self.cmdbuf.items);
+    }
+
     fn update_size(self: *@This()) !void {
         var win_size = std.mem.zeroes(std.posix.winsize);
         const err = std.os.linux.ioctl(self.tty.handle, std.posix.T.IOCGWINSZ, @intFromPtr(&win_size));
@@ -76,7 +90,7 @@ const Term = struct {
     }
 
     fn cursor_move(self: *@This(), v: struct { y: u16 = 0, x: u16 = 0 }) !void {
-        try self.tty.writer().print(ansi.cursor.move, .{ v.y + 1, v.x + 1 });
+        try self.writer().print(ansi.cursor.move, .{ v.y + 1, v.x + 1 });
     }
 
     fn enter_raw_mode(self: *@This()) !void {
@@ -155,7 +169,7 @@ pub fn main() !void {
     defer arena.deinit();
     const temp = arena.allocator();
 
-    var term = try Term.init();
+    var term = try Term.init(alloc);
     defer term.deinit();
 
     const jj_output = try utils_mod.jjcall(&[_][]const u8{ "jj", "--color", "always" }, temp);
@@ -194,7 +208,7 @@ pub fn main() !void {
             var i: u16 = 0;
             while (it.next()) |line| {
                 try term.cursor_move(.{ .y = i });
-                try term.tty.writeAll(line);
+                try term.writer().writeAll(line);
                 i += 1;
             }
         }
@@ -203,9 +217,9 @@ pub fn main() !void {
             for (offset.y..term.size.height) |y| {
                 try term.cursor_move(.{ .y = cast(u16, y) + offset.y, .x = offset.x });
                 // for (offset.x..term.size.width) |_| {
-                //     try term.tty.writeAll(" ");
+                //     try term.writer().writeAll(" ");
                 // }
-                try term.tty.writer().writeByteNTimes(' ', term.size.width - offset.x);
+                try term.writer().writeByteNTimes(' ', term.size.width - offset.x);
             }
 
             { // render again, but offset it on x and y
@@ -216,11 +230,12 @@ pub fn main() !void {
                     // for (line) |char| {
                     //     try term.writer().print("{c}", .{char});
                     // }
-                    try term.tty.writeAll(line);
+                    try term.writer().writeAll(line);
                     i += 1;
                 }
             }
         }
+        try term.flush_writes();
 
         const len = try term.tty.read(&buf);
         try inputs.append(try temp.dupe(u8, buf[0..len]));

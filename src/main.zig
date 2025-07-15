@@ -209,20 +209,20 @@ const Term = struct {
         }
     }
 
-    fn draw_border(self: *@This(), offset: Vec2, size: Vec2) !void {
-        try self.draw_at(offset, border.square.top_left);
-        try self.draw_at(offset.add(.{ .x = size.x - 1 }), border.square.top_right);
-        try self.draw_at(offset.add(.{ .y = size.y - 1 }), border.square.bottom_left);
-        try self.draw_at(offset.add(size).sub(.splat(1)), border.square.bottom_right);
+    fn draw_border(self: *@This(), offset: Vec2, size: Vec2, border_style: anytype) !void {
+        try self.draw_at(offset, border_style.top_left);
+        try self.draw_at(offset.add(.{ .x = size.x - 1 }), border_style.top_right);
+        try self.draw_at(offset.add(.{ .y = size.y - 1 }), border_style.bottom_left);
+        try self.draw_at(offset.add(size).sub(.splat(1)), border_style.bottom_right);
 
         try self.cursor_move(offset.add(.{ .x = 1 }));
-        try self.writer().writeBytesNTimes(border.square.horizontal, @min(size.x - 2, self.size.x - offset.x - 2));
+        try self.writer().writeBytesNTimes(border_style.horizontal, @min(size.x - 2, self.size.x - offset.x - 2));
         try self.cursor_move(offset.add(.{ .x = 1, .y = size.y - 1 }));
-        try self.writer().writeBytesNTimes(border.square.horizontal, @min(size.x - 2, self.size.x - offset.x - 2));
+        try self.writer().writeBytesNTimes(border_style.horizontal, @min(size.x - 2, self.size.x - offset.x - 2));
 
         for (offset.y + 1..offset.y + size.y - 1) |y| {
-            try self.draw_at(.{ .y = cast(u16, y), .x = offset.x }, border.square.vertical);
-            try self.draw_at(.{ .y = cast(u16, y), .x = offset.x + size.x - 1 }, border.square.vertical);
+            try self.draw_at(.{ .y = cast(u16, y), .x = offset.x }, border_style.vertical);
+            try self.draw_at(.{ .y = cast(u16, y), .x = offset.x + size.x - 1 }, border_style.vertical);
         }
     }
 
@@ -372,13 +372,13 @@ pub fn main() !void {
         try term.update_size();
         {
             try term.clear_region(.{}, term.size);
-            try term.draw_border(.{}, term.size);
+            try term.draw_border(.{}, term.size, border.rounded);
             try term.draw_buf(jj_output, .splat(1), term.size.sub(.splat(2)));
 
             const offset = Vec2{ .x = 30, .y = 3 };
             const size = Vec2{ .x = 60, .y = 20 };
             try term.clear_region(offset, size);
-            try term.draw_border(offset, size);
+            try term.draw_border(offset, size, border.rounded);
             try term.draw_buf(jj_output, offset.add(.splat(1)), size.sub(.splat(2)));
         }
         try term.flush_writes();

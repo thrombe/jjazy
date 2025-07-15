@@ -105,14 +105,18 @@ const Term = struct {
             const line = line_it.next() orelse break;
             try self.cursor_move(.{ .y = cast(u16, y), .x = offset.x });
 
+            const utf8_line = try std.unicode.Utf8View.init(line);
+            var utf8_it = utf8_line.iterator();
+
             var x: u16 = 0;
-            for (line) |char| {
+            while (utf8_it.nextCodepointSlice()) |codepoint| {
                 // execute all control chars
                 // but don't print beyond the size
+                const char = codepoint[0];
                 if (char == '\x1B' or (char & '\x1F' >= 'a' and char & '\x1F' <= 'w') or char == '\n' or char == '\r') {
-                    try self.writer().print("{c}", .{char});
+                    // try self.writer().writeAll(codepoint);
                 } else if (x < size.x) {
-                    try self.writer().print("{c}", .{char});
+                    try self.writer().writeAll(codepoint);
                     x += 1;
                 }
             }

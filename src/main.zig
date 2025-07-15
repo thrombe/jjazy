@@ -30,6 +30,70 @@ const Vec2 = struct {
     y: u16 = 0,
 };
 
+const TermStyledGraphemeIterator = struct {
+    utf8: std.unicode.Utf8Iterator,
+
+    const Token = struct {
+        grapheme: []const u8,
+        is_ansi_codepoint: bool,
+    };
+
+    fn init(buf: []const u8) !@This() {
+        const utf8_view = try std.unicode.Utf8View.init(buf);
+        return .{
+            .utf8 = utf8_view.iterator(),
+        };
+    }
+
+    fn next(self: *@This()) !?Token {
+        const buf = self.utf8.bytes;
+        const start = self.utf8.i;
+        const c = self.utf8.nextCodepointSlice() orelse return null;
+        var token = Token{ .grapheme = c, .is_ansi_codepoint = false };
+        if (c.len > 1) {
+            return token;
+        }
+        const char = c[0];
+        if (char & '\x1F' >= 'a' and char & '\x1F' <= 'w') {
+            token.is_ansi_codepoint = true;
+            return token;
+        }
+        if (char == '\n' or char == '\r') {
+            return token;
+        }
+        if (char != '\x1B') {
+            return token;
+        }
+        if (buf[start..].len <= 1) {
+            return error.IncompleteCodepoint;
+        }
+        if (buf[start + 1] != '[') {
+            return error.CannotDecodeYet;
+        }
+
+        const len = self.consume_till_m();
+        if (len == 0) {
+            return error.BadCodepoint;
+        }
+        return Token{ .grapheme = buf[start..][0..len], .is_ansi_codepoint = true };
+    }
+
+    fn consume_till_m(self: *@This()) usize {
+        var it = self.utf8;
+        const start = it.i;
+        while (it.nextCodepointSlice()) |c| {
+            if (c.len != 1) {
+                return 0;
+            }
+            if (c[0] == 'm') {
+                self.utf8 = it;
+                return it.i - start + 1;
+            }
+        }
+        return 0;
+    }
+};
+
 const Term = struct {
     tty: std.fs.File,
 
@@ -105,25 +169,19 @@ const Term = struct {
             const line = line_it.next() orelse break;
             try self.cursor_move(.{ .y = cast(u16, y), .x = offset.x });
 
-            const utf8_line = try std.unicode.Utf8View.init(line);
-            var utf8_it = utf8_line.iterator();
+            var codepoint_it = try TermStyledGraphemeIterator.init(line);
 
             var x: u16 = 0;
-            while (utf8_it.nextCodepointSlice()) |codepoint| {
+            while (try codepoint_it.next()) |token| {
                 // execute all control chars
                 // but don't print beyond the size
-                const char = codepoint[0];
-                if (char == '\x1B' or (char & '\x1F' >= 'a' and char & '\x1F' <= 'w') or char == '\n' or char == '\r') {
-                    // try self.writer().writeAll(codepoint);
+                if (token.is_ansi_codepoint) {
+                    try self.writer().writeAll(token.grapheme);
                 } else if (x < size.x) {
-                    try self.writer().writeAll(codepoint);
+                    try self.writer().writeAll(token.grapheme);
                     x += 1;
                 }
             }
-            // for (offset.x..offset.x + @min(line.len, size.x)) |x| {
-            //     const char = line[x - offset.x];
-            //     try self.writer().print("{c}", .{char});
-            // }
         }
     }
 
@@ -219,7 +277,7 @@ pub fn main() !void {
     var term = try Term.init(alloc);
     defer term.deinit();
 
-    const jj_output = try utils_mod.jjcall(&[_][]const u8{"jj"}, temp);
+    const jj_output = try utils_mod.jjcall(&[_][]const u8{ "jj", "--color", "always" }, temp);
     var inputs = std.ArrayList([]const u8).init(temp);
     defer {
         for (inputs.items) |line| {

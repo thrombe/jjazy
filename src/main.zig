@@ -28,6 +28,26 @@ const ansi = struct {
 const Vec2 = struct {
     x: u16 = 0,
     y: u16 = 0,
+
+    pub fn splat(t: u16) @This() {
+        return .{ .x = t, .y = t };
+    }
+
+    pub fn add(self: *const @This(), other: @This()) @This() {
+        return .{ .x = self.x + other.x, .y = self.y + other.y };
+    }
+
+    pub fn sub(self: *const @This(), other: @This()) @This() {
+        return .{ .x = self.x - other.x, .y = self.y - other.y };
+    }
+
+    pub fn max(self: *const @This(), other: @This()) @This() {
+        return .{ .x = @max(self.x, other.x), .y = @max(self.y, other.y) };
+    }
+
+    pub fn min(self: *const @This(), other: @This()) @This() {
+        return .{ .x = @min(self.x, other.x), .y = @min(self.y, other.y) };
+    }
 };
 
 const TermStyledGraphemeIterator = struct {
@@ -307,46 +327,15 @@ pub fn main() !void {
 
     while (true) {
         try term.update_size();
-        // { // render
-        //     var it = utils_mod.LineIterator{ .buf = jj_output };
-        //     var i: u16 = 0;
-        //     while (it.next()) |line| {
-        //         try term.cursor_move(.{ .y = i });
-        //         try term.writer().writeAll(line);
-        //         i += 1;
-        //     }
-        // }
-        // { // clear new window size
-        //     const offset = .{ .x = 30, .y = 1 };
-        //     for (offset.y..term.size.y) |y| {
-        //         try term.cursor_move(.{ .y = cast(u16, y) + offset.y, .x = offset.x });
-        //         // for (offset.x..term.size.x) |_| {
-        //         //     try term.writer().writeAll(" ");
-        //         // }
-        //         try term.writer().writeByteNTimes(' ', term.size.x - offset.x);
-        //     }
+        {
+            try term.clear_region(.{}, term.size);
+            try term.draw_buf(jj_output, .{}, term.size);
 
-        //     { // render again, but offset it on x and y
-        //         var it = utils_mod.LineIterator{ .buf = jj_output };
-        //         var i: u16 = 0;
-        //         while (it.next()) |line| {
-        //             try term.cursor_move(.{ .y = i + offset.y, .x = offset.x });
-        //             // for (line) |char| {
-        //             //     try term.writer().print("{c}", .{char});
-        //             // }
-        //             try term.writer().writeAll(line);
-        //             i += 1;
-        //         }
-        //     }
-        // }
-        try term.clear_region(.{}, term.size);
-        try term.draw_buf(jj_output, .{}, term.size);
-
-        const offset = Vec2{ .x = 30, .y = 3 };
-        const size = Vec2{ .x = 60, .y = 20 };
-        try term.clear_region(.{ .x = offset.x - 1, .y = offset.y - 1 }, .{ .x = size.x + 2, .y = size.y + 2 });
-        try term.draw_buf(jj_output, offset, size);
-
+            const offset = Vec2{ .x = 30, .y = 3 };
+            const size = Vec2{ .x = 60, .y = 20 };
+            try term.clear_region(offset.sub(.splat(1)), size.add(.splat(1)));
+            try term.draw_buf(jj_output, offset, size);
+        }
         try term.flush_writes();
 
         var buf = std.mem.zeroes([1]u8);

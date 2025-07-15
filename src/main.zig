@@ -45,8 +45,8 @@ const border = struct {
 };
 
 const Vec2 = struct {
-    x: u16 = 0,
-    y: u16 = 0,
+    x: i32 = 0,
+    y: i32 = 0,
 
     pub fn splat(t: u16) @This() {
         return .{ .x = t, .y = t };
@@ -195,10 +195,10 @@ const Term = struct {
         try self.writer().writeAll(ansi.sync_set ++ ansi.clear);
     }
 
-    fn clear_region(self: *@This(), offset: Vec2, size: Vec2) !void {
-        for (offset.y..@min(self.size.y, offset.y + size.y)) |y| {
-            try self.cursor_move(.{ .y = cast(u16, y), .x = offset.x });
-            try self.writer().writeByteNTimes(' ', @min(size.x, cast(u16, @max(cast(i32, self.size.x) - offset.x, 0))));
+    fn clear_region(self: *@This(), min: Vec2, max: Vec2) !void {
+        for (@intCast(self.size.min(min).max(.{}).y)..@intCast(self.size.min(max.add(.splat(1))).y)) |y| {
+            try self.cursor_move(.{ .y = cast(u16, y), .x = min.x });
+            try self.writer().writeByteNTimes(' ', @intCast(max.min(self.size).sub(min).max(.{}).x));
         }
     }
 
@@ -209,41 +209,42 @@ const Term = struct {
         }
     }
 
-    fn draw_border(self: *@This(), offset: Vec2, size: Vec2, border_style: anytype) !void {
-        try self.cursor_move(offset.add(.{ .x = 1 }));
-        try self.writer().writeBytesNTimes(border_style.horizontal, @min(size.x - 1, self.size.x - offset.x - 1));
-        if (offset.y + size.y - 1 < self.size.y) {
-            try self.cursor_move(offset.add(.{ .x = 1, .y = size.y - 1 }));
-            try self.writer().writeBytesNTimes(border_style.horizontal, @min(size.x - 1, self.size.x - offset.x - 1));
+    fn draw_border(self: *@This(), min: Vec2, max: Vec2, border_style: anytype) !void {
+        const x_lim = max.min(self.size).sub(min).max(.{}).x;
+        try self.cursor_move(min);
+        try self.writer().writeBytesNTimes(border_style.horizontal, @intCast(x_lim));
+        if (max.y < self.size.y) {
+            try self.cursor_move(.{ .x = min.x, .y = max.y });
+            try self.writer().writeBytesNTimes(border_style.horizontal, @intCast(x_lim));
         }
 
-        for (offset.y..offset.y + size.y) |y| {
-            try self.draw_at(.{ .y = cast(u16, y), .x = offset.x }, border_style.vertical);
-            try self.draw_at(.{ .y = cast(u16, y), .x = offset.x + size.x - 1 }, border_style.vertical);
+        for (@intCast(min.min(self.size).y)..@intCast(self.size.min(max.add(.splat(1))).y)) |y| {
+            try self.draw_at(.{ .y = @intCast(y), .x = min.x }, border_style.vertical);
+            try self.draw_at(.{ .y = @intCast(y), .x = max.x }, border_style.vertical);
         }
 
         // write corners last so that it overwrites the edges (this simplifies code)
-        try self.draw_at(offset, border_style.top_left);
-        try self.draw_at(offset.add(.{ .x = size.x - 1 }), border_style.top_right);
-        try self.draw_at(offset.add(.{ .y = size.y - 1 }), border_style.bottom_left);
-        try self.draw_at(offset.add(size).sub(.splat(1)), border_style.bottom_right);
+        try self.draw_at(.{ .x = min.x, .y = min.y }, border_style.top_left);
+        try self.draw_at(.{ .x = max.x, .y = min.y }, border_style.top_right);
+        try self.draw_at(.{ .x = min.x, .y = max.y }, border_style.bottom_left);
+        try self.draw_at(.{ .x = max.x, .y = max.y }, border_style.bottom_right);
     }
 
-    fn draw_buf(self: *@This(), buf: []const u8, offset: Vec2, size: Vec2) !void {
+    fn draw_buf(self: *@This(), buf: []const u8, min: Vec2, max: Vec2) !void {
         var line_it = utils_mod.LineIterator{ .buf = buf };
-        for (offset.y..@min(self.size.y, offset.y + size.y)) |y| {
+        for (@intCast(self.size.min(min).max(.{}).y)..@intCast(self.size.min(max.add(.splat(1))).y)) |y| {
             const line = line_it.next() orelse break;
-            try self.cursor_move(.{ .y = cast(u16, y), .x = offset.x });
+            try self.cursor_move(.{ .y = cast(u16, y), .x = min.x });
 
             var codepoint_it = try TermStyledGraphemeIterator.init(line);
 
-            var x: u16 = 0;
+            var x: i32 = min.x;
             while (try codepoint_it.next()) |token| {
                 // execute all control chars
                 // but don't print beyond the size
                 if (token.is_ansi_codepoint) {
                     try self.writer().writeAll(token.grapheme);
-                } else if (x < size.x and (x + offset.x < self.size.x)) {
+                } else if (x < max.min(self.size.sub(.splat(1))).x) {
                     try self.writer().writeAll(token.grapheme);
                     x += 1;
                 }
@@ -374,15 +375,15 @@ pub fn main() !void {
     while (true) {
         try term.update_size();
         {
-            try term.clear_region(.{}, term.size);
-            try term.draw_border(.{}, term.size, border.rounded);
+            try term.clear_region(.{}, term.size.sub(.splat(1)));
+            try term.draw_border(.{}, term.size.sub(.splat(1)), border.rounded);
             try term.draw_buf(jj_output, .splat(1), term.size.sub(.splat(2)));
 
-            const offset = Vec2{ .x = 30, .y = 3 };
-            const size = Vec2{ .x = 60, .y = 20 };
-            try term.clear_region(offset, size);
-            try term.draw_border(offset, size, border.rounded);
-            try term.draw_buf(jj_output, offset.add(.splat(1)), size.sub(.splat(2)));
+            const min = Vec2{ .x = 30, .y = 3 };
+            const max = min.add(.{ .x = 60, .y = 20 });
+            try term.clear_region(min, max);
+            try term.draw_border(min, max, border.rounded);
+            try term.draw_buf(jj_output, min.add(.splat(1)), max.sub(.splat(1)));
         }
         try term.flush_writes();
 

@@ -43,13 +43,11 @@ const border = struct {
         const bottom_right = "┘";
     };
     const cross = struct {
-        const three = struct {
-            const nse = "├";
-            const wse = "┬";
-            const nws = "┤";
-            const wne = "┴";
-        };
-        const four = "┼";
+        const nse = "├";
+        const wse = "┬";
+        const nws = "┤";
+        const wne = "┴";
+        const nwse = "┼";
     };
 };
 
@@ -244,17 +242,17 @@ const Term = struct {
             const x_lim = max.min(self.size).sub(min).max(.{}).x;
             try self.cursor_move(.{ .x = min.x, .y = _y });
             try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(x_lim));
-            try self.draw_at(.{ .y = _y, .x = min.x }, border.cross.three.nse);
-            try self.draw_at(.{ .y = _y, .x = max.x }, border.cross.three.nws);
+            try self.draw_at(.{ .y = _y, .x = min.x }, border.cross.nse);
+            try self.draw_at(.{ .y = _y, .x = max.x }, border.cross.nws);
         }
         if (x) |_x| {
             for (@intCast(min.min(self.size).y)..@intCast(self.size.min(max.add(.splat(1))).y)) |_y| {
                 try self.draw_at(.{ .x = _x, .y = @intCast(_y) }, border.edge.vertical);
             }
-            try self.draw_at(.{ .x = _x, .y = min.y }, border.cross.three.wse);
-            try self.draw_at(.{ .x = _x, .y = max.y }, border.cross.three.wne);
+            try self.draw_at(.{ .x = _x, .y = min.y }, border.cross.wse);
+            try self.draw_at(.{ .x = _x, .y = max.y }, border.cross.wne);
         }
-        if (x) |_x| if (y) |_y| try self.draw_at(.{ .x = _x, .y = _y }, border.cross.four);
+        if (x) |_x| if (y) |_y| try self.draw_at(.{ .x = _x, .y = _y }, border.cross.nwse);
     }
 
     fn draw_buf(self: *@This(), buf: []const u8, min: Vec2, max: Vec2) !void {

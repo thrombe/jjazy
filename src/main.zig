@@ -196,7 +196,7 @@ const Term = struct {
     }
 
     fn clear_region(self: *@This(), offset: Vec2, size: Vec2) !void {
-        for (offset.y..offset.y + size.y) |y| {
+        for (offset.y..@min(self.size.y, offset.y + size.y)) |y| {
             try self.cursor_move(.{ .y = cast(u16, y), .x = offset.x });
             try self.writer().writeByteNTimes(' ', @min(size.x, cast(u16, @max(cast(i32, self.size.x) - offset.x, 0))));
         }
@@ -211,24 +211,27 @@ const Term = struct {
 
     fn draw_border(self: *@This(), offset: Vec2, size: Vec2, border_style: anytype) !void {
         try self.cursor_move(offset.add(.{ .x = 1 }));
-        try self.writer().writeBytesNTimes(border_style.horizontal, @min(size.x - 2, self.size.x - offset.x - 1));
-        try self.cursor_move(offset.add(.{ .x = 1, .y = size.y - 1 }));
-        try self.writer().writeBytesNTimes(border_style.horizontal, @min(size.x - 2, self.size.x - offset.x - 1));
+        try self.writer().writeBytesNTimes(border_style.horizontal, @min(size.x - 1, self.size.x - offset.x - 1));
+        if (offset.y + size.y - 1 < self.size.y) {
+            try self.cursor_move(offset.add(.{ .x = 1, .y = size.y - 1 }));
+            try self.writer().writeBytesNTimes(border_style.horizontal, @min(size.x - 1, self.size.x - offset.x - 1));
+        }
 
+        for (offset.y..offset.y + size.y) |y| {
+            try self.draw_at(.{ .y = cast(u16, y), .x = offset.x }, border_style.vertical);
+            try self.draw_at(.{ .y = cast(u16, y), .x = offset.x + size.x - 1 }, border_style.vertical);
+        }
+
+        // write corners last so that it overwrites the edges (this simplifies code)
         try self.draw_at(offset, border_style.top_left);
         try self.draw_at(offset.add(.{ .x = size.x - 1 }), border_style.top_right);
         try self.draw_at(offset.add(.{ .y = size.y - 1 }), border_style.bottom_left);
         try self.draw_at(offset.add(size).sub(.splat(1)), border_style.bottom_right);
-
-        for (offset.y + 1..offset.y + size.y - 1) |y| {
-            try self.draw_at(.{ .y = cast(u16, y), .x = offset.x }, border_style.vertical);
-            try self.draw_at(.{ .y = cast(u16, y), .x = offset.x + size.x - 1 }, border_style.vertical);
-        }
     }
 
     fn draw_buf(self: *@This(), buf: []const u8, offset: Vec2, size: Vec2) !void {
         var line_it = utils_mod.LineIterator{ .buf = buf };
-        for (offset.y..offset.y + size.y) |y| {
+        for (offset.y..@min(self.size.y, offset.y + size.y)) |y| {
             const line = line_it.next() orelse break;
             try self.cursor_move(.{ .y = cast(u16, y), .x = offset.x });
 

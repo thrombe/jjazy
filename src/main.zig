@@ -147,10 +147,10 @@ const Term = struct {
     cooked_termios: ?std.posix.termios = null,
     raw: ?std.posix.termios = null,
 
-    i: u32 = 0,
-
     alloc: std.mem.Allocator,
     cmdbuf: std.ArrayList(u8),
+
+    const Input = struct {};
 
     fn init(alloc: std.mem.Allocator) !@This() {
         const tty = try std.fs.cwd().openFile("/dev/tty", .{ .mode = .read_write });
@@ -172,10 +172,10 @@ const Term = struct {
         self.tty.close();
     }
 
-    fn uncook(self: *@This()) !void {
+    fn uncook(self: *@This(), handler: anytype) !void {
         try self.enter_raw_mode();
         try self.tty.writeAll(ansi.cursor.hide ++ ansi.alt_buf.enter ++ ansi.clear);
-        self.register_signal_handlers();
+        self.register_signal_handlers(handler);
     }
 
     fn cook_restore(self: *@This()) !void {
@@ -337,10 +337,7 @@ const Term = struct {
         self.raw = raw;
     }
 
-    fn register_signal_handlers(_: *@This()) void {
-        const handler = struct {
-            fn winch(_: c_int) callconv(.C) void {}
-        };
+    fn register_signal_handlers(_: *@This(), handler: anytype) void {
         std.posix.sigaction(std.posix.SIG.WINCH, &std.posix.Sigaction{
             .handler = .{ .handler = handler.winch },
             .mask = std.posix.empty_sigset,
@@ -357,7 +354,72 @@ const Term = struct {
     }
 };
 
+const App = struct {
+    term: Term,
+    inputs: utils_mod.Channel(Term.Input),
+
+    alloc: std.mem.Allocator,
+    arena: std.heap.ArenaAllocator,
+
+    // status: Status,
+    // diff: Diff,
+
+    quit: utils_mod.Fuse = .{},
+
+    const Status = struct {};
+    const Diff = struct {};
+
+    var app: *@This() = undefined;
+
+    fn init(alloc: std.mem.Allocator) !*@This() {
+        const self: *@This() = try alloc.create(@This());
+        errdefer alloc.destroy(self);
+
+        var arena = std.heap.ArenaAllocator.init(alloc);
+        errdefer arena.deinit();
+
+        var term = try Term.init(alloc);
+        errdefer term.deinit();
+
+        var inputs = try utils_mod.Channel(Term.Input).init(alloc);
+        errdefer inputs.deinit();
+
+        try term.uncook(@This());
+        errdefer term.cook_restore() catch |e| utils_mod.dump_error(e);
+
+        self.* = .{
+            .alloc = alloc,
+            .arena = arena,
+            .term = term,
+            .inputs = inputs,
+        };
+        app = self;
+        return self;
+    }
+
+    fn deinit(self: *@This()) void {
+        const alloc = self.alloc;
+        defer alloc.destroy(self);
+        defer self.arena.deinit();
+        defer self.term.deinit();
+        defer self.inputs.deinit();
+        defer self.term.cook_restore() catch |e| utils_mod.dump_error(e);
+    }
+
+    fn winch(_: c_int) callconv(.C) void {
+        _ = app;
+    }
+};
+
 pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
+    defer _ = gpa.deinit();
+
+    const app = try App.init(gpa.allocator());
+    defer app.deinit();
+}
+
+pub fn main1() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
     defer _ = gpa.deinit();
     const alloc = gpa.allocator();
@@ -394,7 +456,9 @@ pub fn main() !void {
         }
     }
 
-    try term.uncook();
+    try term.uncook(struct {
+        fn winch(_: c_int) callconv(.C) void {}
+    });
     defer term.cook_restore() catch |e| utils_mod.dump_error(e);
 
     while (true) {

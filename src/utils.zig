@@ -135,3 +135,171 @@ pub const LineIterator = struct {
         if (self.buf[self.index] == '\r') self.index += 1;
     }
 };
+
+pub fn Deque(typ: type) type {
+    return struct {
+        allocator: std.mem.Allocator,
+        buffer: []typ,
+        size: usize,
+
+        // fill this index next
+        front: usize, // at
+        back: usize, // one to the right
+
+        pub fn init(alloc: std.mem.Allocator) !@This() {
+            const len = 32;
+            const buffer = try alloc.alloc(typ, len);
+            return .{
+                .allocator = alloc,
+                .buffer = buffer,
+                .front = 0,
+                .back = 0,
+                .size = 0,
+            };
+        }
+
+        pub fn deinit(self: *@This()) void {
+            self.allocator.free(self.buffer);
+        }
+
+        pub fn push_front(self: *@This(), value: typ) !void {
+            if (self.size == self.buffer.len) {
+                try self.resize();
+                return self.push_front(value) catch unreachable;
+            }
+            self.front = (self.front + self.buffer.len - 1) % self.buffer.len;
+            self.buffer[self.front] = value;
+            self.size += 1;
+        }
+
+        pub fn push_back(self: *@This(), value: typ) !void {
+            if (self.size == self.buffer.len) {
+                try self.resize();
+                return self.push_back(value) catch unreachable;
+            }
+            self.buffer[self.back] = value;
+            self.back = (self.back + 1) % self.buffer.len;
+            self.size += 1;
+        }
+
+        pub fn pop_front(self: *@This()) ?typ {
+            if (self.size == 0) {
+                return null;
+            }
+            const value = self.buffer[self.front];
+            self.front = (self.front + 1) % self.buffer.len;
+            self.size -= 1;
+            return value;
+        }
+
+        pub fn pop_back(self: *@This()) ?typ {
+            if (self.size == 0) {
+                return null;
+            }
+            self.back = (self.back + self.buffer.len - 1) % self.buffer.len;
+            const value = self.buffer[self.back];
+            self.size -= 1;
+            return value;
+        }
+
+        pub fn peek_front(self: *@This()) ?*const typ {
+            if (self.size == 0) {
+                return null;
+            }
+            return &self.buffer[self.front];
+        }
+
+        pub fn peek_back(self: *@This()) ?*const typ {
+            if (self.size == 0) {
+                return null;
+            }
+            const back = (self.back + self.buffer.len - 1) % self.buffer.len;
+            return &self.buffer[back];
+        }
+
+        pub fn is_empty(self: *@This()) bool {
+            return self.size == 0;
+        }
+
+        fn resize(self: *@This()) !void {
+            std.debug.assert(self.size == self.buffer.len);
+
+            const size = self.buffer.len * 2;
+            const buffer = try self.allocator.alloc(typ, size);
+            @memcpy(buffer[0 .. self.size - self.front], self.buffer[self.front..]);
+            @memcpy(buffer[self.size - self.front .. self.size], self.buffer[0..self.front]);
+            const new = @This(){
+                .allocator = self.allocator,
+                .buffer = buffer,
+                .front = 0,
+                .back = self.size,
+                .size = self.size,
+            };
+            self.allocator.free(self.buffer);
+            self.* = new;
+        }
+    };
+}
+
+// MAYBE: condvars + .block_recv()
+pub fn Channel(typ: type) type {
+    return struct {
+        const Dq = Deque(typ);
+        const Pinned = struct {
+            dq: Dq,
+            lock: std.Thread.Mutex = .{},
+        };
+        pinned: *Pinned,
+
+        pub fn init(alloc: std.mem.Allocator) !@This() {
+            const dq = try Dq.init(alloc);
+            const pinned = try alloc.create(Pinned);
+            pinned.* = .{
+                .dq = dq,
+            };
+            return .{
+                .pinned = pinned,
+            };
+        }
+
+        pub fn deinit(self: *@This()) void {
+            self.pinned.lock.lock();
+            // defer self.pinned.lock.unlock();
+            self.pinned.dq.deinit();
+            self.pinned.dq.allocator.destroy(self.pinned);
+        }
+
+        pub fn send(self: *@This(), val: typ) !void {
+            self.pinned.lock.lock();
+            defer self.pinned.lock.unlock();
+            try self.pinned.dq.push_back(val);
+        }
+
+        pub fn try_recv(self: *@This()) ?typ {
+            self.pinned.lock.lock();
+            defer self.pinned.lock.unlock();
+            return self.pinned.dq.pop_front();
+        }
+
+        pub fn can_recv(self: *@This()) bool {
+            self.pinned.lock.lock();
+            defer self.pinned.lock.unlock();
+            return self.pinned.dq.peek_front() != null;
+        }
+    };
+}
+
+pub const Fuse = struct {
+    fused: std.atomic.Value(bool) = .{ .raw = false },
+
+    pub fn fuse(self: *@This()) bool {
+        return self.fused.swap(true, .release);
+    }
+    pub fn unfuse(self: *@This()) bool {
+        const res = self.fused.swap(false, .release);
+        return res;
+    }
+    pub fn check(self: *@This()) bool {
+        return self.fused.load(.acquire);
+    }
+};

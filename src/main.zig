@@ -210,15 +210,15 @@ const Term = struct {
     }
 
     fn draw_border(self: *@This(), offset: Vec2, size: Vec2, border_style: anytype) !void {
+        try self.cursor_move(offset.add(.{ .x = 1 }));
+        try self.writer().writeBytesNTimes(border_style.horizontal, @min(size.x - 2, self.size.x - offset.x - 1));
+        try self.cursor_move(offset.add(.{ .x = 1, .y = size.y - 1 }));
+        try self.writer().writeBytesNTimes(border_style.horizontal, @min(size.x - 2, self.size.x - offset.x - 1));
+
         try self.draw_at(offset, border_style.top_left);
         try self.draw_at(offset.add(.{ .x = size.x - 1 }), border_style.top_right);
         try self.draw_at(offset.add(.{ .y = size.y - 1 }), border_style.bottom_left);
         try self.draw_at(offset.add(size).sub(.splat(1)), border_style.bottom_right);
-
-        try self.cursor_move(offset.add(.{ .x = 1 }));
-        try self.writer().writeBytesNTimes(border_style.horizontal, @min(size.x - 2, self.size.x - offset.x - 2));
-        try self.cursor_move(offset.add(.{ .x = 1, .y = size.y - 1 }));
-        try self.writer().writeBytesNTimes(border_style.horizontal, @min(size.x - 2, self.size.x - offset.x - 2));
 
         for (offset.y + 1..offset.y + size.y - 1) |y| {
             try self.draw_at(.{ .y = cast(u16, y), .x = offset.x }, border_style.vertical);

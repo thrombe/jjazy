@@ -25,6 +25,25 @@ const ansi = struct {
     };
 };
 
+const border = struct {
+    const rounded = struct {
+        const horizontal = "─";
+        const vertical = "│";
+        const top_left = "╭";
+        const top_right = "╮";
+        const bottom_left = "╰";
+        const bottom_right = "╯";
+    };
+    const square = struct {
+        const horizontal = "─";
+        const vertical = "│";
+        const top_left = "┌";
+        const top_right = "┐";
+        const bottom_left = "└";
+        const bottom_right = "┘";
+    };
+};
+
 const Vec2 = struct {
     x: u16 = 0,
     y: u16 = 0,
@@ -183,6 +202,30 @@ const Term = struct {
         }
     }
 
+    fn draw_at(self: *@This(), pos: Vec2, token: []const u8) !void {
+        if (self.size.x > pos.x and self.size.y > pos.y) {
+            try self.cursor_move(pos);
+            try self.writer().writeAll(token);
+        }
+    }
+
+    fn draw_border(self: *@This(), offset: Vec2, size: Vec2) !void {
+        try self.draw_at(offset, border.square.top_left);
+        try self.draw_at(offset.add(.{ .x = size.x - 1 }), border.square.top_right);
+        try self.draw_at(offset.add(.{ .y = size.y - 1 }), border.square.bottom_left);
+        try self.draw_at(offset.add(size).sub(.splat(1)), border.square.bottom_right);
+
+        try self.cursor_move(offset.add(.{ .x = 1 }));
+        try self.writer().writeBytesNTimes(border.square.horizontal, @min(size.x - 2, self.size.x - offset.x - 2));
+        try self.cursor_move(offset.add(.{ .x = 1, .y = size.y - 1 }));
+        try self.writer().writeBytesNTimes(border.square.horizontal, @min(size.x - 2, self.size.x - offset.x - 2));
+
+        for (offset.y + 1..offset.y + size.y - 1) |y| {
+            try self.draw_at(.{ .y = cast(u16, y), .x = offset.x }, border.square.vertical);
+            try self.draw_at(.{ .y = cast(u16, y), .x = offset.x + size.x - 1 }, border.square.vertical);
+        }
+    }
+
     fn draw_buf(self: *@This(), buf: []const u8, offset: Vec2, size: Vec2) !void {
         var line_it = utils_mod.LineIterator{ .buf = buf };
         for (offset.y..offset.y + size.y) |y| {
@@ -214,7 +257,7 @@ const Term = struct {
         self.size = .{ .y = win_size.row, .x = win_size.col };
     }
 
-    fn cursor_move(self: *@This(), v: struct { y: u16 = 0, x: u16 = 0 }) !void {
+    fn cursor_move(self: *@This(), v: Vec2) !void {
         try self.writer().print(ansi.cursor.move, .{ v.y + 1, v.x + 1 });
     }
 
@@ -329,12 +372,14 @@ pub fn main() !void {
         try term.update_size();
         {
             try term.clear_region(.{}, term.size);
-            try term.draw_buf(jj_output, .{}, term.size);
+            try term.draw_border(.{}, term.size);
+            try term.draw_buf(jj_output, .splat(1), term.size.sub(.splat(2)));
 
             const offset = Vec2{ .x = 30, .y = 3 };
             const size = Vec2{ .x = 60, .y = 20 };
-            try term.clear_region(offset.sub(.splat(1)), size.add(.splat(1)));
-            try term.draw_buf(jj_output, offset, size);
+            try term.clear_region(offset, size);
+            try term.draw_border(offset, size);
+            try term.draw_buf(jj_output, offset.add(.splat(1)), size.sub(.splat(2)));
         }
         try term.flush_writes();
 

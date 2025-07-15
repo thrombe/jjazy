@@ -271,7 +271,7 @@ const Term = struct {
                 // but don't print beyond the size
                 if (token.is_ansi_codepoint) {
                     try self.writer().writeAll(token.grapheme);
-                } else if (x < max.min(self.size.sub(.splat(1))).x) {
+                } else if (x <= max.min(self.size.sub(.splat(1))).x) {
                     try self.writer().writeAll(token.grapheme);
                     x += 1;
                 }
@@ -412,8 +412,8 @@ pub fn main() !void {
             try term.clear_region(min, max);
             try term.draw_border(min, max, border.rounded);
             try term.draw_split(min, max, split_x, null);
-            try term.draw_buf(jj_output, min.add(.splat(1)), (Vec2{ .x = split_x, .y = max.y }).sub(.splat(1)));
             try term.draw_buf(jj_output, (Vec2{ .x = split_x, .y = min.y }).add(.splat(1)), max.sub(.splat(1)));
+            try term.draw_buf(jj_output, min.add(.splat(1)), (Vec2{ .x = split_x, .y = max.y }).sub(.splat(1)));
         }
         try term.flush_writes();
 

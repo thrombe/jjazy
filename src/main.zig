@@ -26,21 +26,30 @@ const ansi = struct {
 };
 
 const border = struct {
-    const rounded = struct {
-        const horizontal = "─";
+    const edge = struct {
         const vertical = "│";
+        const horizontal = "─";
+    };
+    const rounded = struct {
         const top_left = "╭";
         const top_right = "╮";
         const bottom_left = "╰";
         const bottom_right = "╯";
     };
     const square = struct {
-        const horizontal = "─";
-        const vertical = "│";
         const top_left = "┌";
         const top_right = "┐";
         const bottom_left = "└";
         const bottom_right = "┘";
+    };
+    const cross = struct {
+        const three = struct {
+            const nse = "├";
+            const wse = "┬";
+            const nws = "┤";
+            const wne = "┴";
+        };
+        const four = "┼";
     };
 };
 
@@ -209,25 +218,43 @@ const Term = struct {
         }
     }
 
-    fn draw_border(self: *@This(), min: Vec2, max: Vec2, border_style: anytype) !void {
+    fn draw_border(self: *@This(), min: Vec2, max: Vec2, corners: anytype) !void {
         const x_lim = max.min(self.size).sub(min).max(.{}).x;
         try self.cursor_move(min);
-        try self.writer().writeBytesNTimes(border_style.horizontal, @intCast(x_lim));
+        try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(x_lim));
         if (max.y < self.size.y) {
             try self.cursor_move(.{ .x = min.x, .y = max.y });
-            try self.writer().writeBytesNTimes(border_style.horizontal, @intCast(x_lim));
+            try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(x_lim));
         }
 
         for (@intCast(min.min(self.size).y)..@intCast(self.size.min(max.add(.splat(1))).y)) |y| {
-            try self.draw_at(.{ .y = @intCast(y), .x = min.x }, border_style.vertical);
-            try self.draw_at(.{ .y = @intCast(y), .x = max.x }, border_style.vertical);
+            try self.draw_at(.{ .y = @intCast(y), .x = min.x }, border.edge.vertical);
+            try self.draw_at(.{ .y = @intCast(y), .x = max.x }, border.edge.vertical);
         }
 
         // write corners last so that it overwrites the edges (this simplifies code)
-        try self.draw_at(.{ .x = min.x, .y = min.y }, border_style.top_left);
-        try self.draw_at(.{ .x = max.x, .y = min.y }, border_style.top_right);
-        try self.draw_at(.{ .x = min.x, .y = max.y }, border_style.bottom_left);
-        try self.draw_at(.{ .x = max.x, .y = max.y }, border_style.bottom_right);
+        try self.draw_at(.{ .x = min.x, .y = min.y }, corners.top_left);
+        try self.draw_at(.{ .x = max.x, .y = min.y }, corners.top_right);
+        try self.draw_at(.{ .x = min.x, .y = max.y }, corners.bottom_left);
+        try self.draw_at(.{ .x = max.x, .y = max.y }, corners.bottom_right);
+    }
+
+    fn draw_split(self: *@This(), min: Vec2, max: Vec2, x: ?i32, y: ?i32) !void {
+        if (y) |_y| {
+            const x_lim = max.min(self.size).sub(min).max(.{}).x;
+            try self.cursor_move(.{ .x = min.x, .y = _y });
+            try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(x_lim));
+            try self.draw_at(.{ .y = _y, .x = min.x }, border.cross.three.nse);
+            try self.draw_at(.{ .y = _y, .x = max.x }, border.cross.three.nws);
+        }
+        if (x) |_x| {
+            for (@intCast(min.min(self.size).y)..@intCast(self.size.min(max.add(.splat(1))).y)) |_y| {
+                try self.draw_at(.{ .x = _x, .y = @intCast(_y) }, border.edge.vertical);
+            }
+            try self.draw_at(.{ .x = _x, .y = min.y }, border.cross.three.wse);
+            try self.draw_at(.{ .x = _x, .y = max.y }, border.cross.three.wne);
+        }
+        if (x) |_x| if (y) |_y| try self.draw_at(.{ .x = _x, .y = _y }, border.cross.four);
     }
 
     fn draw_buf(self: *@This(), buf: []const u8, min: Vec2, max: Vec2) !void {
@@ -381,9 +408,12 @@ pub fn main() !void {
 
             const min = Vec2{ .x = 30, .y = 3 };
             const max = min.add(.{ .x = 60, .y = 20 });
+            const split_x: i32 = 55;
             try term.clear_region(min, max);
             try term.draw_border(min, max, border.rounded);
-            try term.draw_buf(jj_output, min.add(.splat(1)), max.sub(.splat(1)));
+            try term.draw_split(min, max, split_x, null);
+            try term.draw_buf(jj_output, min.add(.splat(1)), (Vec2{ .x = split_x, .y = max.y }).sub(.splat(1)));
+            try term.draw_buf(jj_output, (Vec2{ .x = split_x, .y = min.y }).add(.splat(1)), max.sub(.splat(1)));
         }
         try term.flush_writes();
 

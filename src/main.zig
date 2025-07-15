@@ -159,7 +159,7 @@ const Term = struct {
     fn clear_region(self: *@This(), offset: Vec2, size: Vec2) !void {
         for (offset.y..offset.y + size.y) |y| {
             try self.cursor_move(.{ .y = cast(u16, y), .x = offset.x });
-            try self.writer().writeByteNTimes(' ', size.x);
+            try self.writer().writeByteNTimes(' ', @min(size.x, cast(u16, @max(cast(i32, self.size.x) - offset.x, 0))));
         }
     }
 
@@ -177,7 +177,7 @@ const Term = struct {
                 // but don't print beyond the size
                 if (token.is_ansi_codepoint) {
                     try self.writer().writeAll(token.grapheme);
-                } else if (x < size.x) {
+                } else if (x < size.x and (x + offset.x < self.size.x)) {
                     try self.writer().writeAll(token.grapheme);
                     x += 1;
                 }

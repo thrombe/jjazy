@@ -8,6 +8,7 @@ const ansi = struct {
     const attr_reset = "\x1B[0m";
     const sync_set = "\x1B[?2026h";
     const sync_reset = "\x1B[?2026l";
+    const clear_to_line_end = "\x1b[0K";
     const cursor = struct {
         const hide = "\x1B[?25l";
         const show = "\x1B[?25h";
@@ -115,6 +116,14 @@ const TermStyledGraphemeIterator = struct {
         }
         if (buf[start + 1] != '[') {
             return error.CannotDecodeYet;
+        }
+
+        // filter ansi.clear_to_line_end :P. we don't need it anyway.
+        if (std.mem.startsWith(u8, buf[start..], ansi.clear_to_line_end)) {
+            self.utf8.i = start + ansi.clear_to_line_end.len;
+            token.grapheme = &.{};
+            token.is_ansi_codepoint = true;
+            return token;
         }
 
         const len = self.consume_till_m();

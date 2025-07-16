@@ -352,6 +352,87 @@ const Term = struct {
     }
 };
 
+const JujutsuServer = struct {
+    alloc: std.mem.Allocator,
+    quit: utils_mod.Fuse = .{},
+    thread: std.Thread,
+    requests: utils_mod.Channel(Request),
+    responses: utils_mod.Channel(Response),
+
+    const Request = union(enum) {
+        status,
+        diff,
+    };
+
+    const Result = union(enum) {
+        ok: []u8,
+        err: []u8,
+    };
+
+    const Response = struct {
+        req: Request,
+        res: Result,
+    };
+
+    fn init(alloc: std.mem.Allocator) !*@This() {
+        const self = try alloc.create(@This());
+        errdefer alloc.destroy(self);
+
+        self.* = .{
+            .responses = try .init(alloc),
+            .requests = try .init(alloc),
+            .alloc = alloc,
+            .thread = undefined,
+        };
+
+        self.thread = try std.Thread.spawn(.{}, @This()._start, .{self});
+        errdefer {
+            _ = self.quit.fuse();
+            self.thread.join();
+        }
+
+        return self;
+    }
+
+    fn deinit(self: *@This()) void {
+        const alloc = self.alloc;
+        defer alloc.destroy(self);
+        defer self.responses.deinit();
+        defer self.requests.deinit();
+        defer self.thread.join();
+        _ = self.quit.fuse();
+    }
+
+    fn _start(self: *@This()) void {
+        self.start() catch |e| utils_mod.dump_error(e);
+    }
+
+    fn start(self: *@This()) !void {
+        while (true) {
+            while (self.requests.try_recv()) |req| switch (req) {
+                .status => {
+                    const res = utils_mod.jjcall(&[_][]const u8{ "jj", "--color", "always" }, self.alloc) catch |e| {
+                        utils_mod.dump_error(e);
+                        continue;
+                    };
+                    try self.responses.send(.{ .req = req, .res = .{ .ok = res } });
+                },
+                .diff => {
+                    const res = utils_mod.jjcall(&[_][]const u8{ "jj", "--color", "always", "diff" }, self.alloc) catch |e| {
+                        utils_mod.dump_error(e);
+                        continue;
+                    };
+                    try self.responses.send(.{ .req = req, .res = .{ .ok = res } });
+                },
+            };
+
+            if (self.quit.check()) break;
+
+            std.Thread.sleep(std.time.ns_per_ms * 100);
+        }
+    }
+};
+
 const App = struct {
     term: Term,
 
@@ -359,6 +440,8 @@ const App = struct {
 
     input_thread: std.Thread,
     events: utils_mod.Channel(Event),
+
+    jj: *JujutsuServer,
 
     alloc: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
@@ -394,11 +477,15 @@ const App = struct {
         var events = try utils_mod.Channel(Event).init(alloc);
         errdefer events.deinit();
 
+        const jj = try JujutsuServer.init(alloc);
+        errdefer jj.deinit();
+
         self.* = .{
             .alloc = alloc,
             .arena = arena,
             .term = term,
             .events = events,
+            .jj = jj,
             .input_thread = undefined,
         };
 
@@ -418,8 +505,9 @@ const App = struct {
         defer alloc.destroy(self);
         defer self.arena.deinit();
         defer self.term.deinit();
-        defer self.events.deinit();
         defer self.term.cook_restore() catch |e| utils_mod.dump_error(e);
+        defer self.events.deinit();
+        defer self.jj.deinit();
         defer self.input_thread.join();
         _ = self.quit.fuse();
     }
@@ -464,7 +552,6 @@ const App = struct {
                     }
                 },
                 .quit => {
-                    _ = self.quit.fuse();
                     return;
                 },
             };

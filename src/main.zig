@@ -501,89 +501,33 @@ pub fn main() !void {
     try app.event_loop();
 }
 
-pub fn main1() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
-    defer _ = gpa.deinit();
-    const alloc = gpa.allocator();
+// pub fn main1() !void {
+//     var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
+//     defer _ = gpa.deinit();
+//     const alloc = gpa.allocator();
 
-    var arena = std.heap.ArenaAllocator.init(alloc);
-    defer arena.deinit();
-    const temp = arena.allocator();
+//     while (true) {
+//         var buf = std.mem.zeroes([1]u8);
 
-    var term = try Term.init(alloc);
-    defer term.deinit();
+//         if (buf[0] == 'q') {
+//             return;
+//         } else if (buf[0] == '\x1B') {
+//             term.raw.?.cc[@intCast(@intFromEnum(std.posix.V.TIME))] = 1;
+//             term.raw.?.cc[@intCast(@intFromEnum(std.posix.V.MIN))] = 0;
+//             try std.posix.tcsetattr(term.tty.handle, .NOW, term.raw.?);
 
-    const jj_output = try utils_mod.jjcall(&[_][]const u8{ "jj", "--color", "always" }, temp);
-    var inputs = std.ArrayList([]const u8).init(temp);
-    defer {
-        for (inputs.items) |line| {
-            outer: for (line) |char| {
-                if (char == '\x1B') {
-                    std.debug.print("\\x1B", .{});
-                } else if (char == '\n' or char == '\r') {
-                    continue :outer;
-                } else {
-                    const chars = [_]u8{ 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'j', 'k', 'l', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w' };
-                    for (chars) |c| {
-                        if (char == c & '\x1F') {
-                            std.debug.print("\\x{c}", .{c});
-                            continue :outer;
-                        }
-                    }
+//             var esc_buf: [8]u8 = undefined;
+//             const esc_read = try term.tty.read(&esc_buf);
 
-                    std.debug.print("{c}", .{char});
-                }
-            }
-            std.debug.print("\n", .{});
-        }
-    }
+//             term.raw.?.cc[@intCast(@intFromEnum(std.posix.V.TIME))] = 0;
+//             term.raw.?.cc[@intCast(@intFromEnum(std.posix.V.MIN))] = 1;
+//             try std.posix.tcsetattr(term.tty.handle, .NOW, term.raw.?);
 
-    try term.uncook(struct {
-        fn winch(_: c_int) callconv(.C) void {}
-    });
-    defer term.cook_restore() catch |e| utils_mod.dump_error(e);
-
-    while (true) {
-        try term.update_size();
-        {
-            try term.clear_region(.{}, term.size.sub(.splat(1)));
-            try term.draw_border(.{}, term.size.sub(.splat(1)), border.rounded);
-            try term.draw_buf(jj_output, .splat(1), term.size.sub(.splat(2)));
-
-            const min = Vec2{ .x = 30, .y = 3 };
-            const max = min.add(.{ .x = 60, .y = 20 });
-            const split_x: i32 = 55;
-            try term.clear_region(min, max);
-            try term.draw_border(min, max, border.rounded);
-            try term.draw_split(min, max, split_x, null);
-            try term.draw_buf(jj_output, (Vec2{ .x = split_x, .y = min.y }).add(.splat(1)), max.sub(.splat(1)));
-            try term.draw_buf(jj_output, min.add(.splat(1)), (Vec2{ .x = split_x, .y = max.y }).sub(.splat(1)));
-        }
-        try term.flush_writes();
-
-        var buf = std.mem.zeroes([1]u8);
-        const len = try term.tty.read(&buf);
-        try inputs.append(try temp.dupe(u8, buf[0..len]));
-
-        if (buf[0] == 'q') {
-            return;
-        } else if (buf[0] == '\x1B') {
-            term.raw.?.cc[@intCast(@intFromEnum(std.posix.V.TIME))] = 1;
-            term.raw.?.cc[@intCast(@intFromEnum(std.posix.V.MIN))] = 0;
-            try std.posix.tcsetattr(term.tty.handle, .NOW, term.raw.?);
-
-            var esc_buf: [8]u8 = undefined;
-            const esc_read = try term.tty.read(&esc_buf);
-
-            term.raw.?.cc[@intCast(@intFromEnum(std.posix.V.TIME))] = 0;
-            term.raw.?.cc[@intCast(@intFromEnum(std.posix.V.MIN))] = 1;
-            try std.posix.tcsetattr(term.tty.handle, .NOW, term.raw.?);
-
-            if (std.mem.eql(u8, esc_buf[0..esc_read], "[A")) {
-                term.i -|= 1;
-            } else if (std.mem.eql(u8, esc_buf[0..esc_read], "[B")) {
-                term.i = @min(term.i + 1, 3);
-            }
-        }
-    }
-}
+//             if (std.mem.eql(u8, esc_buf[0..esc_read], "[A")) {
+//                 term.i -|= 1;
+//             } else if (std.mem.eql(u8, esc_buf[0..esc_read], "[B")) {
+//                 term.i = @min(term.i + 1, 3);
+//             }
+//         }
+//     }
+// }

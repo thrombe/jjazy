@@ -8,7 +8,7 @@ const ansi = struct {
     const attr_reset = "\x1B[0m";
     const sync_set = "\x1B[?2026h";
     const sync_reset = "\x1B[?2026l";
-    const clear_to_line_end = "\x1b[0K";
+    const clear_to_line_end = "\x1B[0K";
     const cursor = struct {
         const hide = "\x1B[?25l";
         const show = "\x1B[?25h";
@@ -464,6 +464,7 @@ const App = struct {
     alloc: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
 
+    y: i32 = 0,
     status: []const u8,
     diff: []const u8,
 
@@ -572,6 +573,15 @@ const App = struct {
                     if (char == 'q') {
                         try self.events.send(.quit);
                     }
+                    if (char == 'j') {
+                        self.y += 1;
+                        try self.events.send(.rerender);
+                    }
+                    if (char == 'k') {
+                        self.y -= 1;
+                        self.y = @max(0, self.y);
+                        try self.events.send(.rerender);
+                    }
                 },
                 .quit => {
                     return;
@@ -614,7 +624,7 @@ const App = struct {
         {
             try self.term.clear_region(.{}, self.term.size.sub(.splat(1)));
             try self.term.draw_border(.{}, self.term.size.sub(.splat(1)), border.rounded);
-            _ = try self.term.draw_buf(self.diff, .splat(1), self.term.size.sub(.splat(2)), 0, 0);
+            _ = try self.term.draw_buf(self.status, .splat(1), self.term.size.sub(.splat(2)), 0, cast(u32, self.y));
 
             const min = Vec2{ .x = 30, .y = 3 };
             const max = min.add(.{ .x = 60, .y = 20 });

@@ -418,7 +418,7 @@ const JujutsuServer = struct {
                     try self.responses.send(.{ .req = req, .res = .{ .ok = res } });
                 },
                 .diff => {
-                    const res = utils_mod.jjcall(&[_][]const u8{ "jj", "--color", "always", "diff" }, self.alloc) catch |e| {
+                    const res = utils_mod.jjcall(&[_][]const u8{ "jj", "--color", "always", "diff", "--tool", "delta" }, self.alloc) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
                     };
@@ -446,8 +446,8 @@ const App = struct {
     alloc: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
 
-    // status: Status,
-    // diff: Diff,
+    status: []const u8,
+    diff: []const u8,
 
     const Event = union(enum) {
         sigwinch,
@@ -455,9 +455,6 @@ const App = struct {
         quit,
         input: u8,
     };
-
-    const Status = struct {};
-    const Diff = struct {};
 
     var app: *@This() = undefined;
 
@@ -480,12 +477,17 @@ const App = struct {
         const jj = try JujutsuServer.init(alloc);
         errdefer jj.deinit();
 
+        try jj.requests.send(.status);
+        try jj.requests.send(.diff);
+
         self.* = .{
             .alloc = alloc,
             .arena = arena,
             .term = term,
             .events = events,
             .jj = jj,
+            .status = &.{},
+            .diff = &.{},
             .input_thread = undefined,
         };
 
@@ -503,6 +505,8 @@ const App = struct {
     fn deinit(self: *@This()) void {
         const alloc = self.alloc;
         defer alloc.destroy(self);
+        defer alloc.free(self.status);
+        defer alloc.free(self.diff);
         defer self.arena.deinit();
         defer self.term.deinit();
         defer self.term.cook_restore() catch |e| utils_mod.dump_error(e);
@@ -556,27 +560,52 @@ const App = struct {
                 },
             };
 
+            while (self.jj.responses.try_recv()) |res| switch (res.req) {
+                .status => {
+                    self.alloc.free(self.status);
+                    switch (res.res) {
+                        .ok => |buf| {
+                            self.status = buf;
+                        },
+                        .err => |buf| {
+                            self.status = buf;
+                        },
+                    }
+                    try self.events.send(.rerender);
+                },
+                .diff => {
+                    self.alloc.free(self.diff);
+                    switch (res.res) {
+                        .ok => |buf| {
+                            self.diff = buf;
+                        },
+                        .err => |buf| {
+                            self.diff = buf;
+                        },
+                    }
+                    try self.events.send(.rerender);
+                },
+            };
+
             std.Thread.sleep(std.time.ns_per_ms * 100);
         }
     }
 
     fn render(self: *@This()) !void {
-        const jj_output = " oof man ";
-
         try self.term.update_size();
         {
             try self.term.clear_region(.{}, self.term.size.sub(.splat(1)));
+            try self.term.draw_buf(self.diff, .splat(1), self.term.size.sub(.splat(2)));
             try self.term.draw_border(.{}, self.term.size.sub(.splat(1)), border.rounded);
-            try self.term.draw_buf(jj_output, .splat(1), self.term.size.sub(.splat(2)));
 
             const min = Vec2{ .x = 30, .y = 3 };
             const max = min.add(.{ .x = 60, .y = 20 });
             const split_x: i32 = 55;
             try self.term.clear_region(min, max);
+            try self.term.draw_buf(self.diff, min.add(.splat(1)), (Vec2{ .x = split_x, .y = max.y }).sub(.splat(1)));
+            try self.term.draw_buf(self.status, (Vec2{ .x = split_x, .y = min.y }).add(.splat(1)), max.sub(.splat(1)));
             try self.term.draw_border(min, max, border.rounded);
             try self.term.draw_split(min, max, split_x, null);
-            try self.term.draw_buf(jj_output, (Vec2{ .x = split_x, .y = min.y }).add(.splat(1)), max.sub(.splat(1)));
-            try self.term.draw_buf(jj_output, min.add(.splat(1)), (Vec2{ .x = split_x, .y = max.y }).sub(.splat(1)));
         }
         try self.term.flush_writes();
     }

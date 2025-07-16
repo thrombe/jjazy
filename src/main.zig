@@ -368,6 +368,7 @@ const App = struct {
 
     const Event = union(enum) {
         sigwinch,
+        rerender,
         quit,
         input: u8,
     };
@@ -447,12 +448,15 @@ const App = struct {
     }
 
     fn event_loop(self: *@This()) !void {
-        try self.render();
+        try self.events.send(.rerender);
 
         while (true) {
             while (self.events.try_recv()) |event| switch (event) {
-                .sigwinch => {
+                .rerender => {
                     try self.render();
+                },
+                .sigwinch => {
+                    try self.events.send(.rerender);
                 },
                 .input => |char| {
                     if (char == 'q') {

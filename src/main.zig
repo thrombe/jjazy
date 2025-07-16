@@ -150,8 +150,6 @@ const Term = struct {
     alloc: std.mem.Allocator,
     cmdbuf: std.ArrayList(u8),
 
-    const Input = struct {};
-
     fn init(alloc: std.mem.Allocator) !@This() {
         const tty = try std.fs.cwd().openFile("/dev/tty", .{ .mode = .read_write });
         errdefer tty.close();
@@ -356,7 +354,11 @@ const Term = struct {
 
 const App = struct {
     term: Term,
-    inputs: utils_mod.Channel(Term.Input),
+
+    quit: utils_mod.Fuse = .{},
+
+    input_thread: std.Thread,
+    events: utils_mod.Channel(Event),
 
     alloc: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
@@ -364,7 +366,11 @@ const App = struct {
     // status: Status,
     // diff: Diff,
 
-    quit: utils_mod.Fuse = .{},
+    const Event = union(enum) {
+        sigwinch,
+        quit,
+        input: u8,
+    };
 
     const Status = struct {};
     const Diff = struct {};
@@ -381,18 +387,27 @@ const App = struct {
         var term = try Term.init(alloc);
         errdefer term.deinit();
 
-        var inputs = try utils_mod.Channel(Term.Input).init(alloc);
-        errdefer inputs.deinit();
-
         try term.uncook(@This());
         errdefer term.cook_restore() catch |e| utils_mod.dump_error(e);
+
+        var events = try utils_mod.Channel(Event).init(alloc);
+        errdefer events.deinit();
 
         self.* = .{
             .alloc = alloc,
             .arena = arena,
             .term = term,
-            .inputs = inputs,
+            .events = events,
+            .input_thread = undefined,
         };
+
+        const input_thread = try std.Thread.spawn(.{}, @This()._input_loop, .{self});
+        errdefer {
+            _ = self.quit.fuse();
+            input_thread.join();
+        }
+
+        self.input_thread = input_thread;
         app = self;
         return self;
     }
@@ -402,12 +417,77 @@ const App = struct {
         defer alloc.destroy(self);
         defer self.arena.deinit();
         defer self.term.deinit();
-        defer self.inputs.deinit();
+        defer self.events.deinit();
         defer self.term.cook_restore() catch |e| utils_mod.dump_error(e);
+        defer self.input_thread.join();
+        _ = self.quit.fuse();
     }
 
     fn winch(_: c_int) callconv(.C) void {
-        _ = app;
+        app.events.send(.sigwinch) catch |e| utils_mod.dump_error(e);
+    }
+
+    fn _input_loop(self: *@This()) void {
+        self.input_loop() catch |e| utils_mod.dump_error(e);
+    }
+
+    fn input_loop(self: *@This()) !void {
+        while (true) {
+            var fds = [1]std.posix.pollfd{.{ .fd = self.term.tty.handle, .events = std.posix.POLL.IN, .revents = 0 }};
+            if (try std.posix.poll(&fds, 100) > 0) {
+                var buf = std.mem.zeroes([1]u8);
+                _ = try self.term.tty.read(&buf);
+                try self.events.send(.{ .input = buf[0] });
+            }
+
+            if (self.quit.check()) {
+                break;
+            }
+        }
+    }
+
+    fn event_loop(self: *@This()) !void {
+        try self.render();
+
+        while (true) {
+            while (self.events.try_recv()) |event| switch (event) {
+                .sigwinch => {
+                    try self.render();
+                },
+                .input => |char| {
+                    if (char == 'q') {
+                        try self.events.send(.quit);
+                    }
+                },
+                .quit => {
+                    _ = self.quit.fuse();
+                    return;
+                },
+            };
+
+            std.Thread.sleep(std.time.ns_per_ms * 100);
+        }
+    }
+
+    fn render(self: *@This()) !void {
+        const jj_output = " oof man ";
+
+        try self.term.update_size();
+        {
+            try self.term.clear_region(.{}, self.term.size.sub(.splat(1)));
+            try self.term.draw_border(.{}, self.term.size.sub(.splat(1)), border.rounded);
+            try self.term.draw_buf(jj_output, .splat(1), self.term.size.sub(.splat(2)));
+
+            const min = Vec2{ .x = 30, .y = 3 };
+            const max = min.add(.{ .x = 60, .y = 20 });
+            const split_x: i32 = 55;
+            try self.term.clear_region(min, max);
+            try self.term.draw_border(min, max, border.rounded);
+            try self.term.draw_split(min, max, split_x, null);
+            try self.term.draw_buf(jj_output, (Vec2{ .x = split_x, .y = min.y }).add(.splat(1)), max.sub(.splat(1)));
+            try self.term.draw_buf(jj_output, min.add(.splat(1)), (Vec2{ .x = split_x, .y = max.y }).sub(.splat(1)));
+        }
+        try self.term.flush_writes();
     }
 };
 
@@ -417,6 +497,8 @@ pub fn main() !void {
 
     const app = try App.init(gpa.allocator());
     defer app.deinit();
+
+    try app.event_loop();
 }
 
 pub fn main1() !void {

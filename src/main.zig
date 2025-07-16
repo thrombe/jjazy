@@ -262,11 +262,16 @@ const Term = struct {
         if (x) |_x| if (y) |_y| try self.draw_at(.{ .x = _x, .y = _y }, border.cross.nwse);
     }
 
-    fn draw_buf(self: *@This(), buf: []const u8, min: Vec2, max: Vec2) !void {
+    fn draw_buf(self: *@This(), buf: []const u8, min: Vec2, max: Vec2, y_offset: i32, y_skip: u32) !i32 {
+        var last_y: i32 = y_offset;
+
         var line_it = utils_mod.LineIterator{ .buf = buf };
-        for (@intCast(self.size.min(min).max(.{}).y)..@intCast(self.size.min(max.add(.splat(1))).y)) |y| {
+        for (0..y_skip) |_| _ = line_it.next();
+
+        // these ranges look crazy to handle edge conditions :P
+        for (@intCast(self.size.min(.{ .x = min.x, .y = min.y + y_offset }).max(.{}).y)..@intCast(self.size.min((Vec2{ .x = max.x, .y = @max(max.y, min.y + y_offset) }).add(.splat(1))).y)) |y| {
             const line = line_it.next() orelse break;
-            try self.cursor_move(.{ .y = cast(u16, y), .x = min.x });
+            try self.cursor_move(.{ .y = cast(i32, y), .x = min.x });
 
             var codepoint_it = try TermStyledGraphemeIterator.init(line);
 
@@ -281,7 +286,11 @@ const Term = struct {
                     x += 1;
                 }
             }
+
+            last_y += 1;
         }
+
+        return last_y;
     }
 
     fn update_size(self: *@This()) !void {
@@ -604,17 +613,18 @@ const App = struct {
         try self.term.update_size();
         {
             try self.term.clear_region(.{}, self.term.size.sub(.splat(1)));
-            try self.term.draw_buf(self.diff, .splat(1), self.term.size.sub(.splat(2)));
             try self.term.draw_border(.{}, self.term.size.sub(.splat(1)), border.rounded);
+            _ = try self.term.draw_buf(self.diff, .splat(1), self.term.size.sub(.splat(2)), 0, 0);
 
             const min = Vec2{ .x = 30, .y = 3 };
             const max = min.add(.{ .x = 60, .y = 20 });
             const split_x: i32 = 55;
             try self.term.clear_region(min, max);
-            try self.term.draw_buf(self.diff, min.add(.splat(1)), (Vec2{ .x = split_x, .y = max.y }).sub(.splat(1)));
-            try self.term.draw_buf(self.status, (Vec2{ .x = split_x, .y = min.y }).add(.splat(1)), max.sub(.splat(1)));
             try self.term.draw_border(min, max, border.rounded);
             try self.term.draw_split(min, max, split_x, null);
+            const y_off = try self.term.draw_buf("hello man", min.add(.splat(1)), (Vec2{ .x = split_x, .y = max.y }).sub(.splat(1)), 0, 0);
+            _ = try self.term.draw_buf(self.diff, min.add(.splat(1)), (Vec2{ .x = split_x, .y = max.y }).sub(.splat(1)), y_off, 0);
+            _ = try self.term.draw_buf(self.status, (Vec2{ .x = split_x, .y = min.y }).add(.splat(1)), max.sub(.splat(1)), 0, 0);
         }
         try self.term.flush_writes();
     }

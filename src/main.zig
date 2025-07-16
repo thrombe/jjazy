@@ -446,7 +446,7 @@ const JujutsuServer = struct {
 
             if (self.quit.check()) break;
 
-            std.Thread.sleep(std.time.ns_per_ms * 100);
+            std.Thread.sleep(std.time.ns_per_ms * 20);
         }
     }
 };
@@ -546,7 +546,7 @@ const App = struct {
     fn input_loop(self: *@This()) !void {
         while (true) {
             var fds = [1]std.posix.pollfd{.{ .fd = self.term.tty.handle, .events = std.posix.POLL.IN, .revents = 0 }};
-            if (try std.posix.poll(&fds, 100) > 0) {
+            if (try std.posix.poll(&fds, 20) > 0) {
                 var buf = std.mem.zeroes([1]u8);
                 _ = try self.term.tty.read(&buf);
                 try self.events.send(.{ .input = buf[0] });
@@ -615,7 +615,7 @@ const App = struct {
                 },
             };
 
-            std.Thread.sleep(std.time.ns_per_ms * 100);
+            std.Thread.sleep(std.time.ns_per_ms * 20);
         }
     }
 

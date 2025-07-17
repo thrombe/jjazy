@@ -82,7 +82,37 @@ const TermStyledGraphemeIterator = struct {
 
     const Token = struct {
         grapheme: []const u8,
-        is_ansi_codepoint: bool,
+        // codepoint: ?Codepoint,
+        codepoint: bool,
+    };
+
+    const Codepoint = union(enum) {
+        cursor_up: u32,
+        cursor_down: u32,
+        cursor_fwd: u32,
+        cursor_back: u32,
+        cursor_next_line: u32,
+        cursor_prev_line: u32,
+        cursor_horizontal_absolute: u32,
+        cursor_set_position: struct { n: u32, m: u32 },
+        erase_in_display: u32,
+        erase_in_line: u32,
+        scroll_up: u32,
+        scroll_down: u32,
+        // select_graphics_rendition: Color,
+        cursor_get_position,
+
+        cursor_position_save,
+        cursor_position_restore,
+        cursor_hide,
+        enable_focus_reporting, // ESC[I and ESC[0
+        disable_focus_reporting,
+        enable_alt_screen,
+        disable_alt_screen,
+        enable_bracketed_paste, // ESC[200~ <content> ESC[201~
+        disable_bracketed_paste,
+        render_sync_start,
+        render_sync_end,
     };
 
     fn init(buf: []const u8) !@This() {
@@ -96,13 +126,13 @@ const TermStyledGraphemeIterator = struct {
         const buf = self.utf8.bytes;
         const start = self.utf8.i;
         const c = self.utf8.nextCodepointSlice() orelse return null;
-        var token = Token{ .grapheme = c, .is_ansi_codepoint = false };
+        var token = Token{ .grapheme = c, .codepoint = false };
         if (c.len > 1) {
             return token;
         }
         const char = c[0];
         if (char & '\x1F' >= 'a' and char & '\x1F' <= 'w') {
-            token.is_ansi_codepoint = true;
+            token.codepoint = true;
             return token;
         }
         if (char == '\n' or char == '\r') {
@@ -122,7 +152,7 @@ const TermStyledGraphemeIterator = struct {
         if (std.mem.startsWith(u8, buf[start..], ansi.clear_to_line_end)) {
             self.utf8.i = start + ansi.clear_to_line_end.len;
             token.grapheme = &.{};
-            token.is_ansi_codepoint = true;
+            token.codepoint = true;
             return token;
         }
 
@@ -130,7 +160,7 @@ const TermStyledGraphemeIterator = struct {
         if (len == 0) {
             return error.BadCodepoint;
         }
-        return Token{ .grapheme = buf[start..][0..len], .is_ansi_codepoint = true };
+        return Token{ .grapheme = buf[start..][0..len], .codepoint = true };
     }
 
     fn consume_till_m(self: *@This()) usize {
@@ -147,6 +177,107 @@ const TermStyledGraphemeIterator = struct {
         }
         return 0;
     }
+
+    fn next_codepoint(self: *@This()) !?Token {
+        const buf = self.utf8.bytes[self.utf8.i..];
+        var it = ByteIterator{ .buf = buf };
+        switch (it.next() orelse return null) {
+            // https://en.wikipedia.org/wiki/ANSI_escape_code#C0_control_codes
+            // 0x07, 0x08, 0x09, 0x0A, 0x0C, 0x0D => return Token{ .grapheme = try self.consume(it.i), .codepoint = null },
+
+            0x1B => switch (try it.expect()) {
+                '[' => {
+                    if (it.consume("6n")) return Token{ .grapheme = try self.consume(it.i), .codepoint = .cursor_get_position };
+                    if (it.consume("?1004h")) return Token{ .grapheme = try self.consume(it.i), .codepoint = .enable_focus_reporting };
+                    if (it.consume("?1004l")) return Token{ .grapheme = try self.consume(it.i), .codepoint = .disable_focus_reporting };
+                    if (it.consume("?1049h")) return Token{ .grapheme = try self.consume(it.i), .codepoint = .enable_alt_screen };
+                    if (it.consume("?1049l")) return Token{ .grapheme = try self.consume(it.i), .codepoint = .disable_alt_screen };
+                    if (it.consume("?2004h")) return Token{ .grapheme = try self.consume(it.i), .codepoint = .enable_bracketed_paste };
+                    if (it.consume("?2004l")) return Token{ .grapheme = try self.consume(it.i), .codepoint = .disable_bracketed_paste };
+                    if (it.consume("?2006h")) return Token{ .grapheme = try self.consume(it.i), .codepoint = .render_sync_start };
+                    if (it.consume("?2006l")) return Token{ .grapheme = try self.consume(it.i), .codepoint = .render_sync_end };
+
+                    const n = it.param();
+                    _ = it.consume(";");
+                    const m = it.param();
+                    switch (try it.expect()) {
+                        'A' => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .cursor_up = n orelse 1 } },
+                        'B' => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .cursor_down = n orelse 1 } },
+                        'C' => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .cursor_fwd = n orelse 1 } },
+                        'D' => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .cursor_back = n orelse 1 } },
+                        'E' => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .cursor_next_line = n orelse 1 } },
+                        'F' => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .cursor_prev_line = n orelse 1 } },
+                        'G' => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .cursor_horizontal_absolute = n orelse 1 } },
+                        'H' => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .cursor_set_position = .{ .n = n orelse 1, .m = m orelse 1 } } },
+                        'J' => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .erase_in_display = n orelse 0 } },
+                        'K' => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .erase_in_line = n orelse 0 } },
+                        'S' => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .scroll_up = n orelse 1 } },
+                        'T' => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .scroll_down = n orelse 1 } },
+                        's' => return Token{ .grapheme = try self.consume(it.i), .codepoint = .cursor_position_save },
+                        'u' => return Token{ .grapheme = try self.consume(it.i), .codepoint = .cursor_position_restore },
+                        else => return error.CannotHandleThisByte,
+                    }
+                },
+                else => return error.CannotHandleThisByte,
+            },
+            else => return null,
+        }
+    }
+
+    fn consume(self: *@This(), n: u32) ![]const u8 {
+        const buf = self.utf8.bytes[self.utf8.i..];
+        if (buf.len < n) return error.ExpectedMoreBytes;
+        self.utf8.i += n;
+        return buf[0..n];
+    }
+
+    const ByteIterator = struct {
+        buf: []const u8,
+        i: u32 = 0,
+
+        fn peek(self: *@This()) ?u8 {
+            if (self.buf.len > self.i) {
+                return self.buf[self.i];
+            }
+            return null;
+        }
+
+        fn next(self: *@This()) ?u8 {
+            if (self.buf.len > self.i) {
+                defer self.i += 1;
+                return self.buf[self.i];
+            }
+            return null;
+        }
+
+        fn expect(self: *@This()) !u8 {
+            return self.next() orelse return error.ExpectedAnotherByte;
+        }
+
+        fn param(self: *@This()) ?u32 {
+            var n: ?u32 = 0;
+            while (self.peek()) |x| switch (x) {
+                '0'...'9' => {
+                    if (n == null) n = 0;
+                    n.? *= 10;
+                    n.? += x;
+                    self.i += 1;
+                },
+                else => return n,
+            };
+            return n;
+        }
+
+        fn consume(self: *@This(), buf: []const u8) bool {
+            var it = self.*;
+            for (buf) |c| {
+                const d = it.next() orelse return false;
+                if (c != d) return false;
+            }
+            self.* = it;
+            return true;
+        }
+    };
 };
 
 const Term = struct {
@@ -279,7 +410,7 @@ const Term = struct {
             while (try codepoint_it.next()) |token| {
                 // execute all control chars
                 // but don't print beyond the size
-                if (token.is_ansi_codepoint) {
+                if (token.codepoint) {
                     try self.writer().writeAll(token.grapheme);
                 } else if (x <= max.min(self.size.sub(.splat(1))).x) {
                     try self.writer().writeAll(token.grapheme);

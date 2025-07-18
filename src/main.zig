@@ -702,7 +702,7 @@ const ChangeIterator = struct {
                         break :blk chunk;
                     }
                 }
-                unreachable;
+                return error.ErrorParsingChangeHash;
             };
             const id = blk: {
                 var chunks = std.mem.splitScalar(u8, self.scratch.items, ' ');
@@ -711,7 +711,7 @@ const ChangeIterator = struct {
                         break :blk chunk;
                     }
                 }
-                unreachable;
+                return error.ErrorParsingChangeId;
             };
 
             var change = std.mem.zeroes(Change);

@@ -664,6 +664,73 @@ const JujutsuServer = struct {
     }
 };
 
+const ChangeIterator = struct {
+    line_index: u32 = 0,
+    state: utils_mod.LineIterator,
+
+    alloc: std.mem.Allocator,
+    temp: std.heap.ArenaAllocator,
+    scratch: std.ArrayListUnmanaged(u8),
+
+    fn init(alloc: std.mem.Allocator, buf: []const u8) !@This() {
+        return .{ .alloc = alloc, .temp = .init(alloc), .scratch = .{}, .state = .init(buf) };
+    }
+
+    fn deinit(self: *@This()) void {
+        self.temp.deinit();
+    }
+
+    fn next(self: *@This()) !?Change {
+        while (self.state.next()) |line| {
+            self.line_index += 1;
+            if (self.line_index % 2 == 0) continue;
+
+            self.scratch.clearRetainingCapacity();
+            var tokens = try TermStyledGraphemeIterator.init(line);
+
+            while (try tokens.next()) |token| {
+                if (token.codepoint != null) {
+                    continue;
+                }
+
+                try self.scratch.appendSlice(self.temp.allocator(), token.grapheme);
+            }
+
+            var chunks = std.mem.splitBackwardsScalar(u8, self.scratch.items, ' ');
+            const hash = chunks.next().?;
+            if (!std.mem.eql(u8, hash, "00000000")) {
+                const time = chunks.next().?;
+                _ = time;
+                const date = chunks.next().?;
+                _ = date;
+                const email = chunks.next().?;
+                _ = email;
+            } else {
+                const root = chunks.next().?;
+                _ = root;
+            }
+            const id = chunks.next().?;
+
+            return .{
+                .id = try self.alloc.dupe(u8, id),
+                .hash = try self.alloc.dupe(u8, hash),
+            };
+        }
+
+        return null;
+    }
+};
+
+const Change = struct {
+    id: []const u8,
+    hash: []const u8,
+
+    fn deinit(self: *@This(), alloc: std.mem.Allocator) void {
+        alloc.free(self.id);
+        alloc.free(self.hash);
+    }
+};
+
 const App = struct {
     term: Term,
 
@@ -857,10 +924,19 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
     defer _ = gpa.deinit();
 
-    const app = try App.init(gpa.allocator());
-    defer app.deinit();
+    // const app = try App.init(gpa.allocator());
+    // defer app.deinit();
 
-    try app.event_loop();
+    // try app.event_loop();
+
+    var temp = std.heap.ArenaAllocator.init(gpa.allocator());
+    defer temp.deinit();
+    const alloc = temp.allocator();
+    const state = try utils_mod.jjcall(&[_][]const u8{ "jj", "--color", "always" }, alloc);
+    var changes = try ChangeIterator.init(alloc, state);
+    while (try changes.next()) |change| {
+        std.debug.print("id: {s}\nhash: {s}\n", .{ change.id, change.hash });
+    }
 }
 
 // pub fn main1() !void {

@@ -108,6 +108,10 @@ pub const LineIterator = struct {
     buf: []const u8,
     index: usize = 0,
 
+    pub fn init(buf: []const u8) @This() {
+        return .{ .buf = buf };
+    }
+
     pub fn next(self: *LineIterator) ?[]const u8 {
         if (self.index >= self.buf.len) return null;
 

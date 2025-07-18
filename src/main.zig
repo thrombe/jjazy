@@ -112,7 +112,43 @@ const TermStyledGraphemeIterator = struct {
         render_sync_start,
         render_sync_end,
 
-        set_style: Style,
+        set_style: StyleSet,
+    };
+    const StyleSet = struct {
+        weight: enum { normal, faint, bold } = .normal,
+        italic: bool = false,
+        underline: enum { none, single, double } = .none,
+        blink: enum { none, slow, rapid } = .none,
+        hide: bool = false,
+        strike: bool = false,
+        font: ?u3 = null,
+        foreground_color: ?Color = null,
+        background_color: ?Color = null,
+
+        fn consume(self: *@This(), style: Style) void {
+            switch (style) {
+                .reset => self.* = .{},
+                .bold => self.weight = .bold,
+                .normal_intensity => self.weight = .normal,
+                .faint => self.weight = .faint,
+                .italic => self.italic = true,
+                .underline => self.underline = .single,
+                .double_underline => self.underline = .double,
+                .slow_blink => self.blink = .slow,
+                .rapid_blink => self.blink = .rapid,
+                .hide => self.hide = true,
+                .strike => self.strike = true,
+                .font_default => self.font = null,
+                .alt_font => |i| self.font = i,
+                .default_foreground_color => self.foreground_color = null,
+                .default_background_color => self.background_color = null,
+                .foreground_color => |col| self.foreground_color = col,
+                .background_color => |col| self.background_color = col,
+                .invert => std.mem.swap(?Color, &self.foreground_color, &self.background_color),
+
+                .not_supported => {},
+            }
+        }
     };
     const Style = union(enum) {
         reset,
@@ -133,9 +169,6 @@ const TermStyledGraphemeIterator = struct {
         default_background_color,
         foreground_color: Color,
         background_color: Color,
-
-        // this is a hack. let us hope it works
-        color: struct { background: Color, foreground: Color },
 
         not_supported,
     };
@@ -191,54 +224,58 @@ const TermStyledGraphemeIterator = struct {
                     if (it.consume("?2006h")) return Token{ .grapheme = try self.consume(it.i), .codepoint = .render_sync_start };
                     if (it.consume("?2006l")) return Token{ .grapheme = try self.consume(it.i), .codepoint = .render_sync_end };
 
-                    const n = it.param();
+                    var n = it.param();
                     _ = it.consume(";");
-                    const m = it.param();
-                    _ = it.consume(";");
-                    const r = it.param();
-                    _ = it.consume(";");
-                    const g = it.param();
-                    _ = it.consume(";");
-                    const b = it.param();
+                    var m = it.param();
 
-                    // TODO: don't do the hack
-                    {
-                        // this is totally evil man
-                        // style params can appear any number of times after '[' and before 'm'
-                        // but we don't even know if it is a style param or not, cuz we have not gotten to the 'm' yet.
-                        //
-                        // i don't want to allocate or lose the order that these styles get applied in.
-                        // so i just impl a hack here to get jj's and delta's output supported as well as i can do.
-                        //
-                        // ig there's a way to impl this nicely.
-                        //  - keep a big struct StyleSet or something, have it parse all the params
-                        //  - while going through the params, it overrites the appropriate params
-                        //  - if it gets a .reset style, clear all of them to null or something.
-                        //  - since the params that appear later override the earlier ones anyway,
-                        //    this mimics the behavior of the terminal
-                        _ = it.consume(";");
-                        const n2 = it.param();
-                        _ = it.consume(";");
-                        const m2 = it.param();
-                        _ = it.consume(";");
-                        const r2 = it.param();
-                        _ = it.consume(";");
-                        const g2 = it.param();
-                        _ = it.consume(";");
-                        const b2 = it.param();
+                    blk: {
+                        // any number of style params can come after '[' and before 'm'.
+                        // so we have a sort of state machine style style parsing. here.
+                        const bak = it;
+                        defer it = bak;
 
-                        const col1 = Color.from_params(m, r, g, b);
-                        const col2 = Color.from_params(m2, r2, g2, b2);
+                        var style = StyleSet{};
+                        while (true) {
+                            _ = it.consume(";");
+                            const r = it.param();
+                            _ = it.consume(";");
+                            const g = it.param();
+                            _ = it.consume(";");
+                            const b = it.param();
 
-                        if (col1 != null and col2 != null) {
-                            _ = it.consume("m");
-                            if (n == 38 and n2 == 48) {
-                                return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .{ .color = .{ .foreground = col1.?, .background = col2.? } } } };
-                            } else if (n == 48 and n2 == 38) {
-                                return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .{ .color = .{ .foreground = col2.?, .background = col1.? } } } };
-                            } else {
-                                return error.HackFailed;
+                            switch (n orelse 0) {
+                                0 => style.consume(.reset),
+                                1 => style.consume(.bold),
+                                2 => style.consume(.faint),
+                                3 => style.consume(.italic),
+                                4 => style.consume(.underline),
+                                5 => style.consume(.slow_blink),
+                                6 => style.consume(.rapid_blink),
+                                7 => style.consume(.invert),
+                                8 => style.consume(.hide),
+                                9 => style.consume(.strike),
+                                10 => style.consume(.font_default),
+                                11...19 => style.consume(.{ .alt_font = cast(u3, n.? - 11) }),
+
+                                39 => style.consume(.default_foreground_color),
+                                49 => style.consume(.default_background_color),
+
+                                30...37 => style.consume(.{ .foreground_color = .{ .bit3 = cast(u3, n.? - 30) } }),
+                                40...47 => style.consume(.{ .background_color = .{ .bit3 = cast(u3, n.? - 40) } }),
+
+                                38 => style.consume(.{ .foreground_color = Color.from_params(m, r, g, b) orelse return error.BadColorParams }),
+                                48 => style.consume(.{ .background_color = Color.from_params(m, r, g, b) orelse return error.BadColorParams }),
+
+                                20...29, 50...107 => style.consume(.not_supported),
+                                else => {},
                             }
+
+                            if (it.consume("m")) return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = style } };
+
+                            _ = it.consume(";");
+                            n = it.param() orelse break :blk;
+                            _ = it.consume(";");
+                            m = it.param();
                         }
                     }
 
@@ -258,34 +295,6 @@ const TermStyledGraphemeIterator = struct {
                         's' => return Token{ .grapheme = try self.consume(it.i), .codepoint = .cursor_position_save },
                         'u' => return Token{ .grapheme = try self.consume(it.i), .codepoint = .cursor_position_restore },
 
-                        'm' => {
-                            switch (n orelse 0) {
-                                0 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .reset } },
-                                1 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .bold } },
-                                2 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .faint } },
-                                3 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .italic } },
-                                4 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .underline } },
-                                5 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .slow_blink } },
-                                6 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .rapid_blink } },
-                                7 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .invert } },
-                                8 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .hide } },
-                                9 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .strike } },
-                                10 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .font_default } },
-                                11...19 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .{ .alt_font = cast(u3, n.? - 11) } } },
-
-                                39 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .default_foreground_color } },
-                                49 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .default_background_color } },
-
-                                30...37 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .{ .foreground_color = .{ .bit3 = cast(u3, n.? - 30) } } } },
-                                40...47 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .{ .background_color = .{ .bit3 = cast(u3, n.? - 40) } } } },
-
-                                38 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .{ .foreground_color = Color.from_params(m, r, g, b) orelse return error.BadColorParams } } },
-                                48 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .{ .background_color = Color.from_params(m, r, g, b) orelse return error.BadColorParams } } },
-
-                                20...29, 50...107 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .not_supported } },
-                                else => return error.CannotHandleThisByte,
-                            }
-                        },
                         else => return error.CannotHandleThisByte,
                     }
                 },

@@ -82,8 +82,7 @@ const TermStyledGraphemeIterator = struct {
 
     const Token = struct {
         grapheme: []const u8,
-        // codepoint: ?Codepoint,
-        codepoint: bool,
+        codepoint: ?Codepoint,
     };
 
     const Codepoint = union(enum) {
@@ -99,7 +98,6 @@ const TermStyledGraphemeIterator = struct {
         erase_in_line: u32,
         scroll_up: u32,
         scroll_down: u32,
-        // select_graphics_rendition: Color,
         cursor_get_position,
 
         cursor_position_save,
@@ -113,6 +111,47 @@ const TermStyledGraphemeIterator = struct {
         disable_bracketed_paste,
         render_sync_start,
         render_sync_end,
+
+        set_style: Style,
+    };
+    const Style = union(enum) {
+        reset,
+        bold,
+        normal_intensity,
+        faint,
+        italic,
+        underline,
+        slow_blink,
+        rapid_blink,
+        invert,
+        hide,
+        strike,
+        font_default,
+        alt_font: u3, // 1 to 9
+        double_underline,
+        default_foreground_color,
+        default_background_color,
+        foreground_color: Color,
+        background_color: Color,
+
+        not_supported,
+    };
+    const Color = union(enum) {
+        bit3: u3,
+        bit8: u8,
+        bit24: [3]u8,
+
+        fn from_params(m: ?u32, r: ?u32, g: ?u32, b: ?u32) ?@This() {
+            switch (m orelse return null) {
+                5 => return .{ .bit8 = cast(u8, r orelse 0) },
+                2 => return .{ .bit24 = [3]u8{
+                    cast(u8, r orelse 0),
+                    cast(u8, g orelse 0),
+                    cast(u8, b orelse 0),
+                } },
+                else => return null,
+            }
+        }
     };
 
     fn init(buf: []const u8) !@This() {
@@ -123,59 +162,11 @@ const TermStyledGraphemeIterator = struct {
     }
 
     fn next(self: *@This()) !?Token {
-        const buf = self.utf8.bytes;
-        const start = self.utf8.i;
-        const c = self.utf8.nextCodepointSlice() orelse return null;
-        var token = Token{ .grapheme = c, .codepoint = false };
-        if (c.len > 1) {
-            return token;
-        }
-        const char = c[0];
-        if (char & '\x1F' >= 'a' and char & '\x1F' <= 'w') {
-            token.codepoint = true;
-            return token;
-        }
-        if (char == '\n' or char == '\r') {
-            return token;
-        }
-        if (char != '\x1B') {
-            return token;
-        }
-        if (buf[start..].len <= 1) {
-            return error.IncompleteCodepoint;
-        }
-        if (buf[start + 1] != '[') {
-            return error.CannotDecodeYet;
-        }
-
-        // filter ansi.clear_to_line_end :P. we don't need it anyway.
-        if (std.mem.startsWith(u8, buf[start..], ansi.clear_to_line_end)) {
-            self.utf8.i = start + ansi.clear_to_line_end.len;
-            token.grapheme = &.{};
-            token.codepoint = true;
-            return token;
-        }
-
-        const len = self.consume_till_m();
-        if (len == 0) {
-            return error.BadCodepoint;
-        }
-        return Token{ .grapheme = buf[start..][0..len], .codepoint = true };
-    }
-
-    fn consume_till_m(self: *@This()) usize {
-        var it = self.utf8;
-        const start = it.i;
-        while (it.nextCodepointSlice()) |c| {
-            if (c.len != 1) {
-                return 0;
-            }
-            if (c[0] == 'm') {
-                self.utf8 = it;
-                return it.i - start + 1;
-            }
-        }
-        return 0;
+        if (try self.next_codepoint()) |t| return t;
+        return .{
+            .grapheme = self.utf8.nextCodepointSlice() orelse return null,
+            .codepoint = null,
+        };
     }
 
     fn next_codepoint(self: *@This()) !?Token {
@@ -200,6 +191,13 @@ const TermStyledGraphemeIterator = struct {
                     const n = it.param();
                     _ = it.consume(";");
                     const m = it.param();
+                    _ = it.consume(";");
+                    const r = it.param();
+                    _ = it.consume(";");
+                    const g = it.param();
+                    _ = it.consume(";");
+                    const b = it.param();
+
                     switch (try it.expect()) {
                         'A' => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .cursor_up = n orelse 1 } },
                         'B' => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .cursor_down = n orelse 1 } },
@@ -215,6 +213,35 @@ const TermStyledGraphemeIterator = struct {
                         'T' => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .scroll_down = n orelse 1 } },
                         's' => return Token{ .grapheme = try self.consume(it.i), .codepoint = .cursor_position_save },
                         'u' => return Token{ .grapheme = try self.consume(it.i), .codepoint = .cursor_position_restore },
+
+                        'm' => {
+                            switch (n orelse 0) {
+                                0 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .reset } },
+                                1 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .bold } },
+                                2 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .faint } },
+                                3 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .italic } },
+                                4 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .underline } },
+                                5 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .slow_blink } },
+                                6 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .rapid_blink } },
+                                7 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .invert } },
+                                8 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .hide } },
+                                9 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .strike } },
+                                10 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .font_default } },
+                                11...19 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .{ .alt_font = cast(u3, n.? - 11) } } },
+
+                                39 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .default_foreground_color } },
+                                49 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .default_background_color } },
+
+                                30...37 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .{ .foreground_color = .{ .bit3 = cast(u3, n.? - 30) } } } },
+                                40...47 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .{ .background_color = .{ .bit3 = cast(u3, n.? - 40) } } } },
+
+                                38 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .{ .foreground_color = Color.from_params(m, r, g, b) orelse return error.BadColorParams } } },
+                                48 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .{ .background_color = Color.from_params(m, r, g, b) orelse return error.BadColorParams } } },
+
+                                20...29, 50...107 => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .not_supported } },
+                                else => return error.CannotHandleThisByte,
+                            }
+                        },
                         else => return error.CannotHandleThisByte,
                     }
                 },
@@ -255,12 +282,12 @@ const TermStyledGraphemeIterator = struct {
         }
 
         fn param(self: *@This()) ?u32 {
-            var n: ?u32 = 0;
+            var n: ?u32 = null;
             while (self.peek()) |x| switch (x) {
                 '0'...'9' => {
                     if (n == null) n = 0;
                     n.? *= 10;
-                    n.? += x;
+                    n.? += x - '0';
                     self.i += 1;
                 },
                 else => return n,
@@ -410,7 +437,7 @@ const Term = struct {
             while (try codepoint_it.next()) |token| {
                 // execute all control chars
                 // but don't print beyond the size
-                if (token.codepoint) {
+                if (token.codepoint != null) {
                     try self.writer().writeAll(token.grapheme);
                 } else if (x <= max.min(self.size.sub(.splat(1))).x) {
                     try self.writer().writeAll(token.grapheme);

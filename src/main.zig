@@ -592,7 +592,7 @@ const JujutsuServer = struct {
 
     const Request = union(enum) {
         status,
-        diff,
+        diff: Change,
     };
 
     const Result = union(enum) {
@@ -648,8 +648,8 @@ const JujutsuServer = struct {
                     };
                     try self.responses.send(.{ .req = req, .res = .{ .ok = res } });
                 },
-                .diff => {
-                    const res = utils_mod.jjcall(&[_][]const u8{ "jj", "--color", "always", "diff", "--tool", "delta" }, self.alloc) catch |e| {
+                .diff => |change| {
+                    const res = utils_mod.jjcall(&[_][]const u8{ "jj", "--color", "always", "diff", "--tool", "delta", "-r", change.hash[0..] }, self.alloc) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
                     };
@@ -669,14 +669,20 @@ const ChangeIterator = struct {
     state: utils_mod.LineIterator,
 
     temp: std.heap.ArenaAllocator,
-    scratch: std.ArrayListUnmanaged(u8),
+    scratch: std.ArrayListUnmanaged(u8) = .{},
 
-    fn init(alloc: std.mem.Allocator, buf: []const u8) !@This() {
-        return .{ .temp = .init(alloc), .scratch = .{}, .state = .init(buf) };
+    fn init(alloc: std.mem.Allocator, buf: []const u8) @This() {
+        return .{ .temp = .init(alloc), .state = .init(buf) };
     }
 
     fn deinit(self: *@This()) void {
         self.temp.deinit();
+    }
+
+    fn reset(self: *@This(), buf: []const u8) void {
+        self.scratch.clearRetainingCapacity();
+        self.state = .init(buf);
+        self.line_index = 0;
     }
 
     fn next(self: *@This()) !?Change {
@@ -725,8 +731,8 @@ const ChangeIterator = struct {
 };
 
 const Change = struct {
-    id: [8]u8,
-    hash: [8]u8,
+    id: [8]u8 = [1]u8{'z'} ** 8,
+    hash: [8]u8 = [1]u8{0} ** 8,
 };
 
 const App = struct {
@@ -745,6 +751,7 @@ const App = struct {
     y: i32 = 0,
     status: []const u8,
     diff: []const u8,
+    changes: ChangeIterator,
 
     const Event = union(enum) {
         sigwinch,
@@ -775,7 +782,7 @@ const App = struct {
         errdefer jj.deinit();
 
         try jj.requests.send(.status);
-        try jj.requests.send(.diff);
+        try jj.requests.send(.{ .diff = Change{} });
 
         self.* = .{
             .alloc = alloc,
@@ -785,6 +792,7 @@ const App = struct {
             .jj = jj,
             .status = &.{},
             .diff = &.{},
+            .changes = .init(alloc, &[_]u8{}),
             .input_thread = undefined,
         };
 
@@ -803,6 +811,7 @@ const App = struct {
         const alloc = self.alloc;
         defer alloc.destroy(self);
         defer alloc.free(self.status);
+        defer self.changes.deinit();
         defer alloc.free(self.diff);
         defer self.arena.deinit();
         defer self.term.deinit();
@@ -852,13 +861,33 @@ const App = struct {
                         try self.events.send(.quit);
                     }
                     if (char == 'j') {
-                        self.y += 1;
+                        self.y += 2;
                         try self.events.send(.rerender);
+
+                        self.changes.reset(self.status);
+                        var i: i32 = 0;
+                        while (try self.changes.next()) |change| {
+                            if (self.y == i * 2) {
+                                try self.jj.requests.send(.{ .diff = change });
+                                break;
+                            }
+                            i += 1;
+                        }
                     }
                     if (char == 'k') {
-                        self.y -= 1;
+                        self.y -= 2;
                         self.y = @max(0, self.y);
                         try self.events.send(.rerender);
+
+                        self.changes.reset(self.status);
+                        var i: i32 = 0;
+                        while (try self.changes.next()) |change| {
+                            if (self.y == i * 2) {
+                                try self.jj.requests.send(.{ .diff = change });
+                                break;
+                            }
+                            i += 1;
+                        }
                     }
                 },
                 .quit => {
@@ -872,6 +901,7 @@ const App = struct {
                     switch (res.res) {
                         .ok => |buf| {
                             self.status = buf;
+                            self.changes.reset(buf);
                         },
                         .err => |buf| {
                             self.status = buf;
@@ -922,19 +952,19 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
     defer _ = gpa.deinit();
 
-    // const app = try App.init(gpa.allocator());
-    // defer app.deinit();
+    const app = try App.init(gpa.allocator());
+    defer app.deinit();
 
-    // try app.event_loop();
+    try app.event_loop();
 
-    var temp = std.heap.ArenaAllocator.init(gpa.allocator());
-    defer temp.deinit();
-    const alloc = temp.allocator();
-    const state = try utils_mod.jjcall(&[_][]const u8{ "jj", "--color", "always" }, alloc);
-    var changes = try ChangeIterator.init(alloc, state);
-    while (try changes.next()) |change| {
-        std.debug.print("id: {s}\nhash: {s}\n", .{ change.id, change.hash });
-    }
+    // var temp = std.heap.ArenaAllocator.init(gpa.allocator());
+    // defer temp.deinit();
+    // const alloc = temp.allocator();
+    // const state = try utils_mod.jjcall(&[_][]const u8{ "jj", "--color", "always" }, alloc);
+    // var changes = try ChangeIterator.init(alloc, state);
+    // while (try changes.next()) |change| {
+    //     std.debug.print("id: {s}\nhash: {s}\n", .{ change.id, change.hash });
+    // }
 }
 
 // pub fn main1() !void {

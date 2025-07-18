@@ -668,12 +668,11 @@ const ChangeIterator = struct {
     line_index: u32 = 0,
     state: utils_mod.LineIterator,
 
-    alloc: std.mem.Allocator,
     temp: std.heap.ArenaAllocator,
     scratch: std.ArrayListUnmanaged(u8),
 
     fn init(alloc: std.mem.Allocator, buf: []const u8) !@This() {
-        return .{ .alloc = alloc, .temp = .init(alloc), .scratch = .{}, .state = .init(buf) };
+        return .{ .temp = .init(alloc), .scratch = .{}, .state = .init(buf) };
     }
 
     fn deinit(self: *@This()) void {
@@ -696,25 +695,29 @@ const ChangeIterator = struct {
                 try self.scratch.appendSlice(self.temp.allocator(), token.grapheme);
             }
 
-            var chunks = std.mem.splitBackwardsScalar(u8, self.scratch.items, ' ');
-            const hash = chunks.next().?;
-            if (!std.mem.eql(u8, hash, "00000000")) {
-                const time = chunks.next().?;
-                _ = time;
-                const date = chunks.next().?;
-                _ = date;
-                const email = chunks.next().?;
-                _ = email;
-            } else {
-                const root = chunks.next().?;
-                _ = root;
-            }
-            const id = chunks.next().?;
-
-            return .{
-                .id = try self.alloc.dupe(u8, id),
-                .hash = try self.alloc.dupe(u8, hash),
+            const hash = blk: {
+                var chunks = std.mem.splitBackwardsScalar(u8, self.scratch.items, ' ');
+                while (chunks.next()) |chunk| {
+                    if (chunk.len == 8) {
+                        break :blk chunk;
+                    }
+                }
+                unreachable;
             };
+            const id = blk: {
+                var chunks = std.mem.splitScalar(u8, self.scratch.items, ' ');
+                while (chunks.next()) |chunk| {
+                    if (chunk.len == 8) {
+                        break :blk chunk;
+                    }
+                }
+                unreachable;
+            };
+
+            var change = std.mem.zeroes(Change);
+            @memcpy(change.id[0..], id);
+            @memcpy(change.hash[0..], hash);
+            return change;
         }
 
         return null;
@@ -722,13 +725,8 @@ const ChangeIterator = struct {
 };
 
 const Change = struct {
-    id: []const u8,
-    hash: []const u8,
-
-    fn deinit(self: *@This(), alloc: std.mem.Allocator) void {
-        alloc.free(self.id);
-        alloc.free(self.hash);
-    }
+    id: [8]u8,
+    hash: [8]u8,
 };
 
 const App = struct {

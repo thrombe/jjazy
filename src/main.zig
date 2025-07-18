@@ -134,6 +134,9 @@ const TermStyledGraphemeIterator = struct {
         foreground_color: Color,
         background_color: Color,
 
+        // this is a hack. let us hope it works
+        color: struct { background: Color, foreground: Color },
+
         not_supported,
     };
     const Color = union(enum) {
@@ -197,6 +200,47 @@ const TermStyledGraphemeIterator = struct {
                     const g = it.param();
                     _ = it.consume(";");
                     const b = it.param();
+
+                    // TODO: don't do the hack
+                    {
+                        // this is totally evil man
+                        // style params can appear any number of times after '[' and before 'm'
+                        // but we don't even know if it is a style param or not, cuz we have not gotten to the 'm' yet.
+                        //
+                        // i don't want to allocate or lose the order that these styles get applied in.
+                        // so i just impl a hack here to get jj's and delta's output supported as well as i can do.
+                        //
+                        // ig there's a way to impl this nicely.
+                        //  - keep a big struct StyleSet or something, have it parse all the params
+                        //  - while going through the params, it overrites the appropriate params
+                        //  - if it gets a .reset style, clear all of them to null or something.
+                        //  - since the params that appear later override the earlier ones anyway,
+                        //    this mimics the behavior of the terminal
+                        _ = it.consume(";");
+                        const n2 = it.param();
+                        _ = it.consume(";");
+                        const m2 = it.param();
+                        _ = it.consume(";");
+                        const r2 = it.param();
+                        _ = it.consume(";");
+                        const g2 = it.param();
+                        _ = it.consume(";");
+                        const b2 = it.param();
+
+                        const col1 = Color.from_params(m, r, g, b);
+                        const col2 = Color.from_params(m2, r2, g2, b2);
+
+                        if (col1 != null and col2 != null) {
+                            _ = it.consume("m");
+                            if (n == 38 and n2 == 48) {
+                                return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .{ .color = .{ .foreground = col1.?, .background = col2.? } } } };
+                            } else if (n == 48 and n2 == 38) {
+                                return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = .{ .color = .{ .foreground = col2.?, .background = col1.? } } } };
+                            } else {
+                                return error.HackFailed;
+                            }
+                        }
+                    }
 
                     switch (try it.expect()) {
                         'A' => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .cursor_up = n orelse 1 } },
@@ -437,8 +481,10 @@ const Term = struct {
             while (try codepoint_it.next()) |token| {
                 // execute all control chars
                 // but don't print beyond the size
-                if (token.codepoint != null) {
-                    try self.writer().writeAll(token.grapheme);
+                if (token.codepoint) |codepoint| {
+                    if (codepoint != .erase_in_line) {
+                        try self.writer().writeAll(token.grapheme);
+                    }
                 } else if (x <= max.min(self.size.sub(.splat(1))).x) {
                     try self.writer().writeAll(token.grapheme);
                     x += 1;

@@ -108,7 +108,7 @@ pub inline fn dump_error(err: anyerror) void {
                 std.log.err("Unable to dump stack trace: Unable to open debug info: {s}\n", .{@errorName(e)});
                 return;
             };
-            std.debug.writeStackTrace(trace.*, Log.writer, debug_info, .no_color) catch |e| {
+            std.debug.writeStackTrace(trace.*, Log.writer, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch |e| {
                 std.log.err("Unable to dump stack trace: {s}\n", .{@errorName(e)});
                 return;
             };

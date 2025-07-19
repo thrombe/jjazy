@@ -653,7 +653,20 @@ const JujutsuServer = struct {
                     try self.responses.send(.{ .req = req, .res = .{ .ok = res } });
                 },
                 .diff => |change| {
-                    const res = utils_mod.jjcall(&[_][]const u8{
+                    const stat = utils_mod.jjcall(&[_][]const u8{
+                        "jj",
+                        "--color",
+                        "always",
+                        "show",
+                        "--stat",
+                        "-r",
+                        change.hash[0..],
+                    }, self.alloc) catch |e| {
+                        utils_mod.dump_error(e);
+                        continue;
+                    };
+                    defer self.alloc.free(stat);
+                    const diff = utils_mod.jjcall(&[_][]const u8{
                         "jj",
                         "--color",
                         "always",
@@ -666,7 +679,14 @@ const JujutsuServer = struct {
                         utils_mod.dump_error(e);
                         continue;
                     };
-                    try self.responses.send(.{ .req = req, .res = .{ .ok = res } });
+                    defer self.alloc.free(diff);
+
+                    var output = std.ArrayList(u8).init(self.alloc);
+                    errdefer output.deinit();
+                    try output.appendSlice(stat);
+                    try output.appendSlice(diff);
+
+                    try self.responses.send(.{ .req = req, .res = .{ .ok = try output.toOwnedSlice() } });
                 },
             };
 

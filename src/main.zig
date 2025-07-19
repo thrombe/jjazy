@@ -649,7 +649,7 @@ const JujutsuServer = struct {
                 if (self.quit.check()) break;
                 switch (req) {
                     .status => {
-                        const res = utils_mod.jjcall(&[_][]const u8{
+                        const res = jjcall(&[_][]const u8{
                             "jj",
                             "--color",
                             "always",
@@ -660,7 +660,7 @@ const JujutsuServer = struct {
                         try self.responses.send(.{ .req = req, .res = .{ .ok = res } });
                     },
                     .diff => |change| {
-                        const stat = utils_mod.jjcall(&[_][]const u8{
+                        const stat = jjcall(&[_][]const u8{
                             "jj",
                             "--color",
                             "always",
@@ -673,7 +673,7 @@ const JujutsuServer = struct {
                             continue;
                         };
                         defer self.alloc.free(stat);
-                        const diff = utils_mod.jjcall(&[_][]const u8{
+                        const diff = jjcall(&[_][]const u8{
                             "jj",
                             "--color",
                             "always",
@@ -702,6 +702,74 @@ const JujutsuServer = struct {
 
             std.Thread.sleep(std.time.ns_per_ms * 20);
         }
+    }
+
+    fn jjcall(args: []const []const u8, alloc: std.mem.Allocator) ![]u8 {
+        var child = std.process.Child.init(args, alloc);
+        child.stdin_behavior = .Pipe;
+        child.stdout_behavior = .Pipe;
+        child.stderr_behavior = .Pipe;
+
+        try child.spawn();
+
+        const stdin = child.stdin orelse return error.NoStdin;
+        child.stdin = null;
+        const stdout = child.stdout orelse return error.NoStdout;
+        child.stdout = null;
+        const stderr = child.stderr orelse return error.NoStderr;
+        child.stderr = null;
+        defer stdout.close();
+        defer stderr.close();
+        stdin.close();
+
+        // similar to child.collectOutput
+        const max_output_bytes = 1000 * 1000;
+        var poller = std.io.poll(alloc, enum { stdout, stderr }, .{
+            .stdout = stdout,
+            .stderr = stderr,
+        });
+        defer poller.deinit();
+
+        while (try poller.poll()) {
+            if (poller.fifo(.stdout).count > max_output_bytes)
+                return error.StdoutStreamTooLong;
+            if (poller.fifo(.stderr).count > max_output_bytes)
+                return error.StderrStreamTooLong;
+        }
+
+        const err = try child.wait();
+        blk: {
+            var err_buf = std.ArrayList(u8).init(alloc);
+            defer err_buf.deinit();
+
+            switch (err) {
+                .Exited => |e| {
+                    if (e != 0) {
+                        _ = try err_buf.writer().print("exited with code: {}\n", .{e});
+                    } else {
+                        err_buf.deinit();
+                        break :blk;
+                    }
+                },
+                // .Signal => |code| {},
+                // .Stopped => |code| {},
+                // .Unknown => |code| {},
+                else => |e| {
+                    try err_buf.writer().print("exited with code: {}\n", .{e});
+                },
+            }
+
+            const fifo = poller.fifo(.stderr);
+            try err_buf.appendSlice(fifo.buf[fifo.head..][0..fifo.count]);
+
+            std.debug.print("{s}\n", .{err_buf.items});
+            return error.SomeErrorIdk;
+        }
+
+        const fifo = poller.fifo(.stdout);
+        var out = std.ArrayList(u8).init(alloc);
+        try out.appendSlice(fifo.buf[fifo.head..][0..fifo.count]);
+        return try out.toOwnedSlice();
     }
 };
 

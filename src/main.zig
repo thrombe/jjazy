@@ -769,7 +769,7 @@ const App = struct {
     status: []const u8,
     diff: []const u8,
     changes: ChangeIterator,
-    diffcache: std.StringHashMap([]const u8),
+    diffcache: DiffCache,
     focused_change: Change = .{},
 
     const Event = union(enum) {
@@ -778,6 +778,17 @@ const App = struct {
         quit,
         input: u8,
     };
+
+    const DiffCache = std.HashMap([8]u8, []const u8, struct {
+        pub fn hash(self: @This(), s: [8]u8) u64 {
+            _ = self;
+            return std.hash_map.StringContext.hash(.{}, s[0..]);
+        }
+        pub fn eql(self: @This(), a: [8]u8, b: [8]u8) bool {
+            _ = self;
+            return std.hash_map.StringContext.eql(.{}, a[0..], b[0..]);
+        }
+    }, std.hash_map.default_max_load_percentage);
 
     var app: *@This() = undefined;
 
@@ -821,6 +832,8 @@ const App = struct {
             input_thread.join();
         }
 
+        try self.diffcache.put(self.focused_change.hash, &.{});
+
         self.input_thread = input_thread;
         app = self;
         return self;
@@ -833,7 +846,6 @@ const App = struct {
         defer {
             var it = self.diffcache.iterator();
             while (it.next()) |e| {
-                self.alloc.free(e.key_ptr.*);
                 self.alloc.free(e.value_ptr.*);
             }
             self.diffcache.deinit();
@@ -920,11 +932,12 @@ const App = struct {
                 },
                 .diff => |req| {
                     switch (res.res) {
-                        .ok => |buf| {
-                            try self.diffcache.put(try self.alloc.dupe(u8, req.hash[0..]), buf);
-                        },
-                        .err => |buf| {
-                            try self.diffcache.put(try self.alloc.dupe(u8, req.hash[0..]), buf);
+                        .ok, .err => |buf| {
+                            const entry = try self.diffcache.getOrPut(req.hash);
+                            if (entry.found_existing) {
+                                self.alloc.free(entry.value_ptr.*);
+                            }
+                            entry.value_ptr.* = buf;
                         },
                     }
                     try self.events.send(.rerender);
@@ -940,7 +953,7 @@ const App = struct {
     }
 
     fn maybe_request_diff(self: *@This(), change: *const Change) !void {
-        if (self.diffcache.get(&change.hash) == null) {
+        if (self.diffcache.get(change.hash) == null) {
             try self.jj.requests.send(.{ .diff = change });
         }
     }
@@ -951,7 +964,7 @@ const App = struct {
         while (try self.changes.next()) |change| {
             const n: i32 = 3;
             if (@abs(self.y - i) < 2 * n) {
-                if (self.diffcache.get(&change.hash) == null) {
+                if (self.diffcache.get(change.hash) == null) {
                     try self.jj.requests.send(.{ .diff = change });
                 }
             } else if (self.y == i * 2) {
@@ -961,7 +974,7 @@ const App = struct {
             i += 1;
         }
 
-        if (self.diffcache.get(&self.focused_change.hash)) |diff| {
+        if (self.diffcache.get(self.focused_change.hash)) |diff| {
             self.diff = diff;
             try self.events.send(.rerender);
         } else {
@@ -972,7 +985,7 @@ const App = struct {
     fn render(self: *@This()) !void {
         try self.term.update_size();
         {
-            if (self.diffcache.get(&self.focused_change.hash)) |diff| {
+            if (self.diffcache.get(self.focused_change.hash)) |diff| {
                 self.diff = diff;
             }
 

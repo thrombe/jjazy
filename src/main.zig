@@ -1006,6 +1006,8 @@ const App = struct {
         {
             if (self.diffcache.get(self.focused_change.hash)) |cdiff| if (cdiff.diff) |diff| {
                 self.diff = diff;
+            } else {
+                self.diff = " loading ... ";
             };
 
             try self.term.clear_region(.{}, self.term.size.sub(.splat(1)));

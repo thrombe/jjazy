@@ -628,7 +628,12 @@ const JujutsuServer = struct {
     fn deinit(self: *@This()) void {
         const alloc = self.alloc;
         defer alloc.destroy(self);
-        defer self.responses.deinit();
+        defer {
+            while (self.responses.try_recv()) |res| switch (res.res) {
+                .ok, .err => |buf| alloc.free(buf),
+            };
+            self.responses.deinit();
+        }
         defer self.requests.deinit();
         defer self.thread.join();
         _ = self.quit.fuse();
@@ -640,55 +645,58 @@ const JujutsuServer = struct {
 
     fn start(self: *@This()) !void {
         while (true) {
-            while (self.requests.try_recv()) |req| switch (req) {
-                .status => {
-                    const res = utils_mod.jjcall(&[_][]const u8{
-                        "jj",
-                        "--color",
-                        "always",
-                    }, self.alloc) catch |e| {
-                        utils_mod.dump_error(e);
-                        continue;
-                    };
-                    try self.responses.send(.{ .req = req, .res = .{ .ok = res } });
-                },
-                .diff => |change| {
-                    const stat = utils_mod.jjcall(&[_][]const u8{
-                        "jj",
-                        "--color",
-                        "always",
-                        "show",
-                        "--stat",
-                        "-r",
-                        change.hash[0..],
-                    }, self.alloc) catch |e| {
-                        utils_mod.dump_error(e);
-                        continue;
-                    };
-                    defer self.alloc.free(stat);
-                    const diff = utils_mod.jjcall(&[_][]const u8{
-                        "jj",
-                        "--color",
-                        "always",
-                        "diff",
-                        "--tool",
-                        "delta",
-                        "-r",
-                        change.hash[0..],
-                    }, self.alloc) catch |e| {
-                        utils_mod.dump_error(e);
-                        continue;
-                    };
-                    defer self.alloc.free(diff);
+            while (self.requests.try_recv()) |req| {
+                if (self.quit.check()) break;
+                switch (req) {
+                    .status => {
+                        const res = utils_mod.jjcall(&[_][]const u8{
+                            "jj",
+                            "--color",
+                            "always",
+                        }, self.alloc) catch |e| {
+                            utils_mod.dump_error(e);
+                            continue;
+                        };
+                        try self.responses.send(.{ .req = req, .res = .{ .ok = res } });
+                    },
+                    .diff => |change| {
+                        const stat = utils_mod.jjcall(&[_][]const u8{
+                            "jj",
+                            "--color",
+                            "always",
+                            "show",
+                            "--stat",
+                            "-r",
+                            change.hash[0..],
+                        }, self.alloc) catch |e| {
+                            utils_mod.dump_error(e);
+                            continue;
+                        };
+                        defer self.alloc.free(stat);
+                        const diff = utils_mod.jjcall(&[_][]const u8{
+                            "jj",
+                            "--color",
+                            "always",
+                            "diff",
+                            "--tool",
+                            "delta",
+                            "-r",
+                            change.hash[0..],
+                        }, self.alloc) catch |e| {
+                            utils_mod.dump_error(e);
+                            continue;
+                        };
+                        defer self.alloc.free(diff);
 
-                    var output = std.ArrayList(u8).init(self.alloc);
-                    errdefer output.deinit();
-                    try output.appendSlice(stat);
-                    try output.appendSlice(diff);
+                        var output = std.ArrayList(u8).init(self.alloc);
+                        errdefer output.deinit();
+                        try output.appendSlice(stat);
+                        try output.appendSlice(diff);
 
-                    try self.responses.send(.{ .req = req, .res = .{ .ok = try output.toOwnedSlice() } });
-                },
-            };
+                        try self.responses.send(.{ .req = req, .res = .{ .ok = try output.toOwnedSlice() } });
+                    },
+                }
+            }
 
             if (self.quit.check()) break;
 

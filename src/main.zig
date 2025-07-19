@@ -642,14 +642,27 @@ const JujutsuServer = struct {
         while (true) {
             while (self.requests.try_recv()) |req| switch (req) {
                 .status => {
-                    const res = utils_mod.jjcall(&[_][]const u8{ "jj", "--color", "always" }, self.alloc) catch |e| {
+                    const res = utils_mod.jjcall(&[_][]const u8{
+                        "jj",
+                        "--color",
+                        "always",
+                    }, self.alloc) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
                     };
                     try self.responses.send(.{ .req = req, .res = .{ .ok = res } });
                 },
                 .diff => |change| {
-                    const res = utils_mod.jjcall(&[_][]const u8{ "jj", "--color", "always", "diff", "--tool", "delta", "-r", change.hash[0..] }, self.alloc) catch |e| {
+                    const res = utils_mod.jjcall(&[_][]const u8{
+                        "jj",
+                        "--color",
+                        "always",
+                        "diff",
+                        "--tool",
+                        "delta",
+                        "-r",
+                        change.hash[0..],
+                    }, self.alloc) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
                     };
@@ -733,6 +746,10 @@ const ChangeIterator = struct {
 const Change = struct {
     id: [8]u8 = [1]u8{'z'} ** 8,
     hash: [8]u8 = [1]u8{0} ** 8,
+
+    fn is_root(self: *@This()) bool {
+        return std.mem.allEqual(u8, self.hash, 0);
+    }
 };
 
 const App = struct {
@@ -752,6 +769,8 @@ const App = struct {
     status: []const u8,
     diff: []const u8,
     changes: ChangeIterator,
+    diffcache: std.StringHashMap([]const u8),
+    focused_change: Change = .{},
 
     const Event = union(enum) {
         sigwinch,
@@ -782,7 +801,6 @@ const App = struct {
         errdefer jj.deinit();
 
         try jj.requests.send(.status);
-        try jj.requests.send(.{ .diff = Change{} });
 
         self.* = .{
             .alloc = alloc,
@@ -793,6 +811,7 @@ const App = struct {
             .status = &.{},
             .diff = &.{},
             .changes = .init(alloc, &[_]u8{}),
+            .diffcache = .init(alloc),
             .input_thread = undefined,
         };
 
@@ -810,9 +829,15 @@ const App = struct {
     fn deinit(self: *@This()) void {
         const alloc = self.alloc;
         defer alloc.destroy(self);
-        defer alloc.free(self.status);
         defer self.changes.deinit();
-        defer alloc.free(self.diff);
+        defer {
+            var it = self.diffcache.iterator();
+            while (it.next()) |e| {
+                self.alloc.free(e.key_ptr.*);
+                self.alloc.free(e.value_ptr.*);
+            }
+            self.diffcache.deinit();
+        }
         defer self.arena.deinit();
         defer self.term.deinit();
         defer self.term.cook_restore() catch |e| utils_mod.dump_error(e);
@@ -864,30 +889,14 @@ const App = struct {
                         self.y += 2;
                         try self.events.send(.rerender);
 
-                        self.changes.reset(self.status);
-                        var i: i32 = 0;
-                        while (try self.changes.next()) |change| {
-                            if (self.y == i * 2) {
-                                try self.jj.requests.send(.{ .diff = change });
-                                break;
-                            }
-                            i += 1;
-                        }
+                        try self.request_jj();
                     }
                     if (char == 'k') {
                         self.y -= 2;
                         self.y = @max(0, self.y);
                         try self.events.send(.rerender);
 
-                        self.changes.reset(self.status);
-                        var i: i32 = 0;
-                        while (try self.changes.next()) |change| {
-                            if (self.y == i * 2) {
-                                try self.jj.requests.send(.{ .diff = change });
-                                break;
-                            }
-                            i += 1;
-                        }
+                        try self.request_jj();
                     }
                 },
                 .quit => {
@@ -909,14 +918,13 @@ const App = struct {
                     }
                     try self.events.send(.rerender);
                 },
-                .diff => {
-                    self.alloc.free(self.diff);
+                .diff => |req| {
                     switch (res.res) {
                         .ok => |buf| {
-                            self.diff = buf;
+                            try self.diffcache.put(try self.alloc.dupe(u8, req.hash[0..]), buf);
                         },
                         .err => |buf| {
-                            self.diff = buf;
+                            try self.diffcache.put(try self.alloc.dupe(u8, req.hash[0..]), buf);
                         },
                     }
                     try self.events.send(.rerender);
@@ -927,16 +935,53 @@ const App = struct {
         }
     }
 
+    fn save_diff(self: *@This(), change: *const Change, diff: []const u8) !void {
+        try self.diffcache.put(try self.alloc.dupe(u8, change.hash[0..]), diff);
+    }
+
+    fn maybe_request_diff(self: *@This(), change: *const Change) !void {
+        if (self.diffcache.get(&change.hash) == null) {
+            try self.jj.requests.send(.{ .diff = change });
+        }
+    }
+
+    fn request_jj(self: *@This()) !void {
+        self.changes.reset(self.status);
+        var i: i32 = 0;
+        while (try self.changes.next()) |change| {
+            const n: i32 = 3;
+            if (@abs(self.y - i) < 2 * n) {
+                if (self.diffcache.get(&change.hash) == null) {
+                    try self.jj.requests.send(.{ .diff = change });
+                }
+            } else if (self.y == i * 2) {
+                self.focused_change = change;
+                break;
+            }
+            i += 1;
+        }
+
+        if (self.diffcache.get(&self.focused_change.hash)) |diff| {
+            try self.jj.responses.send(.{ .req = .{ .diff = self.focused_change }, .res = .{ .ok = try self.alloc.dupe(u8, diff) } });
+        } else {
+            try self.jj.requests.send(.{ .diff = self.focused_change });
+        }
+    }
+
     fn render(self: *@This()) !void {
         try self.term.update_size();
         {
+            if (self.diffcache.get(&self.focused_change.hash)) |diff| {
+                self.diff = diff;
+            }
+
             try self.term.clear_region(.{}, self.term.size.sub(.splat(1)));
             try self.term.draw_border(.{}, self.term.size.sub(.splat(1)), border.rounded);
             _ = try self.term.draw_buf(self.status, .splat(1), self.term.size.sub(.splat(2)), 0, cast(u32, self.y));
 
             const min = Vec2{ .x = 30, .y = 3 };
-            const max = min.add(.{ .x = 60, .y = 20 });
-            const split_x: i32 = 55;
+            const max = min.add(.{ .x = 80, .y = 40 });
+            const split_x: i32 = min.x + 40;
             try self.term.clear_region(min, max);
             try self.term.draw_border(min, max, border.rounded);
             try self.term.draw_split(min, max, split_x, null);

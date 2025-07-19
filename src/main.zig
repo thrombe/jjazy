@@ -1022,6 +1022,8 @@ const App = struct {
                         .ok => |buf| {
                             self.status = buf;
                             self.changes.reset(buf);
+
+                            try self.request_jj();
                         },
                         .err => |buf| {
                             self.status = buf;
@@ -1057,7 +1059,8 @@ const App = struct {
         self.changes.reset(self.status);
         var i: i32 = 0;
         while (try self.changes.next()) |change| {
-            const n: i32 = 3;
+            // const n: i32 = 3;
+            const n: i32 = 0;
             if (self.y == i * 2) {
                 self.focused_change = change;
             } else if (@abs(self.y - i * 2) < 2 * n) {

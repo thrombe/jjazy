@@ -1000,11 +1000,12 @@ pub const std_options = std.Options{
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
-    defer _ = gpa.deinit();
     const alloc = gpa.allocator();
 
     try utils_mod.Log.logger.init(alloc);
     defer utils_mod.Log.logger.deinit();
+
+    defer _ = gpa.deinit();
 
     const app = try App.init(alloc);
     defer app.deinit();

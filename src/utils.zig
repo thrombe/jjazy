@@ -53,6 +53,8 @@ pub const Log = struct {
 
     pub fn deinit(self: *@This()) void {
         if (self.file) |file| file.close();
+        self.file = null;
+        self.alloc = null;
     }
 
     pub fn log(
@@ -76,8 +78,15 @@ pub const Log = struct {
         comptime format: []const u8,
         args: anytype,
     ) void {
+        if (self.file == null) {
+            std.debug.print("File is cloded\n", .{});
+            std.debug.print(format, args);
+            return;
+        }
+
         const prefix = "[" ++ comptime level.asText() ++ "] " ++ "(" ++ @tagName(scope) ++ ") ";
 
+        // TODO: don't alloc here. maybe cache buffers in threadlocals or just use a statically sized buf + bufprint
         const message = std.fmt.allocPrint(self.alloc.?, prefix ++ format, args) catch |err| {
             std.debug.print("Failed to format log message with args: {}\n", .{err});
             return;

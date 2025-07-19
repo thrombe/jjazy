@@ -645,7 +645,7 @@ const JujutsuServer = struct {
 
     fn start(self: *@This()) !void {
         while (true) {
-            while (self.requests.try_recv()) |req| {
+            while (self.requests.try_pop()) |req| {
                 if (self.quit.check()) break;
                 switch (req) {
                     .status => {

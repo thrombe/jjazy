@@ -302,6 +302,12 @@ pub fn Channel(typ: type) type {
             defer self.pinned.lock.unlock();
             return self.pinned.dq.peek_front() != null;
         }
+
+        pub fn try_pop(self: *@This()) ?typ {
+            self.pinned.lock.lock();
+            defer self.pinned.lock.unlock();
+            return self.pinned.dq.pop_back();
+        }
     };
 }
 

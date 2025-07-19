@@ -1010,19 +1010,14 @@ const App = struct {
                 self.diff = " loading ... ";
             };
 
-            try self.term.clear_region(.{}, self.term.size.sub(.splat(1)));
-            try self.term.draw_border(.{}, self.term.size.sub(.splat(1)), border.rounded);
-            _ = try self.term.draw_buf(self.status, .splat(1), self.term.size.sub(.splat(2)), 0, cast(u32, self.y));
-
-            const min = Vec2{ .x = 30, .y = 3 };
-            const max = min.add(.{ .x = 80, .y = 40 });
-            const split_x: i32 = min.x + 40;
+            const min = Vec2{};
+            const max = min.add(self.term.size.sub(.splat(1)));
+            const split_x: i32 = @divFloor(max.x, 2);
             try self.term.clear_region(min, max);
             try self.term.draw_border(min, max, border.rounded);
             try self.term.draw_split(min, max, split_x, null);
-            const y_off = try self.term.draw_buf("hello man", min.add(.splat(1)), (Vec2{ .x = split_x, .y = max.y }).sub(.splat(1)), 0, 0);
-            _ = try self.term.draw_buf(self.diff, min.add(.splat(1)), (Vec2{ .x = split_x, .y = max.y }).sub(.splat(1)), y_off, 0);
-            _ = try self.term.draw_buf(self.status, (Vec2{ .x = split_x, .y = min.y }).add(.splat(1)), max.sub(.splat(1)), 0, 0);
+            _ = try self.term.draw_buf(self.status, min.add(.splat(1)), (Vec2{ .x = split_x, .y = max.y }).sub(.splat(1)), 0, cast(u32, self.y));
+            _ = try self.term.draw_buf(self.diff, (Vec2{ .x = split_x, .y = min.y }).add(.splat(1)), max.sub(.splat(1)), 0, 0);
         }
         try self.term.flush_writes();
     }

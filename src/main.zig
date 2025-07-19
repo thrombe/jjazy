@@ -3,7 +3,7 @@ const std = @import("std");
 const utils_mod = @import("utils.zig");
 const cast = utils_mod.cast;
 
-const ansi = struct {
+const codes = struct {
     const clear = "\x1B[2J";
     const attr_reset = "\x1B[0m";
     const sync_set = "\x1B[?2026h";
@@ -392,12 +392,12 @@ const Term = struct {
 
     fn uncook(self: *@This(), handler: anytype) !void {
         try self.enter_raw_mode();
-        try self.tty.writeAll(ansi.cursor.hide ++ ansi.alt_buf.enter ++ ansi.clear);
+        try self.tty.writeAll(codes.cursor.hide ++ codes.alt_buf.enter ++ codes.clear);
         self.register_signal_handlers(handler);
     }
 
     fn cook_restore(self: *@This()) !void {
-        try self.tty.writeAll(ansi.clear ++ ansi.alt_buf.leave ++ ansi.cursor.show ++ ansi.attr_reset);
+        try self.tty.writeAll(codes.clear ++ codes.alt_buf.leave ++ codes.cursor.show ++ codes.attr_reset);
         try std.posix.tcsetattr(self.tty.handle, .FLUSH, self.cooked_termios.?);
         self.raw = null;
         self.cooked_termios = null;
@@ -410,14 +410,14 @@ const Term = struct {
 
     fn flush_writes(self: *@This()) !void {
         // cmdbuf's last command is sync reset
-        try self.writer().writeAll(ansi.sync_reset);
+        try self.writer().writeAll(codes.sync_reset);
 
         // flush and clear cmdbuf
         try self.tty.writeAll(self.cmdbuf.items);
         self.cmdbuf.clearRetainingCapacity();
 
         // cmdbuf's first command is sync start
-        try self.writer().writeAll(ansi.sync_set ++ ansi.clear);
+        try self.writer().writeAll(codes.sync_set ++ codes.clear);
     }
 
     fn clear_region(self: *@This(), min: Vec2, max: Vec2) !void {
@@ -516,7 +516,7 @@ const Term = struct {
     }
 
     fn cursor_move(self: *@This(), v: Vec2) !void {
-        try self.writer().print(ansi.cursor.move, .{ v.y + 1, v.x + 1 });
+        try self.writer().print(codes.cursor.move, .{ v.y + 1, v.x + 1 });
     }
 
     fn enter_raw_mode(self: *@This()) !void {

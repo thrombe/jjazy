@@ -962,7 +962,8 @@ const App = struct {
         }
 
         if (self.diffcache.get(&self.focused_change.hash)) |diff| {
-            try self.jj.responses.send(.{ .req = .{ .diff = self.focused_change }, .res = .{ .ok = try self.alloc.dupe(u8, diff) } });
+            self.diff = diff;
+            try self.events.send(.rerender);
         } else {
             try self.jj.requests.send(.{ .diff = self.focused_change });
         }

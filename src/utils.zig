@@ -41,7 +41,7 @@ pub const Log = struct {
     pub var writer = Writer{ .context = &logger };
 
     pub fn init(self: *@This(), alloc: std.mem.Allocator) !void {
-        const file = try std.fs.cwd().openFile(self.path, .{ .mode = .read_write });
+        const file = try std.fs.cwd().createFile(self.path, .{});
         errdefer file.close();
 
         const stat = try file.stat();
@@ -63,18 +63,17 @@ pub const Log = struct {
         comptime format: []const u8,
         args: anytype,
     ) void {
-        logger.log_write(level, scope, format ++ "\n", args);
+        const prefix = "[" ++ comptime level.asText() ++ "] " ++ "(" ++ @tagName(scope) ++ ") ";
+        logger.log_write(prefix ++ format ++ "\n", args);
     }
 
     fn write(self: *const @This(), bytes: []const u8) anyerror!usize {
-        self.log_write(.debug, .default, "{s}", .{bytes});
+        self.log_write("{s}", .{bytes});
         return bytes.len;
     }
 
     fn log_write(
         self: *const @This(),
-        comptime level: std.log.Level,
-        comptime scope: @TypeOf(.EnumLiteral),
         comptime format: []const u8,
         args: anytype,
     ) void {
@@ -84,10 +83,8 @@ pub const Log = struct {
             return;
         }
 
-        const prefix = "[" ++ comptime level.asText() ++ "] " ++ "(" ++ @tagName(scope) ++ ") ";
-
         // TODO: don't alloc here. maybe cache buffers in threadlocals or just use a statically sized buf + bufprint
-        const message = std.fmt.allocPrint(self.alloc.?, prefix ++ format, args) catch |err| {
+        const message = std.fmt.allocPrint(self.alloc.?, format, args) catch |err| {
             std.debug.print("Failed to format log message with args: {}\n", .{err});
             return;
         };

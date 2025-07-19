@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub inline fn cast(typ: type, val: anytype) typ {
     const E = @typeInfo(@TypeOf(val));
@@ -29,10 +30,84 @@ pub inline fn cast(typ: type, val: anytype) typ {
     @compileError("can't cast from '" ++ @typeName(@TypeOf(val)) ++ "' to '" ++ @typeName(typ) ++ "'");
 }
 
+pub const Log = struct {
+    pub const writer = std.io.Writer(@This(), anyerror, @This().write){ .context = .{} };
+
+    pub fn log(
+        comptime level: std.log.Level,
+        comptime scope: @TypeOf(.EnumLiteral),
+        comptime format: []const u8,
+        args: anytype,
+    ) void {
+        log_write(level, scope, format ++ "\n", args);
+    }
+
+    fn write(self: @This(), bytes: []const u8) anyerror!usize {
+        _ = self;
+        @This().log_write(.debug, .default, "{s}", .{bytes});
+        return bytes.len;
+    }
+
+    fn log_write(
+        comptime level: std.log.Level,
+        comptime scope: @TypeOf(.EnumLiteral),
+        comptime format: []const u8,
+        args: anytype,
+    ) void {
+        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer arena.deinit();
+        const alloc = arena.allocator();
+
+        const path = std.fmt.allocPrint(alloc, "{s}/{s}", .{ ".", "/zig-out/log.log" }) catch |err| {
+            std.debug.print("Failed to create log file path: {}\n", .{err});
+            return;
+        };
+
+        const file = std.fs.cwd().openFile(path, .{ .mode = .read_write }) catch |err| {
+            std.debug.print("Failed to open log file: {}\n", .{err});
+            return;
+        };
+        defer file.close();
+
+        const stat = file.stat() catch |err| {
+            std.debug.print("Failed to get stat of log file: {}\n", .{err});
+            return;
+        };
+        file.seekTo(stat.size) catch |err| {
+            std.debug.print("Failed to seek log file: {}\n", .{err});
+            return;
+        };
+
+        const prefix = "[" ++ comptime level.asText() ++ "] " ++ "(" ++ @tagName(scope) ++ ") ";
+
+        const message = std.fmt.allocPrint(alloc, prefix ++ format, args) catch |err| {
+            std.debug.print("Failed to format log message with args: {}\n", .{err});
+            return;
+        };
+        file.writeAll(message) catch |err| {
+            std.debug.print("Failed to write to log file: {}\n", .{err});
+        };
+    }
+};
+
 pub inline fn dump_error(err: anyerror) void {
-    std.debug.print("error: {any}\n", .{err});
+    std.log.err("error: {any}\n", .{err});
     if (@errorReturnTrace()) |trace| {
-        std.debug.dumpStackTrace(trace.*);
+        nosuspend {
+            if (builtin.strip_debug_info) {
+                std.log.err("Unable to dump stack trace: debug info stripped\n", .{});
+                return;
+            }
+            const debug_info = std.debug.getSelfDebugInfo() catch |e| {
+                std.log.err("Unable to dump stack trace: Unable to open debug info: {s}\n", .{@errorName(e)});
+                return;
+            };
+            // const stderr = std.io.getStdErr().writer();
+            std.debug.writeStackTrace(trace.*, Log.writer, debug_info, .no_color) catch |e| {
+                std.log.err("Unable to dump stack trace: {s}\n", .{@errorName(e)});
+                return;
+            };
+        }
     }
 }
 

@@ -993,6 +993,11 @@ const App = struct {
     }
 };
 
+pub const std_options = std.Options{
+    .log_level = .debug,
+    .logFn = utils_mod.Log.log,
+};
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
     defer _ = gpa.deinit();

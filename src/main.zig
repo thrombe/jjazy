@@ -1001,20 +1001,15 @@ pub const std_options = std.Options{
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
     defer _ = gpa.deinit();
+    const alloc = gpa.allocator();
 
-    const app = try App.init(gpa.allocator());
+    try utils_mod.Log.logger.init(alloc);
+    defer utils_mod.Log.logger.deinit();
+
+    const app = try App.init(alloc);
     defer app.deinit();
 
     try app.event_loop();
-
-    // var temp = std.heap.ArenaAllocator.init(gpa.allocator());
-    // defer temp.deinit();
-    // const alloc = temp.allocator();
-    // const state = try utils_mod.jjcall(&[_][]const u8{ "jj", "--color", "always" }, alloc);
-    // var changes = try ChangeIterator.init(alloc, state);
-    // while (try changes.next()) |change| {
-    //     std.debug.print("id: {s}\nhash: {s}\n", .{ change.id, change.hash });
-    // }
 }
 
 // pub fn main1() !void {

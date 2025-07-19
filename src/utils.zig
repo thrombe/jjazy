@@ -31,7 +31,29 @@ pub inline fn cast(typ: type, val: anytype) typ {
 }
 
 pub const Log = struct {
-    pub const writer = std.io.Writer(@This(), anyerror, @This().write){ .context = .{} };
+    path: []const u8 = "./zig-out/log.log",
+    file: ?std.fs.File = null,
+    alloc: ?std.mem.Allocator = null,
+
+    pub const Writer = std.io.Writer(*const @This(), anyerror, @This().write);
+
+    pub var logger = @This(){};
+    pub var writer = Writer{ .context = &logger };
+
+    pub fn init(self: *@This(), alloc: std.mem.Allocator) !void {
+        const file = try std.fs.cwd().openFile(self.path, .{ .mode = .read_write });
+        errdefer file.close();
+
+        const stat = try file.stat();
+        try file.seekTo(stat.size);
+
+        self.file = file;
+        self.alloc = alloc;
+    }
+
+    pub fn deinit(self: *@This()) void {
+        if (self.file) |file| file.close();
+    }
 
     pub fn log(
         comptime level: std.log.Level,
@@ -39,52 +61,30 @@ pub const Log = struct {
         comptime format: []const u8,
         args: anytype,
     ) void {
-        log_write(level, scope, format ++ "\n", args);
+        logger.log_write(level, scope, format ++ "\n", args);
     }
 
-    fn write(self: @This(), bytes: []const u8) anyerror!usize {
-        _ = self;
-        @This().log_write(.debug, .default, "{s}", .{bytes});
+    fn write(self: *const @This(), bytes: []const u8) anyerror!usize {
+        self.log_write(.debug, .default, "{s}", .{bytes});
         return bytes.len;
     }
 
     fn log_write(
+        self: *const @This(),
         comptime level: std.log.Level,
         comptime scope: @TypeOf(.EnumLiteral),
         comptime format: []const u8,
         args: anytype,
     ) void {
-        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-        defer arena.deinit();
-        const alloc = arena.allocator();
-
-        const path = std.fmt.allocPrint(alloc, "{s}/{s}", .{ ".", "/zig-out/log.log" }) catch |err| {
-            std.debug.print("Failed to create log file path: {}\n", .{err});
-            return;
-        };
-
-        const file = std.fs.cwd().openFile(path, .{ .mode = .read_write }) catch |err| {
-            std.debug.print("Failed to open log file: {}\n", .{err});
-            return;
-        };
-        defer file.close();
-
-        const stat = file.stat() catch |err| {
-            std.debug.print("Failed to get stat of log file: {}\n", .{err});
-            return;
-        };
-        file.seekTo(stat.size) catch |err| {
-            std.debug.print("Failed to seek log file: {}\n", .{err});
-            return;
-        };
-
         const prefix = "[" ++ comptime level.asText() ++ "] " ++ "(" ++ @tagName(scope) ++ ") ";
 
-        const message = std.fmt.allocPrint(alloc, prefix ++ format, args) catch |err| {
+        const message = std.fmt.allocPrint(self.alloc.?, prefix ++ format, args) catch |err| {
             std.debug.print("Failed to format log message with args: {}\n", .{err});
             return;
         };
-        file.writeAll(message) catch |err| {
+        defer self.alloc.?.free(message);
+
+        self.file.?.writeAll(message) catch |err| {
             std.debug.print("Failed to write to log file: {}\n", .{err});
         };
     }
@@ -102,7 +102,6 @@ pub inline fn dump_error(err: anyerror) void {
                 std.log.err("Unable to dump stack trace: Unable to open debug info: {s}\n", .{@errorName(e)});
                 return;
             };
-            // const stderr = std.io.getStdErr().writer();
             std.debug.writeStackTrace(trace.*, Log.writer, debug_info, .no_color) catch |e| {
                 std.log.err("Unable to dump stack trace: {s}\n", .{@errorName(e)});
                 return;

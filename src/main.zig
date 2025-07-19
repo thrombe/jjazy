@@ -24,6 +24,28 @@ const codes = struct {
         const enter = "\x1B[?1049h";
         const leave = "\x1B[?1049l";
     };
+
+    const kitty = struct {
+        // https://sw.kovidgoyal.net/kitty/keyboard-protocol/?utm_source=chatgpt.com#progressive-enhancement
+        const enable_input_protocol = std.fmt.comptimePrint("\x1B[>{d}u", .{@as(u8, @bitCast(ProgressiveEnhancement{
+            .disambiguate_escape_codes = true,
+            .report_event_types = true,
+            .report_alternate_keys = true,
+            .report_all_keys_as_escape_codes = true,
+            // .report_associated_text = true,
+        }))});
+        // const enable_input_protocol = "\x1B[>8u";
+        const disable_input_protocol = "\x1B[<u";
+
+        const ProgressiveEnhancement = packed struct(u8) {
+            disambiguate_escape_codes: bool = false,
+            report_event_types: bool = false,
+            report_alternate_keys: bool = false,
+            report_all_keys_as_escape_codes: bool = false,
+            report_associated_text: bool = false,
+            _pad: u3 = 0,
+        };
+    };
 };
 
 const border = struct {
@@ -205,11 +227,11 @@ const TermStyledGraphemeIterator = struct {
         };
     }
 
+    // https://en.wikipedia.org/wiki/ANSI_escape_code#C0_control_codes
     fn next_codepoint(self: *@This()) !?Token {
         const buf = self.utf8.bytes[self.utf8.i..];
         var it = ByteIterator{ .buf = buf };
         switch (it.next() orelse return null) {
-            // https://en.wikipedia.org/wiki/ANSI_escape_code#C0_control_codes
             // 0x07, 0x08, 0x09, 0x0A, 0x0C, 0x0D => return Token{ .grapheme = try self.consume(it.i), .codepoint = null },
 
             0x1B => switch (try it.expect()) {
@@ -360,6 +382,135 @@ const TermStyledGraphemeIterator = struct {
     };
 };
 
+const TermInputIterator = struct {
+    input: utils_mod.Deque(u8),
+
+    const Input = union(enum) {
+        char: struct { byte: u8, mod: Modifiers = .{}, action: Action = .press },
+        key: struct { key: FunctionalKey, mod: Modifiers = .{}, action: Action = .press },
+    };
+    const Modifiers = packed struct(u8) {
+        shift: bool = false,
+        alt: bool = false,
+        ctrl: bool = false,
+        super: bool = false,
+        hyper: bool = false,
+        meta: bool = false,
+        caps_lock: bool = false,
+        num_lock: bool = false,
+    };
+    const Action = enum {
+        none,
+        press,
+        repeat,
+        release,
+    };
+    const FunctionalKey = enum {
+        enter,
+        backspace,
+        tab,
+
+        home,
+        end,
+        up_arrow,
+        down_arrow,
+        left_arrow,
+        right_arrow,
+        f1,
+        f2,
+        f3,
+        f4,
+        f5,
+        f6,
+        f7,
+        f8,
+        f9,
+        f10,
+        f11,
+        f12,
+    };
+
+    fn add(self: *@This(), char: u8) !void {
+        try self.input.push_back(char);
+    }
+
+    // https://sw.kovidgoyal.net/kitty/keyboard-protocol/
+    fn next(self: *@This()) !?Input {
+        const bak = self.*;
+        errdefer self.* = bak;
+
+        const c = self.pop() orelse return null;
+        // @breakpoint();
+        switch (c) {
+            0x1B => switch (try self.expect()) {
+                '[' => {
+                    // const unicode_keycode = it.param() orelse return error.ExpectedParam;
+                    // _ = it.consume(":");
+                    // const shifted_keycode = it.pop() orelse unicode_keycode;
+                    // _ = it.consume(":");
+                    // const base_layout_key = it.pop()
+                    // const mod: Modifiers = @bitCast(it.pop() orelse 0);
+                    var arr = std.ArrayList(u8).init(self.input.allocator);
+                    defer arr.deinit();
+
+                    const k = self.param();
+
+                    while (self.pop()) |b| switch (b) {
+                        'u' => break,
+                        else => try arr.append(b),
+                    };
+
+                    std.log.debug("{s}", .{arr.items});
+                    // @breakpoint();
+
+                    if (k == 'q') {
+                        return .{ .char = .{ .byte = 'q' } };
+                    }
+
+                    return .{ .char = .{ .byte = 'a' } };
+                },
+                else => return error.ExpectedCsi,
+            },
+            0x0d => return .{ .key = .{ .key = .enter } },
+            0x7f, 0x08 => return .{ .key = .{ .key = .backspace } },
+            0x09 => return .{ .key = .{ .key = .tab } },
+            else => return .{ .char = .{ .byte = c } },
+        }
+    }
+
+    fn pop(self: *@This()) ?u8 {
+        return self.input.pop_front();
+    }
+
+    fn expect(self: *@This()) !u8 {
+        return self.pop() orelse error.ExpectedByte;
+    }
+
+    fn consume(self: *@This(), buf: []const u8) bool {
+        var it = self.*;
+        for (buf) |c| {
+            const d = it.pop() orelse return false;
+            if (c != d) return false;
+        }
+        self.* = it;
+        return true;
+    }
+
+    fn param(self: *@This()) ?u32 {
+        var n: ?u32 = null;
+        while (self.input.peek_front()) |x| switch (x.*) {
+            '0'...'9' => {
+                if (n == null) n = 0;
+                n.? *= 10;
+                n.? += x.* - '0';
+                _ = self.input.pop_front();
+            },
+            else => return n,
+        };
+        return n;
+    }
+};
+
 const Term = struct {
     tty: std.fs.File,
 
@@ -392,12 +543,12 @@ const Term = struct {
 
     fn uncook(self: *@This(), handler: anytype) !void {
         try self.enter_raw_mode();
-        try self.tty.writeAll(codes.cursor.hide ++ codes.alt_buf.enter ++ codes.clear);
+        try self.tty.writeAll(codes.cursor.hide ++ codes.alt_buf.enter ++ codes.kitty.enable_input_protocol ++ codes.clear);
         self.register_signal_handlers(handler);
     }
 
     fn cook_restore(self: *@This()) !void {
-        try self.tty.writeAll(codes.clear ++ codes.alt_buf.leave ++ codes.cursor.show ++ codes.attr_reset);
+        try self.tty.writeAll(codes.kitty.disable_input_protocol ++ codes.clear ++ codes.alt_buf.leave ++ codes.cursor.show ++ codes.attr_reset);
         try std.posix.tcsetattr(self.tty.handle, .FLUSH, self.cooked_termios.?);
         self.raw = null;
         self.cooked_termios = null;
@@ -854,6 +1005,7 @@ const App = struct {
     quit: utils_mod.Fuse = .{},
 
     input_thread: std.Thread,
+    input_iterator: TermInputIterator,
     events: utils_mod.Channel(Event),
 
     jj: *JujutsuServer,
@@ -872,7 +1024,7 @@ const App = struct {
         sigwinch,
         rerender,
         quit,
-        input: u8,
+        input: TermInputIterator.Input,
     };
 
     const CachedDiff = struct {
@@ -916,6 +1068,7 @@ const App = struct {
             .alloc = alloc,
             .arena = arena,
             .term = term,
+            .input_iterator = .{ .input = try .init(alloc) },
             .events = events,
             .jj = jj,
             .status = &.{},
@@ -952,6 +1105,7 @@ const App = struct {
         defer self.arena.deinit();
         defer self.term.deinit();
         defer self.term.cook_restore() catch |e| utils_mod.dump_error(e);
+        defer self.input_iterator.input.deinit();
         defer self.events.deinit();
         defer self.jj.deinit();
         defer self.input_thread.join();
@@ -970,9 +1124,9 @@ const App = struct {
         while (true) {
             var fds = [1]std.posix.pollfd{.{ .fd = self.term.tty.handle, .events = std.posix.POLL.IN, .revents = 0 }};
             if (try std.posix.poll(&fds, 20) > 0) {
-                var buf = std.mem.zeroes([1]u8);
-                _ = try self.term.tty.read(&buf);
-                try self.events.send(.{ .input = buf[0] });
+                var buf = std.mem.zeroes([32]u8);
+                const n = try self.term.tty.read(&buf);
+                for (buf[0..n]) |c| try self.input_iterator.input.push_back(c);
             }
 
             if (self.quit.check()) {
@@ -985,6 +1139,15 @@ const App = struct {
         try self.events.send(.rerender);
 
         while (true) {
+            input_blk: {
+                while (self.input_iterator.next() catch |e| switch (e) {
+                    error.ExpectedByte => break :input_blk,
+                    else => return e,
+                }) |input| {
+                    try self.events.send(.{ .input = input });
+                }
+            }
+
             while (self.events.try_recv()) |event| switch (event) {
                 .rerender => {
                     try self.render();
@@ -992,23 +1155,35 @@ const App = struct {
                 .sigwinch => {
                     try self.events.send(.rerender);
                 },
-                .input => |char| {
-                    if (char == 'q') {
-                        try self.events.send(.quit);
-                    }
-                    if (char == 'j') {
-                        self.y += 2;
-                        try self.events.send(.rerender);
+                .input => |input| {
+                    switch (input) {
+                        .char => |char| {
+                            std.log.debug("got input event: {any}", .{char});
 
-                        try self.request_jj();
+                            if (char.byte == 'q') {
+                                try self.events.send(.quit);
+                            }
+                        },
+                        .key => |key| {
+                            std.log.debug("got input event: {any}", .{key});
+                        },
                     }
-                    if (char == 'k') {
-                        self.y -= 2;
-                        self.y = @max(0, self.y);
-                        try self.events.send(.rerender);
+                    // if (char == 'q') {
+                    //     try self.events.send(.quit);
+                    // }
+                    // if (char == 'j') {
+                    //     self.y += 2;
+                    //     try self.events.send(.rerender);
 
-                        try self.request_jj();
-                    }
+                    //     try self.request_jj();
+                    // }
+                    // if (char == 'k') {
+                    //     self.y -= 2;
+                    //     self.y = @max(0, self.y);
+                    //     try self.events.send(.rerender);
+
+                    //     try self.request_jj();
+                    // }
                 },
                 .quit => {
                     return;

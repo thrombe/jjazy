@@ -779,7 +779,10 @@ const App = struct {
         input: u8,
     };
 
-    const DiffCache = std.HashMap([8]u8, []const u8, struct {
+    const CachedDiff = struct {
+        diff: ?[]const u8 = null,
+    };
+    const DiffCache = std.HashMap([8]u8, CachedDiff, struct {
         pub fn hash(self: @This(), s: [8]u8) u64 {
             _ = self;
             return std.hash_map.StringContext.hash(.{}, s[0..]);
@@ -832,7 +835,7 @@ const App = struct {
             input_thread.join();
         }
 
-        try self.diffcache.put(self.focused_change.hash, &.{});
+        try self.diffcache.put(self.focused_change.hash, .{ .diff = &.{} });
 
         self.input_thread = input_thread;
         app = self;
@@ -845,9 +848,9 @@ const App = struct {
         defer self.changes.deinit();
         defer {
             var it = self.diffcache.iterator();
-            while (it.next()) |e| {
-                self.alloc.free(e.value_ptr.*);
-            }
+            while (it.next()) |e| if (e.value_ptr.diff) |diff| {
+                self.alloc.free(diff);
+            };
             self.diffcache.deinit();
         }
         defer self.arena.deinit();
@@ -933,11 +936,7 @@ const App = struct {
                 .diff => |req| {
                     switch (res.res) {
                         .ok, .err => |buf| {
-                            const entry = try self.diffcache.getOrPut(req.hash);
-                            if (entry.found_existing) {
-                                self.alloc.free(entry.value_ptr.*);
-                            }
-                            entry.value_ptr.* = buf;
+                            self.diffcache.getPtr(req.hash).?.diff = buf;
                         },
                     }
                     try self.events.send(.rerender);
@@ -963,21 +962,21 @@ const App = struct {
         var i: i32 = 0;
         while (try self.changes.next()) |change| {
             const n: i32 = 3;
-            if (@abs(self.y - i) < 2 * n) {
+            if (self.y == i * 2) {
+                self.focused_change = change;
+            } else if (@abs(self.y - i * 2) < 2 * n) {
                 if (self.diffcache.get(change.hash) == null) {
+                    try self.diffcache.put(change.hash, .{});
                     try self.jj.requests.send(.{ .diff = change });
                 }
-            } else if (self.y == i * 2) {
-                self.focused_change = change;
-                break;
             }
             i += 1;
         }
 
-        if (self.diffcache.get(self.focused_change.hash)) |diff| {
-            self.diff = diff;
+        if (self.diffcache.get(self.focused_change.hash)) |_| {
             try self.events.send(.rerender);
         } else {
+            try self.diffcache.put(self.focused_change.hash, .{});
             try self.jj.requests.send(.{ .diff = self.focused_change });
         }
     }
@@ -985,9 +984,9 @@ const App = struct {
     fn render(self: *@This()) !void {
         try self.term.update_size();
         {
-            if (self.diffcache.get(self.focused_change.hash)) |diff| {
+            if (self.diffcache.get(self.focused_change.hash)) |cdiff| if (cdiff.diff) |diff| {
                 self.diff = diff;
-            }
+            };
 
             try self.term.clear_region(.{}, self.term.size.sub(.splat(1)));
             try self.term.draw_border(.{}, self.term.size.sub(.splat(1)), border.rounded);

@@ -408,118 +408,124 @@ const TermInputIterator = struct {
         repeat = 2,
         release = 3,
     };
-    const FunctionalKey = enum {
-        escape, // 27 u
-        enter, // 13 u
-        tab, // 9 u
-        backspace, // 127 u
-        insert, // 2 ~
-        delete, // 3 ~
-        left, // 1 D
-        right, // 1 C
-        up, // 1 A
-        down, // 1 B
-        page_up, // 5 ~
-        page_down, // 6 ~
-        home, // 1 H or 7 ~
-        end, // 1 F or 8 ~
-        caps_lock, // 57358 u
-        scroll_lock, // 57359 u
-        num_lock, // 57360 u
-        print_screen, // 57361 u
-        pause, // 57362 u
-        menu, // 57363 u
-        f1, // 1 P or 11 ~
-        f2, // 1 Q or 12 ~
-        f3, // 13 ~
-        f4, // 1 S or 14 ~
-        f5, // 15 ~
-        f6, // 17 ~
-        f7, // 18 ~
-        f8, // 19 ~
-        f9, // 20 ~
-        f10, // 21 ~
-        f11, // 23 ~
-        f12, // 24 ~
-        f13, // 57376 u
-        f14, // 57377 u
-        f15, // 57378 u
-        f16, // 57379 u
-        f17, // 57380 u
-        f18, // 57381 u
-        f19, // 57382 u
-        f20, // 57383 u
-        f21, // 57384 u
-        f22, // 57385 u
-        f23, // 57386 u
-        f24, // 57387 u
-        f25, // 57388 u
-        f26, // 57389 u
-        f27, // 57390 u
-        f28, // 57391 u
-        f29, // 57392 u
-        f30, // 57393 u
-        f31, // 57394 u
-        f32, // 57395 u
-        f33, // 57396 u
-        f34, // 57397 u
-        f35, // 57398 u
-        kp_0, // 57399 u
-        kp_1, // 57400 u
-        kp_2, // 57401 u
-        kp_3, // 57402 u
-        kp_4, // 57403 u
-        kp_5, // 57404 u
-        kp_6, // 57405 u
-        kp_7, // 57406 u
-        kp_8, // 57407 u
-        kp_9, // 57408 u
-        kp_decimal, // 57409 u
-        kp_divide, // 57410 u
-        kp_multiply, // 57411 u
-        kp_subtract, // 57412 u
-        kp_add, // 57413 u
-        kp_enter, // 57414 u
-        kp_equal, // 57415 u
-        kp_separator, // 57416 u
-        kp_left, // 57417 u
-        kp_right, // 57418 u
-        kp_up, // 57419 u
-        kp_down, // 57420 u
-        kp_page_up, // 57421 u
-        kp_page_down, // 57422 u
-        kp_home, // 57423 u
-        kp_end, // 57424 u
-        kp_insert, // 57425 u
-        kp_delete, // 57426 u
-        kp_begin, // 1 E or 57427 ~
-        media_play, // 57428 u
-        media_pause, // 57429 u
-        media_play_pause, // 57430 u
-        media_reverse, // 57431 u
-        media_stop, // 57432 u
-        media_fast_forward, // 57433 u
-        media_rewind, // 57434 u
-        media_track_next, // 57435 u
-        media_track_previous, // 57436 u
-        media_record, // 57437 u
-        lower_volume, // 57438 u
-        raise_volume, // 57439 u
-        mute_volume, // 57440 u
-        left_shift, // 57441 u
-        left_control, // 57442 u
-        left_alt, // 57443 u
-        left_super, // 57444 u
-        left_hyper, // 57445 u
-        left_meta, // 57446 u
-        right_shift, // 57447 u
-        right_control, // 57448 u
-        right_alt, // 57449 u
-        right_super, // 57450 u
-        right_hyper, // 57451 u
-        right_meta, // 57452 u
-        iso_level3_shift, // 57453 u
-        iso_level5_shift, // 57454 u
+    const FunctionalKey = enum(u16) {
+        escape = 27, // 27 u
+        enter = 13, // 13 u
+        tab = 9, // 9 u
+        backspace = 127, // 127 u
+        insert = 2, // 2 ~
+        delete = 3, // 3 ~
+
+        // collision
+        left = 201, // 1 D
+        right = 202, // 1 C
+        up = 203, // 1 A
+        down = 204, // 1 B
+
+        page_up = 5, // 5 ~
+        page_down = 6, // 6 ~
+        home = 7, // 1 H or 7 ~
+        end = 8, // 1 F or 8 ~
+        caps_lock = 57358, // 57358 u
+        scroll_lock = 57359, // 57359 u
+        num_lock = 57360, // 57360 u
+        print_screen = 57361, // 57361 u
+        pause = 57362, // 57362 u
+        menu = 57363, // 57363 u
+        f1 = 11, // 1 P or 11 ~
+        f2 = 12, // 1 Q or 12 ~
+
+        // oof. collision
+        f3 = 205, // 13 ~
+
+        f4 = 14, // 1 S or 14 ~
+        f5 = 15, // 15 ~
+        f6 = 17, // 17 ~
+        f7 = 18, // 18 ~
+        f8 = 19, // 19 ~
+        f9 = 20, // 20 ~
+        f10 = 21, // 21 ~
+        f11 = 23, // 23 ~
+        f12 = 24, // 24 ~
+        f13 = 57376, // 57376 u
+        f14 = 57377, // 57377 u
+        f15 = 57378, // 57378 u
+        f16 = 57379, // 57379 u
+        f17 = 57380, // 57380 u
+        f18 = 57381, // 57381 u
+        f19 = 57382, // 57382 u
+        f20 = 57383, // 57383 u
+        f21 = 57384, // 57384 u
+        f22 = 57385, // 57385 u
+        f23 = 57386, // 57386 u
+        f24 = 57387, // 57387 u
+        f25 = 57388, // 57388 u
+        f26 = 57389, // 57389 u
+        f27 = 57390, // 57390 u
+        f28 = 57391, // 57391 u
+        f29 = 57392, // 57392 u
+        f30 = 57393, // 57393 u
+        f31 = 57394, // 57394 u
+        f32 = 57395, // 57395 u
+        f33 = 57396, // 57396 u
+        f34 = 57397, // 57397 u
+        f35 = 57398, // 57398 u
+        kp_0 = 57399, // 57399 u
+        kp_1 = 57400, // 57400 u
+        kp_2 = 57401, // 57401 u
+        kp_3 = 57402, // 57402 u
+        kp_4 = 57403, // 57403 u
+        kp_5 = 57404, // 57404 u
+        kp_6 = 57405, // 57405 u
+        kp_7 = 57406, // 57406 u
+        kp_8 = 57407, // 57407 u
+        kp_9 = 57408, // 57408 u
+        kp_decimal = 57409, // 57409 u
+        kp_divide = 57410, // 57410 u
+        kp_multiply = 57411, // 57411 u
+        kp_subtract = 57412, // 57412 u
+        kp_add = 57413, // 57413 u
+        kp_enter = 57414, // 57414 u
+        kp_equal = 57415, // 57415 u
+        kp_separator = 57416, // 57416 u
+        kp_left = 57417, // 57417 u
+        kp_right = 57418, // 57418 u
+        kp_up = 57419, // 57419 u
+        kp_down = 57420, // 57420 u
+        kp_page_up = 57421, // 57421 u
+        kp_page_down = 57422, // 57422 u
+        kp_home = 57423, // 57423 u
+        kp_end = 57424, // 57424 u
+        kp_insert = 57425, // 57425 u
+        kp_delete = 57426, // 57426 u
+        kp_begin = 57427, // 1 E or 57427 ~
+        media_play = 57428, // 57428 u
+        media_pause = 57429, // 57429 u
+        media_play_pause = 57430, // 57430 u
+        media_reverse = 57431, // 57431 u
+        media_stop = 57432, // 57432 u
+        media_fast_forward = 57433, // 57433 u
+        media_rewind = 57434, // 57434 u
+        media_track_next = 57435, // 57435 u
+        media_track_previous = 57436, // 57436 u
+        media_record = 57437, // 57437 u
+        lower_volume = 57438, // 57438 u
+        raise_volume = 57439, // 57439 u
+        mute_volume = 57440, // 57440 u
+        left_shift = 57441, // 57441 u
+        left_control = 57442, // 57442 u
+        left_alt = 57443, // 57443 u
+        left_super = 57444, // 57444 u
+        left_hyper = 57445, // 57445 u
+        left_meta = 57446, // 57446 u
+        right_shift = 57447, // 57447 u
+        right_control = 57448, // 57448 u
+        right_alt = 57449, // 57449 u
+        right_super = 57450, // 57450 u
+        right_hyper = 57451, // 57451 u
+        right_meta = 57452, // 57452 u
+        iso_level3_shift = 57453, // 57453 u
+        iso_level5_shift = 57454, // 57454 u
     };
 
     fn add(self: *@This(), char: u8) !void {
@@ -567,13 +573,21 @@ const TermInputIterator = struct {
                     std.log.debug("end: {d}", .{end});
 
                     switch (end) {
-                        'u' => {
-                            // TODO: functional :|
-                            return Input{ .key = .{ .key = cast(u16, shifted_keycode orelse unicode_keycode), .mod = mod, .action = action } };
+                        'u' => switch (unicode_keycode) {
+                            'a'...'z',
+                            'A'...'Z',
+                            '0'...'9',
+                            ' ',
+                            33...47, // !"#$%&'()*+,-./
+                            58...64, // :;<=>?@
+                            91...96, // [\]^_
+                            123...126, // {|}~
+                            => return Input{ .key = .{ .key = cast(u16, shifted_keycode orelse unicode_keycode), .mod = mod, .action = action } },
+                            else => return Input{ .functional = .{ .key = try std.meta.intToEnum(FunctionalKey, unicode_keycode), .mod = mod, .action = action } },
                         },
-                        '~' => {
-                            // TODO: functional :|
-                            return Input{ .key = .{ .key = cast(u16, shifted_keycode orelse unicode_keycode), .mod = mod, .action = action } };
+                        '~' => switch (unicode_keycode) {
+                            13 => return Input{ .functional = .{ .key = .f3, .mod = mod, .action = action } },
+                            else => return Input{ .functional = .{ .key = try std.meta.intToEnum(FunctionalKey, unicode_keycode), .mod = mod, .action = action } },
                         },
                         else => if (unicode_keycode == 1) switch (end) {
                             'A' => return .{ .functional = .{ .key = .up, .mod = mod, .action = action } },
@@ -615,8 +629,8 @@ const TermInputIterator = struct {
                     58...64, // :;<=>?@
                     91...96, // [\]^_
                     123...126, // {|}~
-                    127, // backspace
                     => return Input{ .key = .{ .key = cast(u16, c) } },
+                    127 => return Input{ .functional = .{ .key = .backspace } },
                     '\t' => return Input{ .functional = .{ .key = .tab } },
                     '\r' => return Input{ .functional = .{ .key = .enter } }, // more useful as enter
                     '\n' => return Input{ .key = .{ .key = 'j', .mod = .{ .ctrl = true } } }, // more useful as ctrl j

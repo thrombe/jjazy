@@ -591,28 +591,35 @@ const TermInputIterator = struct {
                         } else return error.UnexpectedByte,
                     }
                 },
-                else => return error.ExpectedCsi,
+                else => {
+                    std.log.debug("non kitty kb event: {d}", .{c});
+
+                    switch (c) {
+                        0x1B => return Input{ .functional = .{ .key = .escape } },
+                        else => {
+                            std.log.debug("unexpected byte: {d}", .{c});
+                            return error.UnsupportedEscapeCode;
+                        },
+                    }
+                },
             },
             else => {
-                // zellij does not support kitty protocol properly? T_T
-
                 std.log.debug("non kitty kb event: {d}", .{c});
 
                 switch (c) {
                     'a'...'z',
                     'A'...'Z',
                     '0'...'9',
-                    '\r',
-                    '\n',
                     ' ',
                     33...47, // !"#$%&'()*+,-./
                     58...64, // :;<=>?@
                     91...96, // [\]^_
                     123...126, // {|}~
                     127, // backspace
-                    => {
-                        return Input{ .key = .{ .key = cast(u16, c) } };
-                    },
+                    => return Input{ .key = .{ .key = cast(u16, c) } },
+                    '\r' => return Input{ .functional = .{ .key = .enter } }, // more useful as enter
+                    '\n' => return Input{ .key = .{ .key = 'j', .mod = .{ .ctrl = true } } }, // more useful as ctrl j
+                    11 => return Input{ .key = .{ .key = 'k', .mod = .{ .ctrl = true } } }, // obsolete key otherwise
                     else => {
                         std.log.err("unsupported input event: {d}", .{c});
                         return .{ .unsupported = c };

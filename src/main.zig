@@ -530,32 +530,65 @@ const TermInputIterator = struct {
         switch (c) {
             0x1B => switch (try self.expect()) {
                 '[' => {
-                    var arr = std.ArrayList(u8).init(self.input.allocator);
-                    defer arr.deinit();
-
-                    const unicode_keycode = self.param() orelse return error.ExpectedParam;
-                    // const shifted_keycode = if (self.consume(":")) self.param() else null;
-                    // const base_layout_key = if (self.consume(":")) self.param() else null;
-                    // const mod: Modifiers = if (self.consume(";")) @bitCast(@as(u8, @intCast(self.param() orelse 1)) - 1) else .{};
-                    // const action: Action = if (self.consume(":")) try std.meta.intToEnum(Action, self.param() orelse 1) else .press;
-
-                    while (self.pop()) |b| switch (b) {
-                        'u' => break,
-                        '~' => break,
-                        else => try arr.append(b),
+                    const unicode_keycode = self.param() orelse {
+                        // alacritty sends legacy codes even when using kitty :/
+                        switch (try self.expect()) {
+                            'A' => return .{ .functional = .{ .key = .up } },
+                            'B' => return .{ .functional = .{ .key = .down } },
+                            'C' => return .{ .functional = .{ .key = .right } },
+                            'D' => return .{ .functional = .{ .key = .left } },
+                            'E' => return .{ .functional = .{ .key = .kp_begin } },
+                            'F' => return .{ .functional = .{ .key = .end } },
+                            'H' => return .{ .functional = .{ .key = .home } },
+                            'P' => return .{ .functional = .{ .key = .f1 } },
+                            'Q' => return .{ .functional = .{ .key = .f2 } },
+                            'R' => return .{ .functional = .{ .key = .f3 } },
+                            'S' => return .{ .functional = .{ .key = .f4 } },
+                            else => return error.ExpectedParam,
+                        }
+                        return error.ExpectedParam;
                     };
+                    const shifted_keycode = if (self.consume(":")) self.param() else null;
+                    const base_layout_key = if (self.consume(":")) self.param() else null;
+                    const mod: Modifiers = if (self.consume(";")) @bitCast(@as(u8, @intCast(self.param() orelse 1)) - 1) else .{};
+                    const action: Action = if (self.consume(":")) try std.meta.intToEnum(Action, self.param() orelse 1) else .press;
+                    const end = try self.expect();
 
-                    std.log.debug("{d}{s}", .{ unicode_keycode, arr.items });
-                    // std.log.debug("unicode-keycode: {d}", .{unicode_keycode});
-                    // std.log.debug("shifted-keycode: {?d}", .{shifted_keycode});
-                    // std.log.debug("base-layout-key: {?d}", .{base_layout_key});
-                    // std.log.debug("modifiers: {any}", .{mod});
-                    // std.log.debug("action: {any}", .{action});
+                    std.log.debug("unicode-keycode: {d}", .{unicode_keycode});
+                    std.log.debug("shifted-keycode: {?d}", .{shifted_keycode});
+                    std.log.debug("base-layout-key: {?d}", .{base_layout_key});
+                    std.log.debug("modifiers: {any}", .{mod});
+                    std.log.debug("action: {any}", .{action});
+                    std.log.debug("end: {d}", .{end});
 
-                    return .{ .key = .{ .key = cast(u16, unicode_keycode) } };
+                    switch (end) {
+                        'u' => {
+                            // TODO: functional :|
+                            return Input{ .key = .{ .key = cast(u16, unicode_keycode), .mod = mod, .action = action } };
+                        },
+                        '~' => {
+                            // TODO: functional :|
+                            return Input{ .key = .{ .key = cast(u16, unicode_keycode), .mod = mod, .action = action } };
+                        },
+                        else => if (unicode_keycode == 1) switch (end) {
+                            'A' => return .{ .functional = .{ .key = .up, .mod = mod, .action = action } },
+                            'B' => return .{ .functional = .{ .key = .down, .mod = mod, .action = action } },
+                            'C' => return .{ .functional = .{ .key = .right, .mod = mod, .action = action } },
+                            'D' => return .{ .functional = .{ .key = .left, .mod = mod, .action = action } },
+                            'E' => return .{ .functional = .{ .key = .kp_begin, .mod = mod, .action = action } },
+                            'F' => return .{ .functional = .{ .key = .end, .mod = mod, .action = action } },
+                            'H' => return .{ .functional = .{ .key = .home, .mod = mod, .action = action } },
+                            'P' => return .{ .functional = .{ .key = .f1, .mod = mod, .action = action } },
+                            'Q' => return .{ .functional = .{ .key = .f2, .mod = mod, .action = action } },
+                            'R' => return .{ .functional = .{ .key = .f3, .mod = mod, .action = action } },
+                            'S' => return .{ .functional = .{ .key = .f4, .mod = mod, .action = action } },
+                            else => return error.UnexpectedByte,
+                        } else return error.UnexpectedByte,
+                    }
                 },
                 else => return error.ExpectedCsi,
             },
+            // TODO: non escaped inputs for pleb terminals
             else => return error.ExpectedEscapedInput,
         }
     }
@@ -1223,7 +1256,7 @@ const App = struct {
         while (true) {
             input_blk: {
                 while (self.input_iterator.next() catch |e| switch (e) {
-                    error.ExpectedByte, error.ExpectedParam => break :input_blk,
+                    error.ExpectedByte => break :input_blk,
                     else => return e,
                 }) |input| {
                     try self.events.send(.{ .input = input });
@@ -1245,13 +1278,13 @@ const App = struct {
                             if (key.key == 'q') {
                                 try self.events.send(.quit);
                             }
-                            if (key.key == 'j') {
+                            if (key.key == 'j' and key.action != .release) {
                                 self.y += 2;
                                 try self.events.send(.rerender);
 
                                 try self.request_jj();
                             }
-                            if (key.key == 'k') {
+                            if (key.key == 'k' and key.action != .release) {
                                 self.y -= 2;
                                 self.y = @max(0, self.y);
                                 try self.events.send(.rerender);

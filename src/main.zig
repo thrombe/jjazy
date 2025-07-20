@@ -569,11 +569,11 @@ const TermInputIterator = struct {
                     switch (end) {
                         'u' => {
                             // TODO: functional :|
-                            return Input{ .key = .{ .key = cast(u16, unicode_keycode), .mod = mod, .action = action } };
+                            return Input{ .key = .{ .key = cast(u16, shifted_keycode orelse unicode_keycode), .mod = mod, .action = action } };
                         },
                         '~' => {
                             // TODO: functional :|
-                            return Input{ .key = .{ .key = cast(u16, unicode_keycode), .mod = mod, .action = action } };
+                            return Input{ .key = .{ .key = cast(u16, shifted_keycode orelse unicode_keycode), .mod = mod, .action = action } };
                         },
                         else => if (unicode_keycode == 1) switch (end) {
                             'A' => return .{ .functional = .{ .key = .up, .mod = mod, .action = action } },
@@ -617,9 +617,11 @@ const TermInputIterator = struct {
                     123...126, // {|}~
                     127, // backspace
                     => return Input{ .key = .{ .key = cast(u16, c) } },
+                    '\t' => return Input{ .functional = .{ .key = .tab } },
                     '\r' => return Input{ .functional = .{ .key = .enter } }, // more useful as enter
                     '\n' => return Input{ .key = .{ .key = 'j', .mod = .{ .ctrl = true } } }, // more useful as ctrl j
                     11 => return Input{ .key = .{ .key = 'k', .mod = .{ .ctrl = true } } }, // obsolete key otherwise
+                    8 => return Input{ .functional = .{ .key = .backspace } }, // obsolete key otherwise
                     else => {
                         std.log.err("unsupported input event: {d}", .{c});
                         return .{ .unsupported = c };

@@ -264,6 +264,9 @@ pub fn Channel(typ: type) type {
         const Pinned = struct {
             dq: Dq,
             lock: std.Thread.Mutex = .{},
+            notify: std.Thread.Condition = .{},
+            closed: Fuse = .{},
+            waiting: std.atomic.Value(u32) = .{ .raw = 0 },
         };
         pinned: *Pinned,
 
@@ -279,8 +282,19 @@ pub fn Channel(typ: type) type {
         }
 
         pub fn deinit(self: *@This()) void {
+            _ = self.pinned.closed.fuse();
+            self.pinned.notify.signal();
+
             self.pinned.lock.lock();
             // defer self.pinned.lock.unlock();
+
+            while (true) {
+                self.pinned.notify.timedWait(&self.pinned.lock, std.time.ns_per_us * 100);
+                const waiting = self.pinned.waiting.fetchAdd(0, .monotonic);
+                if (waiting == 0) break;
+                self.pinned.notify.signal();
+            }
+
             self.pinned.dq.deinit();
             self.pinned.dq.allocator.destroy(self.pinned);
         }
@@ -289,6 +303,8 @@ pub fn Channel(typ: type) type {
             self.pinned.lock.lock();
             defer self.pinned.lock.unlock();
             try self.pinned.dq.push_back(val);
+
+            self.pinned.notify.signal();
         }
 
         pub fn try_recv(self: *@This()) ?typ {
@@ -307,6 +323,59 @@ pub fn Channel(typ: type) type {
             self.pinned.lock.lock();
             defer self.pinned.lock.unlock();
             return self.pinned.dq.pop_back();
+        }
+
+        // only marks the channel closed for .wait_* operations. does not actually prevent recving or sending to the channel
+        // this causes the .wait_* methods to not block. they essentially behave like .try_* methods
+        pub fn close(self: *@This()) void {
+            _ = self.pinned.closed.fuse();
+            self.pinned.notify.signal();
+        }
+
+        pub fn wait_recv(self: *@This()) ?typ {
+            if (self.pinned.dq.pop_front()) |t| return t;
+            if (self.pinned.closed.check()) return null;
+
+            self.pinned.lock.lock();
+            defer self.pinned.lock.unlock();
+
+            _ = self.pinned.waiting.fetchAdd(1, .monotonic);
+            defer _ = self.pinned.waiting.fetchSub(1, .monotonic);
+
+            // when returning null, we want to signal atleast the deinit method
+            // when returning non-null, we want to signal some thread that might be listening for stuff
+            defer self.pinned.notify.signal();
+
+            while (true) {
+                if (self.pinned.dq.pop_front()) |t| return t;
+
+                if (self.pinned.closed.check()) return null;
+
+                self.pinned.notify.wait(&self.pinned.lock);
+            }
+        }
+
+        pub fn wait_pop(self: *@This()) ?typ {
+            if (self.pinned.dq.pop_back()) |t| return t;
+            if (self.pinned.closed.check()) return null;
+
+            self.pinned.lock.lock();
+            defer self.pinned.lock.unlock();
+
+            _ = self.pinned.waiting.fetchAdd(1, .monotonic);
+            defer _ = self.pinned.waiting.fetchSub(1, .monotonic);
+
+            // when returning null, we want to signal atleast the deinit method
+            // when returning non-null, we want to signal some thread that might be listening for stuff
+            defer self.pinned.notify.signal();
+
+            while (true) {
+                if (self.pinned.dq.pop_back()) |t| return t;
+
+                if (self.pinned.closed.check()) return null;
+
+                self.pinned.notify.wait(&self.pinned.lock);
+            }
         }
     };
 }

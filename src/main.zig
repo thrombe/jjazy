@@ -386,6 +386,7 @@ const TermInputIterator = struct {
     const Input = union(enum) {
         key: struct { key: u16, mod: Modifiers = .{}, action: Action = .press },
         functional: struct { key: FunctionalKey, mod: Modifiers = .{}, action: Action = .press },
+        unsupported: u8,
     };
     const Modifiers = packed struct(u8) {
         shift: bool = false,
@@ -396,6 +397,10 @@ const TermInputIterator = struct {
         meta: bool = false,
         caps_lock: bool = false,
         num_lock: bool = false,
+
+        fn eq(self: @This(), other: @This()) bool {
+            return std.meta.eql(self, other);
+        }
     };
     const Action = enum(u2) {
         none = 0,
@@ -588,8 +593,32 @@ const TermInputIterator = struct {
                 },
                 else => return error.ExpectedCsi,
             },
-            // TODO: non escaped inputs for pleb terminals
-            else => return error.ExpectedEscapedInput,
+            else => {
+                // zellij does not support kitty protocol properly? T_T
+
+                std.log.debug("non kitty kb event: {d}", .{c});
+
+                switch (c) {
+                    'a'...'z',
+                    'A'...'Z',
+                    '0'...'9',
+                    '\r',
+                    '\n',
+                    ' ',
+                    33...47, // !"#$%&'()*+,-./
+                    58...64, // :;<=>?@
+                    91...96, // [\]^_
+                    123...126, // {|}~
+                    127, // backspace
+                    => {
+                        return Input{ .key = .{ .key = cast(u16, c) } };
+                    },
+                    else => {
+                        std.log.err("unsupported input event: {d}", .{c});
+                        return .{ .unsupported = c };
+                    },
+                }
+            },
         }
     }
 
@@ -1278,13 +1307,13 @@ const App = struct {
                             if (key.key == 'q') {
                                 try self.events.send(.quit);
                             }
-                            if (key.key == 'j' and key.action != .release) {
+                            if (key.key == 'j' and key.action != .release and key.mod.eq(.{})) {
                                 self.y += 2;
                                 try self.events.send(.rerender);
 
                                 try self.request_jj();
                             }
-                            if (key.key == 'k' and key.action != .release) {
+                            if (key.key == 'k' and key.action != .release and key.mod.eq(.{})) {
                                 self.y -= 2;
                                 self.y = @max(0, self.y);
                                 try self.events.send(.rerender);
@@ -1296,6 +1325,7 @@ const App = struct {
                             _ = key;
                             // std.log.debug("got input event: {any}", .{key});
                         },
+                        .unsupported => {},
                     }
                 },
                 .quit => {

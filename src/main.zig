@@ -1181,6 +1181,7 @@ const App = struct {
     alloc: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
 
+    x_split: f32 = 0.55,
     y: i32 = 0,
     status: []const u8,
     diff: []const u8,
@@ -1337,11 +1338,21 @@ const App = struct {
                             }
                             if (key.key == 'k' and key.action != .release and key.mod.eq(.{})) {
                                 self.y -= 2;
-                                self.y = @max(0, self.y);
                                 try self.events.send(.rerender);
 
                                 try self.request_jj();
                             }
+                            if (key.key == 'h' and key.action != .release and key.mod.eq(.{ .ctrl = true })) {
+                                self.x_split -= 0.05;
+                                try self.events.send(.rerender);
+                            }
+                            if (key.key == 'l' and key.action != .release and key.mod.eq(.{ .ctrl = true })) {
+                                self.x_split += 0.05;
+                                try self.events.send(.rerender);
+                            }
+
+                            self.y = @max(0, self.y);
+                            self.x_split = @min(@max(0.0, self.x_split), 1.0);
                         },
                         .functional => |key| {
                             // _ = key;
@@ -1431,7 +1442,7 @@ const App = struct {
 
             const min = Vec2{};
             const max = min.add(self.term.size.sub(.splat(1)));
-            const split_x: i32 = @divFloor(max.x, 2);
+            const split_x: i32 = cast(i32, cast(f32, max.x) * self.x_split);
             try self.term.clear_region(min, max);
             try self.term.draw_border(min, max, border.rounded);
             try self.term.draw_split(min, max, split_x, null);

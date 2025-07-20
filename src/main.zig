@@ -1392,7 +1392,8 @@ const App = struct {
                 },
             };
 
-            std.Thread.sleep(std.time.ns_per_ms * 20);
+            // TODO: impl channels using condvars instead of sleeping
+            std.Thread.sleep(std.time.ns_per_ms * 5);
         }
     }
 

@@ -565,12 +565,13 @@ const TermInputIterator = struct {
                     const action: Action = if (self.consume(":")) try std.meta.intToEnum(Action, self.param() orelse 1) else .press;
                     const end = try self.expect();
 
-                    std.log.debug("unicode-keycode: {d}", .{unicode_keycode});
-                    std.log.debug("shifted-keycode: {?d}", .{shifted_keycode});
-                    std.log.debug("base-layout-key: {?d}", .{base_layout_key});
-                    std.log.debug("modifiers: {any}", .{mod});
-                    std.log.debug("action: {any}", .{action});
-                    std.log.debug("end: {d}", .{end});
+                    _ = base_layout_key;
+                    // std.log.debug("unicode-keycode: {d}", .{unicode_keycode});
+                    // std.log.debug("shifted-keycode: {?d}", .{shifted_keycode});
+                    // std.log.debug("base-layout-key: {?d}", .{base_layout_key});
+                    // std.log.debug("modifiers: {any}", .{mod});
+                    // std.log.debug("action: {any}", .{action});
+                    // std.log.debug("end: {d}", .{end});
 
                     switch (end) {
                         'u' => switch (unicode_keycode) {
@@ -606,7 +607,7 @@ const TermInputIterator = struct {
                     }
                 },
                 else => {
-                    std.log.debug("non kitty kb event: {d}", .{c});
+                    // std.log.debug("non kitty kb event: {d}", .{c});
 
                     switch (c) {
                         0x1B => return Input{ .functional = .{ .key = .escape } },
@@ -618,7 +619,7 @@ const TermInputIterator = struct {
                 },
             },
             else => {
-                std.log.debug("non kitty kb event: {d}", .{c});
+                // std.log.debug("non kitty kb event: {d}", .{c});
 
                 switch (c) {
                     'a'...'z',
@@ -1323,7 +1324,7 @@ const App = struct {
                 .input => |input| {
                     switch (input) {
                         .key => |key| {
-                            // std.log.debug("got input event: {any}", .{key});
+                            std.log.debug("got input event: {any}", .{key});
 
                             if (key.key == 'q') {
                                 try self.events.send(.quit);
@@ -1343,8 +1344,8 @@ const App = struct {
                             }
                         },
                         .functional => |key| {
-                            _ = key;
-                            // std.log.debug("got input event: {any}", .{key});
+                            // _ = key;
+                            std.log.debug("got input event: {any}", .{key});
                         },
                         .unsupported => {},
                     }

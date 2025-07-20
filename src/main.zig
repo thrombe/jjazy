@@ -27,23 +27,21 @@ const codes = struct {
 
     const kitty = struct {
         // https://sw.kovidgoyal.net/kitty/keyboard-protocol/?utm_source=chatgpt.com#progressive-enhancement
-        const enable_input_protocol = std.fmt.comptimePrint("\x1B[>{d}u", .{@as(u8, @bitCast(ProgressiveEnhancement{
+        const enable_input_protocol = std.fmt.comptimePrint("\x1B[>{d}u", .{@as(u5, @bitCast(ProgressiveEnhancement{
             .disambiguate_escape_codes = true,
             .report_event_types = true,
             .report_alternate_keys = true,
             .report_all_keys_as_escape_codes = true,
             // .report_associated_text = true,
         }))});
-        // const enable_input_protocol = "\x1B[>8u";
         const disable_input_protocol = "\x1B[<u";
 
-        const ProgressiveEnhancement = packed struct(u8) {
+        const ProgressiveEnhancement = packed struct(u5) {
             disambiguate_escape_codes: bool = false,
             report_event_types: bool = false,
             report_alternate_keys: bool = false,
             report_all_keys_as_escape_codes: bool = false,
             report_associated_text: bool = false,
-            _pad: u3 = 0,
         };
     };
 };
@@ -386,8 +384,8 @@ const TermInputIterator = struct {
     input: utils_mod.Deque(u8),
 
     const Input = union(enum) {
-        char: struct { byte: u8, mod: Modifiers = .{}, action: Action = .press },
-        key: struct { key: FunctionalKey, mod: Modifiers = .{}, action: Action = .press },
+        key: struct { key: u16, mod: Modifiers = .{}, action: Action = .press },
+        functional: struct { key: FunctionalKey, mod: Modifiers = .{}, action: Action = .press },
     };
     const Modifiers = packed struct(u8) {
         shift: bool = false,
@@ -399,35 +397,124 @@ const TermInputIterator = struct {
         caps_lock: bool = false,
         num_lock: bool = false,
     };
-    const Action = enum {
-        none,
-        press,
-        repeat,
-        release,
+    const Action = enum(u2) {
+        none = 0,
+        press = 1,
+        repeat = 2,
+        release = 3,
     };
     const FunctionalKey = enum {
-        enter,
-        backspace,
-        tab,
-
-        home,
-        end,
-        up_arrow,
-        down_arrow,
-        left_arrow,
-        right_arrow,
-        f1,
-        f2,
-        f3,
-        f4,
-        f5,
-        f6,
-        f7,
-        f8,
-        f9,
-        f10,
-        f11,
-        f12,
+        escape, // 27 u
+        enter, // 13 u
+        tab, // 9 u
+        backspace, // 127 u
+        insert, // 2 ~
+        delete, // 3 ~
+        left, // 1 D
+        right, // 1 C
+        up, // 1 A
+        down, // 1 B
+        page_up, // 5 ~
+        page_down, // 6 ~
+        home, // 1 H or 7 ~
+        end, // 1 F or 8 ~
+        caps_lock, // 57358 u
+        scroll_lock, // 57359 u
+        num_lock, // 57360 u
+        print_screen, // 57361 u
+        pause, // 57362 u
+        menu, // 57363 u
+        f1, // 1 P or 11 ~
+        f2, // 1 Q or 12 ~
+        f3, // 13 ~
+        f4, // 1 S or 14 ~
+        f5, // 15 ~
+        f6, // 17 ~
+        f7, // 18 ~
+        f8, // 19 ~
+        f9, // 20 ~
+        f10, // 21 ~
+        f11, // 23 ~
+        f12, // 24 ~
+        f13, // 57376 u
+        f14, // 57377 u
+        f15, // 57378 u
+        f16, // 57379 u
+        f17, // 57380 u
+        f18, // 57381 u
+        f19, // 57382 u
+        f20, // 57383 u
+        f21, // 57384 u
+        f22, // 57385 u
+        f23, // 57386 u
+        f24, // 57387 u
+        f25, // 57388 u
+        f26, // 57389 u
+        f27, // 57390 u
+        f28, // 57391 u
+        f29, // 57392 u
+        f30, // 57393 u
+        f31, // 57394 u
+        f32, // 57395 u
+        f33, // 57396 u
+        f34, // 57397 u
+        f35, // 57398 u
+        kp_0, // 57399 u
+        kp_1, // 57400 u
+        kp_2, // 57401 u
+        kp_3, // 57402 u
+        kp_4, // 57403 u
+        kp_5, // 57404 u
+        kp_6, // 57405 u
+        kp_7, // 57406 u
+        kp_8, // 57407 u
+        kp_9, // 57408 u
+        kp_decimal, // 57409 u
+        kp_divide, // 57410 u
+        kp_multiply, // 57411 u
+        kp_subtract, // 57412 u
+        kp_add, // 57413 u
+        kp_enter, // 57414 u
+        kp_equal, // 57415 u
+        kp_separator, // 57416 u
+        kp_left, // 57417 u
+        kp_right, // 57418 u
+        kp_up, // 57419 u
+        kp_down, // 57420 u
+        kp_page_up, // 57421 u
+        kp_page_down, // 57422 u
+        kp_home, // 57423 u
+        kp_end, // 57424 u
+        kp_insert, // 57425 u
+        kp_delete, // 57426 u
+        kp_begin, // 1 E or 57427 ~
+        media_play, // 57428 u
+        media_pause, // 57429 u
+        media_play_pause, // 57430 u
+        media_reverse, // 57431 u
+        media_stop, // 57432 u
+        media_fast_forward, // 57433 u
+        media_rewind, // 57434 u
+        media_track_next, // 57435 u
+        media_track_previous, // 57436 u
+        media_record, // 57437 u
+        lower_volume, // 57438 u
+        raise_volume, // 57439 u
+        mute_volume, // 57440 u
+        left_shift, // 57441 u
+        left_control, // 57442 u
+        left_alt, // 57443 u
+        left_super, // 57444 u
+        left_hyper, // 57445 u
+        left_meta, // 57446 u
+        right_shift, // 57447 u
+        right_control, // 57448 u
+        right_alt, // 57449 u
+        right_super, // 57450 u
+        right_hyper, // 57451 u
+        right_meta, // 57452 u
+        iso_level3_shift, // 57453 u
+        iso_level5_shift, // 57454 u
     };
 
     fn add(self: *@This(), char: u8) !void {
@@ -440,41 +527,36 @@ const TermInputIterator = struct {
         errdefer self.* = bak;
 
         const c = self.pop() orelse return null;
-        // @breakpoint();
         switch (c) {
             0x1B => switch (try self.expect()) {
                 '[' => {
-                    // const unicode_keycode = it.param() orelse return error.ExpectedParam;
-                    // _ = it.consume(":");
-                    // const shifted_keycode = it.pop() orelse unicode_keycode;
-                    // _ = it.consume(":");
-                    // const base_layout_key = it.pop()
-                    // const mod: Modifiers = @bitCast(it.pop() orelse 0);
                     var arr = std.ArrayList(u8).init(self.input.allocator);
                     defer arr.deinit();
 
-                    const k = self.param();
+                    const unicode_keycode = self.param() orelse return error.ExpectedParam;
+                    // const shifted_keycode = if (self.consume(":")) self.param() else null;
+                    // const base_layout_key = if (self.consume(":")) self.param() else null;
+                    // const mod: Modifiers = if (self.consume(";")) @bitCast(@as(u8, @intCast(self.param() orelse 1)) - 1) else .{};
+                    // const action: Action = if (self.consume(":")) try std.meta.intToEnum(Action, self.param() orelse 1) else .press;
 
                     while (self.pop()) |b| switch (b) {
                         'u' => break,
+                        '~' => break,
                         else => try arr.append(b),
                     };
 
-                    std.log.debug("{s}", .{arr.items});
-                    // @breakpoint();
+                    std.log.debug("{d}{s}", .{ unicode_keycode, arr.items });
+                    // std.log.debug("unicode-keycode: {d}", .{unicode_keycode});
+                    // std.log.debug("shifted-keycode: {?d}", .{shifted_keycode});
+                    // std.log.debug("base-layout-key: {?d}", .{base_layout_key});
+                    // std.log.debug("modifiers: {any}", .{mod});
+                    // std.log.debug("action: {any}", .{action});
 
-                    if (k == 'q') {
-                        return .{ .char = .{ .byte = 'q' } };
-                    }
-
-                    return .{ .char = .{ .byte = 'a' } };
+                    return .{ .key = .{ .key = cast(u16, unicode_keycode) } };
                 },
                 else => return error.ExpectedCsi,
             },
-            0x0d => return .{ .key = .{ .key = .enter } },
-            0x7f, 0x08 => return .{ .key = .{ .key = .backspace } },
-            0x09 => return .{ .key = .{ .key = .tab } },
-            else => return .{ .char = .{ .byte = c } },
+            else => return error.ExpectedEscapedInput,
         }
     }
 
@@ -1141,7 +1223,7 @@ const App = struct {
         while (true) {
             input_blk: {
                 while (self.input_iterator.next() catch |e| switch (e) {
-                    error.ExpectedByte => break :input_blk,
+                    error.ExpectedByte, error.ExpectedParam => break :input_blk,
                     else => return e,
                 }) |input| {
                     try self.events.send(.{ .input = input });
@@ -1157,33 +1239,31 @@ const App = struct {
                 },
                 .input => |input| {
                     switch (input) {
-                        .char => |char| {
-                            std.log.debug("got input event: {any}", .{char});
+                        .key => |key| {
+                            // std.log.debug("got input event: {any}", .{key});
 
-                            if (char.byte == 'q') {
+                            if (key.key == 'q') {
                                 try self.events.send(.quit);
                             }
+                            if (key.key == 'j') {
+                                self.y += 2;
+                                try self.events.send(.rerender);
+
+                                try self.request_jj();
+                            }
+                            if (key.key == 'k') {
+                                self.y -= 2;
+                                self.y = @max(0, self.y);
+                                try self.events.send(.rerender);
+
+                                try self.request_jj();
+                            }
                         },
-                        .key => |key| {
-                            std.log.debug("got input event: {any}", .{key});
+                        .functional => |key| {
+                            _ = key;
+                            // std.log.debug("got input event: {any}", .{key});
                         },
                     }
-                    // if (char == 'q') {
-                    //     try self.events.send(.quit);
-                    // }
-                    // if (char == 'j') {
-                    //     self.y += 2;
-                    //     try self.events.send(.rerender);
-
-                    //     try self.request_jj();
-                    // }
-                    // if (char == 'k') {
-                    //     self.y -= 2;
-                    //     self.y = @max(0, self.y);
-                    //     try self.events.send(.rerender);
-
-                    //     try self.request_jj();
-                    // }
                 },
                 .quit => {
                     return;

@@ -1283,13 +1283,11 @@ const App = struct {
         try self.events.send(.rerender);
 
         while (true) {
-            input_blk: {
-                while (self.input_iterator.next() catch |e| switch (e) {
-                    error.ExpectedByte => break :input_blk,
-                    else => return e,
-                }) |input| {
-                    try self.events.send(.{ .input = input });
-                }
+            while (self.input_iterator.next() catch |e| switch (e) {
+                error.ExpectedByte => null,
+                else => return e,
+            }) |input| {
+                try self.events.send(.{ .input = input });
             }
 
             while (self.events.try_recv()) |event| switch (event) {

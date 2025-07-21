@@ -1210,7 +1210,6 @@ const JujutsuServer = struct {
 };
 
 const ChangeIterator = struct {
-    line_index: u32 = 0,
     state: utils_mod.LineIterator,
 
     temp: std.heap.ArenaAllocator,
@@ -1227,14 +1226,11 @@ const ChangeIterator = struct {
     fn reset(self: *@This(), buf: []const u8) void {
         self.scratch.clearRetainingCapacity();
         self.state = .init(buf);
-        self.line_index = 0;
     }
 
-    fn next(self: *@This()) !?Change {
+    fn next(self: *@This()) !?ChangeEntry {
+        const start = self.state.index;
         while (self.state.next()) |line| {
-            self.line_index += 1;
-            if (self.line_index % 2 == 0) continue;
-
             self.scratch.clearRetainingCapacity();
             var tokens = try TermStyledGraphemeIterator.init(line);
 
@@ -1268,11 +1264,20 @@ const ChangeIterator = struct {
             var change = std.mem.zeroes(Change);
             @memcpy(change.id[0..], id);
             @memcpy(change.hash[0..], hash);
-            return change;
+
+            // description line
+            _ = self.state.next();
+
+            return .{ .change = change, .buf = self.state.buf[start..self.state.index] };
         }
 
         return null;
     }
+
+    const ChangeEntry = struct {
+        buf: []const u8,
+        change: Change,
+    };
 };
 
 const Change = struct {
@@ -1458,13 +1463,13 @@ const App = struct {
                             try self.events.send(.quit);
                         }
                         if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{})) {
-                            self.y += 2;
+                            self.y += 1;
                             try self.events.send(.rerender);
 
                             try self.request_jj();
                         }
                         if (key.key == 'k' and key.action.pressed() and key.mod.eq(.{})) {
-                            self.y -= 2;
+                            self.y -= 1;
                             try self.events.send(.rerender);
 
                             try self.request_jj();
@@ -1501,13 +1506,13 @@ const App = struct {
                         // std.log.debug("got mouse input event: {any}", .{key});
 
                         if (key.key == .scroll_down and key.action.pressed() and key.mod.eq(.{})) {
-                            self.y += 2;
+                            self.y += 1;
                             try self.events.send(.rerender);
 
                             try self.request_jj();
                         }
                         if (key.key == .scroll_up and key.action.pressed() and key.mod.eq(.{})) {
-                            self.y -= 2;
+                            self.y -= 1;
                             try self.events.send(.rerender);
 
                             try self.request_jj();
@@ -1564,12 +1569,12 @@ const App = struct {
         while (try self.changes.next()) |change| {
             // const n: i32 = 3;
             const n: i32 = 0;
-            if (self.y == i * 2) {
-                self.focused_change = change;
-            } else if (@abs(self.y - i * 2) < 2 * n) {
-                if (self.diffcache.get(change.hash) == null) {
-                    try self.diffcache.put(change.hash, .{});
-                    try self.jj.requests.send(.{ .diff = change });
+            if (self.y == i) {
+                self.focused_change = change.change;
+            } else if (@abs(self.y - i) < n) {
+                if (self.diffcache.get(change.change.hash) == null) {
+                    try self.diffcache.put(change.change.hash, .{});
+                    try self.jj.requests.send(.{ .diff = change.change });
                 }
             }
             i += 1;
@@ -1601,7 +1606,23 @@ const App = struct {
             try self.term.clear_region(min, max);
             try self.term.draw_border(min, max, border.rounded);
             try self.term.draw_split(min, max, split_x, null);
-            _ = try self.term.draw_buf(self.status, min.add(.splat(1)), (Vec2{ .x = split_x, .y = max.y }).sub(.splat(1)), 0, cast(u32, self.y));
+
+            var skip = self.y;
+            var y_off: i32 = 0;
+            self.changes.reset(self.status);
+            while (try self.changes.next()) |change| {
+                if (skip > 0) {
+                    skip -= 1;
+                    continue;
+                }
+                y_off = try self.term.draw_buf(
+                    change.buf,
+                    min.add(.splat(1)),
+                    (Vec2{ .x = split_x, .y = max.y }).sub(.splat(1)),
+                    y_off,
+                    0,
+                );
+            }
             _ = try self.term.draw_buf(self.diff, (Vec2{ .x = split_x, .y = min.y }).add(.splat(1)), max.sub(.splat(1)), 0, 0);
         }
         try self.term.flush_writes();

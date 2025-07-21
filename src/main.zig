@@ -907,7 +907,9 @@ const JujutsuServer = struct {
     quit: utils_mod.Fuse = .{},
     thread: std.Thread,
     requests: utils_mod.Channel(Request),
-    responses: utils_mod.Channel(Response),
+
+    // not owned
+    events: utils_mod.Channel(App.Event),
 
     const Request = union(enum) {
         status,
@@ -924,12 +926,12 @@ const JujutsuServer = struct {
         res: Result,
     };
 
-    fn init(alloc: std.mem.Allocator) !*@This() {
+    fn init(alloc: std.mem.Allocator, events: utils_mod.Channel(App.Event)) !*@This() {
         const self = try alloc.create(@This());
         errdefer alloc.destroy(self);
 
         self.* = .{
-            .responses = try .init(alloc),
+            .events = events,
             .requests = try .init(alloc),
             .alloc = alloc,
             .thread = undefined,
@@ -947,15 +949,9 @@ const JujutsuServer = struct {
     fn deinit(self: *@This()) void {
         const alloc = self.alloc;
         defer alloc.destroy(self);
-        defer {
-            while (self.responses.try_recv()) |res| switch (res.res) {
-                .ok, .err => |buf| alloc.free(buf),
-            };
-            self.responses.deinit();
-        }
         defer self.requests.deinit();
         defer self.thread.join();
-        _ = self.quit.fuse();
+        _ = self.requests.close();
     }
 
     fn _start(self: *@This()) void {
@@ -963,63 +959,56 @@ const JujutsuServer = struct {
     }
 
     fn start(self: *@This()) !void {
-        while (true) {
-            while (self.requests.try_pop()) |req| {
-                if (self.quit.check()) break;
-                switch (req) {
-                    .status => {
-                        const res = jjcall(&[_][]const u8{
-                            "jj",
-                            "--color",
-                            "always",
-                        }, self.alloc) catch |e| {
-                            utils_mod.dump_error(e);
-                            continue;
-                        };
-                        try self.responses.send(.{ .req = req, .res = .{ .ok = res } });
-                    },
-                    .diff => |change| {
-                        const stat = jjcall(&[_][]const u8{
-                            "jj",
-                            "--color",
-                            "always",
-                            "show",
-                            "--stat",
-                            "-r",
-                            change.hash[0..],
-                        }, self.alloc) catch |e| {
-                            utils_mod.dump_error(e);
-                            continue;
-                        };
-                        defer self.alloc.free(stat);
-                        const diff = jjcall(&[_][]const u8{
-                            "jj",
-                            "--color",
-                            "always",
-                            "diff",
-                            "--tool",
-                            "delta",
-                            "-r",
-                            change.hash[0..],
-                        }, self.alloc) catch |e| {
-                            utils_mod.dump_error(e);
-                            continue;
-                        };
-                        defer self.alloc.free(diff);
+        while (self.requests.wait_recv()) |req| {
+            switch (req) {
+                .status => {
+                    const res = jjcall(&[_][]const u8{
+                        "jj",
+                        "--color",
+                        "always",
+                    }, self.alloc) catch |e| {
+                        utils_mod.dump_error(e);
+                        continue;
+                    };
+                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = res } } });
+                },
+                .diff => |change| {
+                    const stat = jjcall(&[_][]const u8{
+                        "jj",
+                        "--color",
+                        "always",
+                        "show",
+                        "--stat",
+                        "-r",
+                        change.hash[0..],
+                    }, self.alloc) catch |e| {
+                        utils_mod.dump_error(e);
+                        continue;
+                    };
+                    defer self.alloc.free(stat);
+                    const diff = jjcall(&[_][]const u8{
+                        "jj",
+                        "--color",
+                        "always",
+                        "diff",
+                        "--tool",
+                        "delta",
+                        "-r",
+                        change.hash[0..],
+                    }, self.alloc) catch |e| {
+                        utils_mod.dump_error(e);
+                        continue;
+                    };
+                    defer self.alloc.free(diff);
 
-                        var output = std.ArrayList(u8).init(self.alloc);
-                        errdefer output.deinit();
-                        try output.appendSlice(stat);
-                        try output.appendSlice(diff);
+                    var output = std.ArrayList(u8).init(self.alloc);
+                    errdefer output.deinit();
+                    try output.appendSlice(stat);
+                    try output.appendSlice(diff);
 
-                        try self.responses.send(.{ .req = req, .res = .{ .ok = try output.toOwnedSlice() } });
-                    },
-                }
+                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = try output.toOwnedSlice() } } });
+                },
             }
-
-            if (self.quit.check()) break;
-
-            std.Thread.sleep(std.time.ns_per_ms * 20);
         }
     }
 
@@ -1194,6 +1183,7 @@ const App = struct {
         rerender,
         quit,
         input: TermInputIterator.Input,
+        jj: JujutsuServer.Response,
     };
 
     const CachedDiff = struct {
@@ -1228,7 +1218,7 @@ const App = struct {
         var events = try utils_mod.Channel(Event).init(alloc);
         errdefer events.deinit();
 
-        const jj = try JujutsuServer.init(alloc);
+        const jj = try JujutsuServer.init(alloc, events);
         errdefer jj.deinit();
 
         try jj.requests.send(.status);
@@ -1275,7 +1265,15 @@ const App = struct {
         defer self.term.deinit();
         defer self.term.cook_restore() catch |e| utils_mod.dump_error(e);
         defer self.input_iterator.input.deinit();
-        defer self.events.deinit();
+        defer {
+            while (self.events.try_recv()) |e| switch (e) {
+                .jj => |res| switch (res.res) {
+                    .ok, .err => |buf| self.alloc.free(buf),
+                },
+                else => {},
+            };
+            self.events.deinit();
+        }
         defer self.jj.deinit();
         defer self.input_thread.join();
         _ = self.quit.fuse();
@@ -1296,6 +1294,13 @@ const App = struct {
                 var buf = std.mem.zeroes([32]u8);
                 const n = try self.term.tty.read(&buf);
                 for (buf[0..n]) |c| try self.input_iterator.input.push_back(c);
+
+                while (self.input_iterator.next() catch |e| switch (e) {
+                    error.ExpectedByte => null,
+                    else => return e,
+                }) |input| {
+                    try self.events.send(.{ .input = input });
+                }
             }
 
             if (self.quit.check()) {
@@ -1307,66 +1312,50 @@ const App = struct {
     fn event_loop(self: *@This()) !void {
         try self.events.send(.rerender);
 
-        while (true) {
-            while (self.input_iterator.next() catch |e| switch (e) {
-                error.ExpectedByte => null,
-                else => return e,
-            }) |input| {
-                try self.events.send(.{ .input = input });
-            }
+        while (self.events.wait_recv()) |event| switch (event) {
+            .quit => return,
+            .rerender => try self.render(),
+            .sigwinch => try self.events.send(.rerender),
+            .input => |input| {
+                switch (input) {
+                    .key => |key| {
+                        std.log.debug("got input event: {any}", .{key});
 
-            while (self.events.try_recv()) |event| switch (event) {
-                .rerender => {
-                    try self.render();
-                },
-                .sigwinch => {
-                    try self.events.send(.rerender);
-                },
-                .input => |input| {
-                    switch (input) {
-                        .key => |key| {
-                            std.log.debug("got input event: {any}", .{key});
+                        if (key.key == 'q') {
+                            try self.events.send(.quit);
+                        }
+                        if (key.key == 'j' and key.action != .release and key.mod.eq(.{})) {
+                            self.y += 2;
+                            try self.events.send(.rerender);
 
-                            if (key.key == 'q') {
-                                try self.events.send(.quit);
-                            }
-                            if (key.key == 'j' and key.action != .release and key.mod.eq(.{})) {
-                                self.y += 2;
-                                try self.events.send(.rerender);
+                            try self.request_jj();
+                        }
+                        if (key.key == 'k' and key.action != .release and key.mod.eq(.{})) {
+                            self.y -= 2;
+                            try self.events.send(.rerender);
 
-                                try self.request_jj();
-                            }
-                            if (key.key == 'k' and key.action != .release and key.mod.eq(.{})) {
-                                self.y -= 2;
-                                try self.events.send(.rerender);
+                            try self.request_jj();
+                        }
+                        if (key.key == 'h' and key.action != .release and key.mod.eq(.{ .ctrl = true })) {
+                            self.x_split -= 0.05;
+                            try self.events.send(.rerender);
+                        }
+                        if (key.key == 'l' and key.action != .release and key.mod.eq(.{ .ctrl = true })) {
+                            self.x_split += 0.05;
+                            try self.events.send(.rerender);
+                        }
 
-                                try self.request_jj();
-                            }
-                            if (key.key == 'h' and key.action != .release and key.mod.eq(.{ .ctrl = true })) {
-                                self.x_split -= 0.05;
-                                try self.events.send(.rerender);
-                            }
-                            if (key.key == 'l' and key.action != .release and key.mod.eq(.{ .ctrl = true })) {
-                                self.x_split += 0.05;
-                                try self.events.send(.rerender);
-                            }
-
-                            self.y = @max(0, self.y);
-                            self.x_split = @min(@max(0.0, self.x_split), 1.0);
-                        },
-                        .functional => |key| {
-                            // _ = key;
-                            std.log.debug("got input event: {any}", .{key});
-                        },
-                        .unsupported => {},
-                    }
-                },
-                .quit => {
-                    return;
-                },
-            };
-
-            while (self.jj.responses.try_recv()) |res| switch (res.req) {
+                        self.y = @max(0, self.y);
+                        self.x_split = @min(@max(0.0, self.x_split), 1.0);
+                    },
+                    .functional => |key| {
+                        // _ = key;
+                        std.log.debug("got input event: {any}", .{key});
+                    },
+                    .unsupported => {},
+                }
+            },
+            .jj => |res| switch (res.req) {
                 .status => {
                     self.alloc.free(self.status);
                     switch (res.res) {
@@ -1390,11 +1379,8 @@ const App = struct {
                     }
                     try self.events.send(.rerender);
                 },
-            };
-
-            // TODO: impl channels using condvars instead of sleeping
-            std.Thread.sleep(std.time.ns_per_ms * 5);
-        }
+            },
+        };
     }
 
     fn save_diff(self: *@This(), change: *const Change, diff: []const u8) !void {

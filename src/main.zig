@@ -30,6 +30,10 @@ const codes = struct {
         const enable_sgr_mouse_mode = "\x1B[?1006h";
         const disable_sgr_mouse_mode = "\x1B[?1006l";
     };
+    const focus = struct {
+        const enable = "\x1B[?1004h";
+        const disable = "\x1B[?1004l";
+    };
 
     const kitty = struct {
         // https://sw.kovidgoyal.net/kitty/keyboard-protocol/?utm_source=chatgpt.com#progressive-enhancement
@@ -393,6 +397,7 @@ const TermInputIterator = struct {
         key: struct { key: u16, mod: Modifiers = .{}, action: Action = .press },
         functional: struct { key: FunctionalKey, mod: Modifiers = .{}, action: Action = .press },
         mouse: struct { pos: Vec2, key: MouseKey, mod: Modifiers = .{}, action: Action = .press },
+        focus: enum { in, out },
         unsupported: u8,
     };
     const Modifiers = packed struct(u8) {
@@ -644,6 +649,11 @@ const TermInputIterator = struct {
 
                                 return Input{ .mouse = .{ .pos = .{ .x = cast(i32, x), .y = cast(i32, y) }, .key = button, .mod = mod, .action = action } };
                             },
+
+                            // focus events
+                            'I' => return Input{ .focus = .in },
+                            'O' => return Input{ .focus = .out },
+
                             else => return error.ExpectedParam,
                         }
                         return error.ExpectedParam;
@@ -809,13 +819,29 @@ const Term = struct {
 
     fn uncook(self: *@This(), handler: anytype) !void {
         try self.enter_raw_mode();
-        try self.tty.writeAll(codes.cursor.hide ++ codes.alt_buf.enter ++ codes.kitty.enable_input_protocol ++ codes.mouse.enable_any_event ++ codes.mouse.enable_sgr_mouse_mode ++ codes.clear);
+        try self.tty.writeAll("" ++
+            codes.cursor.hide ++
+            codes.alt_buf.enter ++
+            codes.kitty.enable_input_protocol ++
+            codes.mouse.enable_any_event ++
+            codes.mouse.enable_sgr_mouse_mode ++
+            codes.focus.enable ++
+            codes.clear ++
+            "");
         self.register_signal_handlers(handler);
     }
 
     fn cook_restore(self: *@This()) !void {
-        try self.tty.writeAll(codes.mouse.disable_any_event ++
-            codes.mouse.disable_sgr_mouse_mode ++ codes.kitty.disable_input_protocol ++ codes.clear ++ codes.alt_buf.leave ++ codes.cursor.show ++ codes.attr_reset);
+        try self.tty.writeAll("" ++
+            codes.mouse.disable_any_event ++
+            codes.mouse.disable_sgr_mouse_mode ++
+            codes.kitty.disable_input_protocol ++
+            codes.focus.disable ++
+            codes.clear ++
+            codes.alt_buf.leave ++
+            codes.cursor.show ++
+            codes.attr_reset ++
+            "");
         try std.posix.tcsetattr(self.tty.handle, .FLUSH, self.cooked_termios.?);
         self.raw = null;
         self.cooked_termios = null;
@@ -1461,6 +1487,10 @@ const App = struct {
                     .mouse => |key| {
                         _ = key;
                         // std.log.debug("got mouse input event: {any}", .{key});
+                    },
+                    .focus => |e| {
+                        // _ = e;
+                        std.log.debug("got focus event: {any}", .{e});
                     },
                     .unsupported => {},
                 }

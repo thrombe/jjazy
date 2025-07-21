@@ -334,7 +334,7 @@ pub fn Channel(typ: type) type {
         }
 
         pub fn wait_recv(self: *@This()) ?typ {
-            if (self.pinned.dq.pop_front()) |t| return t;
+            if (self.try_recv()) |t| return t;
             if (self.pinned.closed.check()) return null;
 
             self.pinned.lock.lock();
@@ -357,7 +357,7 @@ pub fn Channel(typ: type) type {
         }
 
         pub fn wait_pop(self: *@This()) ?typ {
-            if (self.pinned.dq.pop_back()) |t| return t;
+            if (self.try_pop()) |t| return t;
             if (self.pinned.closed.check()) return null;
 
             self.pinned.lock.lock();

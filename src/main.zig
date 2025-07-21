@@ -24,6 +24,12 @@ const codes = struct {
         const enter = "\x1B[?1049h";
         const leave = "\x1B[?1049l";
     };
+    const mouse = struct {
+        const enable_any_event = "\x1B[?1003h";
+        const disable_any_event = "\x1B[?1003l";
+        const enable_sgr_mouse_mode = "\x1B[?1006h";
+        const disable_sgr_mouse_mode = "\x1B[?1006l";
+    };
 
     const kitty = struct {
         // https://sw.kovidgoyal.net/kitty/keyboard-protocol/?utm_source=chatgpt.com#progressive-enhancement
@@ -386,6 +392,7 @@ const TermInputIterator = struct {
     const Input = union(enum) {
         key: struct { key: u16, mod: Modifiers = .{}, action: Action = .press },
         functional: struct { key: FunctionalKey, mod: Modifiers = .{}, action: Action = .press },
+        mouse: struct { pos: Vec2, key: MouseKey, mod: Modifiers = .{}, action: Action = .press },
         unsupported: u8,
     };
     const Modifiers = packed struct(u8) {
@@ -407,6 +414,42 @@ const TermInputIterator = struct {
         press = 1,
         repeat = 2,
         release = 3,
+
+        pub fn just_pressed(self: @This()) bool {
+            return switch (self) {
+                .none => false,
+                .press => true,
+                .repeat => false,
+                .release => false,
+            };
+        }
+
+        pub fn pressed(self: @This()) bool {
+            return switch (self) {
+                .none => false,
+                .press => true,
+                .repeat => true,
+                .release => false,
+            };
+        }
+
+        pub fn just_released(self: @This()) bool {
+            return switch (self) {
+                .none => false,
+                .press => false,
+                .repeat => false,
+                .release => true,
+            };
+        }
+
+        pub fn repeated(self: @This()) bool {
+            return switch (self) {
+                .none => false,
+                .press => false,
+                .repeat => true,
+                .release => false,
+            };
+        }
     };
     const FunctionalKey = enum(u16) {
         escape = 27, // 27 u
@@ -527,6 +570,16 @@ const TermInputIterator = struct {
         iso_level3_shift = 57453, // 57453 u
         iso_level5_shift = 57454, // 57454 u
     };
+    const MouseKey = enum(u8) {
+        left = 0,
+        middle = 1,
+        right = 2,
+        move = 35,
+        scroll_up = 64,
+        scroll_down = 65,
+        scroll_left = 66,
+        scroll_right = 67,
+    };
 
     fn add(self: *@This(), char: u8) !void {
         try self.input.push_back(char);
@@ -555,6 +608,42 @@ const TermInputIterator = struct {
                             'Q' => return .{ .functional = .{ .key = .f2 } },
                             'R' => return .{ .functional = .{ .key = .f3 } },
                             'S' => return .{ .functional = .{ .key = .f4 } },
+
+                            // mouse input
+                            '<' => {
+                                const buttons = self.param() orelse return self.expect_byte_else(error.ExpectedMouseButtons);
+                                _ = self.consume(";");
+                                const x = self.param() orelse return self.expect_byte_else(error.ExpectedMouseX);
+                                _ = self.consume(";");
+                                const y = self.param() orelse return self.expect_byte_else(error.ExpectedMouseY);
+                                _ = self.consume(";");
+                                var action: Action = switch (try self.expect()) {
+                                    'm' => .release,
+                                    'M' => .press,
+                                    else => return error.UnexpectedByte,
+                                };
+                                if (buttons & 0b0100000 > 0) action = .repeat;
+
+                                const button: MouseKey = switch (buttons & 0b1100011) {
+                                    0, 32 => .left,
+                                    1, 33 => .middle,
+                                    2, 34 => .right,
+                                    35 => .move,
+                                    64 => .scroll_up,
+                                    65 => .scroll_down,
+                                    66 => .scroll_left,
+                                    67 => .scroll_right,
+                                    else => return error.UnexpectedParam,
+                                };
+
+                                const mod: Modifiers = .{
+                                    .shift = buttons & 0b0000100 > 0,
+                                    .alt = buttons & 0b0001000 > 0,
+                                    .ctrl = buttons & 0b0010000 > 0,
+                                };
+
+                                return Input{ .mouse = .{ .pos = .{ .x = cast(i32, x), .y = cast(i32, y) }, .key = button, .mod = mod, .action = action } };
+                            },
                             else => return error.ExpectedParam,
                         }
                         return error.ExpectedParam;
@@ -677,6 +766,15 @@ const TermInputIterator = struct {
         };
         return n;
     }
+
+    fn is_empty(self: *@This()) bool {
+        return self.input.peek_front() == null;
+    }
+
+    fn expect_byte_else(self: *@This(), els: anytype) anyerror {
+        if (self.is_empty()) return error.ExpectedByte;
+        return els;
+    }
 };
 
 const Term = struct {
@@ -711,12 +809,13 @@ const Term = struct {
 
     fn uncook(self: *@This(), handler: anytype) !void {
         try self.enter_raw_mode();
-        try self.tty.writeAll(codes.cursor.hide ++ codes.alt_buf.enter ++ codes.kitty.enable_input_protocol ++ codes.clear);
+        try self.tty.writeAll(codes.cursor.hide ++ codes.alt_buf.enter ++ codes.kitty.enable_input_protocol ++ codes.mouse.enable_any_event ++ codes.mouse.enable_sgr_mouse_mode ++ codes.clear);
         self.register_signal_handlers(handler);
     }
 
     fn cook_restore(self: *@This()) !void {
-        try self.tty.writeAll(codes.kitty.disable_input_protocol ++ codes.clear ++ codes.alt_buf.leave ++ codes.cursor.show ++ codes.attr_reset);
+        try self.tty.writeAll(codes.mouse.disable_any_event ++
+            codes.mouse.disable_sgr_mouse_mode ++ codes.kitty.disable_input_protocol ++ codes.clear ++ codes.alt_buf.leave ++ codes.cursor.show ++ codes.attr_reset);
         try std.posix.tcsetattr(self.tty.handle, .FLUSH, self.cooked_termios.?);
         self.raw = null;
         self.cooked_termios = null;
@@ -1186,6 +1285,7 @@ const App = struct {
         quit,
         input: TermInputIterator.Input,
         jj: JujutsuServer.Response,
+        err: anyerror,
     };
 
     const CachedDiff = struct {
@@ -1299,7 +1399,10 @@ const App = struct {
 
                 while (self.input_iterator.next() catch |e| switch (e) {
                     error.ExpectedByte => null,
-                    else => return e,
+                    else => {
+                        try self.events.send(.{ .err = e });
+                        return;
+                    },
                 }) |input| {
                     try self.events.send(.{ .input = input });
                 }
@@ -1316,6 +1419,7 @@ const App = struct {
 
         while (self.events.wait_recv()) |event| switch (event) {
             .quit => return,
+            .err => |err| return err,
             .rerender => try self.render(),
             .sigwinch => try self.events.send(.rerender),
             .input => |input| {
@@ -1351,8 +1455,12 @@ const App = struct {
                         self.x_split = @min(@max(0.0, self.x_split), 1.0);
                     },
                     .functional => |key| {
-                        // _ = key;
-                        std.log.debug("got input event: {any}", .{key});
+                        _ = key;
+                        // std.log.debug("got input event: {any}", .{key});
+                    },
+                    .mouse => |key| {
+                        _ = key;
+                        // std.log.debug("got mouse input event: {any}", .{key});
                     },
                     .unsupported => {},
                 }

@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const utils_mod = @import("utils.zig");
 const cast = utils_mod.cast;
@@ -1475,6 +1476,21 @@ const App = struct {
                         if (key.key == 'l' and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
                             self.x_split += 0.05;
                             try self.events.send(.rerender);
+                        }
+
+                        if (comptime builtin.mode == .Debug) {
+                            if (key.action.just_pressed() and key.mod.eq(.{ .ctrl = true })) switch (key.key) {
+                                '1' => try self.term.tty.writeAll(codes.kitty.disable_input_protocol),
+                                '2' => try self.term.tty.writeAll(codes.focus.disable),
+                                '3' => try self.term.tty.writeAll(codes.mouse.disable_any_event ++ codes.mouse.disable_sgr_mouse_mode),
+                                else => {},
+                            };
+                            if (key.action.just_pressed() and key.mod.eq(.{})) switch (key.key) {
+                                '1' => try self.term.tty.writeAll(codes.kitty.enable_input_protocol),
+                                '2' => try self.term.tty.writeAll(codes.focus.enable),
+                                '3' => try self.term.tty.writeAll(codes.mouse.enable_any_event ++ codes.mouse.enable_sgr_mouse_mode),
+                                else => {},
+                            };
                         }
                     },
                     .functional => |key| {

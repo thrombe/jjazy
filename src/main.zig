@@ -1456,37 +1456,46 @@ const App = struct {
                         if (key.key == 'q') {
                             try self.events.send(.quit);
                         }
-                        if (key.key == 'j' and key.action != .release and key.mod.eq(.{})) {
+                        if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{})) {
                             self.y += 2;
                             try self.events.send(.rerender);
 
                             try self.request_jj();
                         }
-                        if (key.key == 'k' and key.action != .release and key.mod.eq(.{})) {
+                        if (key.key == 'k' and key.action.pressed() and key.mod.eq(.{})) {
                             self.y -= 2;
                             try self.events.send(.rerender);
 
                             try self.request_jj();
                         }
-                        if (key.key == 'h' and key.action != .release and key.mod.eq(.{ .ctrl = true })) {
+                        if (key.key == 'h' and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
                             self.x_split -= 0.05;
                             try self.events.send(.rerender);
                         }
-                        if (key.key == 'l' and key.action != .release and key.mod.eq(.{ .ctrl = true })) {
+                        if (key.key == 'l' and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
                             self.x_split += 0.05;
                             try self.events.send(.rerender);
                         }
-
-                        self.y = @max(0, self.y);
-                        self.x_split = @min(@max(0.0, self.x_split), 1.0);
                     },
                     .functional => |key| {
                         _ = key;
                         // std.log.debug("got input event: {any}", .{key});
                     },
                     .mouse => |key| {
-                        _ = key;
                         // std.log.debug("got mouse input event: {any}", .{key});
+
+                        if (key.key == .scroll_down and key.action.pressed() and key.mod.eq(.{})) {
+                            self.y += 2;
+                            try self.events.send(.rerender);
+
+                            try self.request_jj();
+                        }
+                        if (key.key == .scroll_up and key.action.pressed() and key.mod.eq(.{})) {
+                            self.y -= 2;
+                            try self.events.send(.rerender);
+
+                            try self.request_jj();
+                        }
                     },
                     .focus => |e| {
                         // _ = e;
@@ -1559,6 +1568,9 @@ const App = struct {
     }
 
     fn render(self: *@This()) !void {
+        self.y = @max(0, self.y);
+        self.x_split = @min(@max(0.0, self.x_split), 1.0);
+
         try self.term.update_size();
         {
             if (self.diffcache.get(self.focused_change.hash)) |cdiff| if (cdiff.diff) |diff| {

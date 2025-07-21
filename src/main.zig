@@ -951,6 +951,7 @@ const JujutsuServer = struct {
         defer alloc.destroy(self);
         defer self.requests.deinit();
         defer self.thread.join();
+        _ = self.quit.fuse();
         _ = self.requests.close();
     }
 
@@ -960,6 +961,7 @@ const JujutsuServer = struct {
 
     fn start(self: *@This()) !void {
         while (self.requests.wait_recv()) |req| {
+            if (self.quit.check()) return;
             switch (req) {
                 .status => {
                     const res = jjcall(&[_][]const u8{

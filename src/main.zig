@@ -925,7 +925,7 @@ const Term = struct {
         for (0..y_skip) |_| _ = line_it.next();
 
         // these ranges look crazy to handle edge conditions :P
-        for (@intCast(self.size.min(.{ .x = min.x, .y = min.y + y_offset }).max(.{}).y)..@intCast(self.size.min((Vec2{ .x = max.x, .y = @max(max.y, min.y + y_offset) }).add(.splat(1))).y)) |y| {
+        for (@intCast(self.size.min(.{ .x = min.x, .y = min.y + y_offset }).max(.{}).y)..@intCast(self.size.min((Vec2{ .x = max.x, .y = @max(max.y + 1, min.y + y_offset) })).y)) |y| {
             const line = line_it.next() orelse break;
             try self.cursor_move(.{ .y = cast(i32, y), .x = min.x });
 

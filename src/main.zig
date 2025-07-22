@@ -1297,16 +1297,11 @@ const Change = struct {
 
 const Surface = struct {
     border: bool = false,
-    split: Split = .none,
-    _split_x: ?i32 = null,
-    _split_y: ?i32 = null,
     y: i32 = 0,
     y_scroll: i32 = 0,
     min: Vec2,
     max: Vec2,
     term: *Term,
-
-    const Self = @This();
 
     const Split = enum {
         none,
@@ -1318,12 +1313,12 @@ const Surface = struct {
         try self.term.clear_region(self.min, self.max);
     }
 
-    fn _draw_border(self: *@This(), borders: anytype) !void {
+    fn draw_border(self: *@This(), split: Split, _split_x: ?i32, _split_y: ?i32, borders: anytype) !void {
         if (self.border) {
             try self.term.draw_border(self.min, self.max, borders);
         }
-        if (self.split == .border) {
-            try self.term.draw_split(self.min, self.max, self._split_x, self._split_y, self.border);
+        if (split == .border) {
+            try self.term.draw_split(self.min, self.max, _split_x, _split_y, self.border);
         }
     }
 
@@ -1341,52 +1336,52 @@ const Surface = struct {
         self.y_scroll -= res.skipped;
     }
 
-    fn split_x(self: *@This(), x: i32, split: Split, borders: anytype) !struct { left: Self, right: Self } {
-        self._split_x = x;
-        self.split = split;
-        try self._draw_border(borders);
-        return .{
-            .left = @This(){
-                .term = self.term,
-                .min = self.min.add(.splat(@intCast(@intFromBool(self.border)))),
-                .max = (Vec2{
-                    .x = self._split_x.? - @as(i32, if (split != .none) 1 else 0),
-                    .y = self.max.y - @intFromBool(self.border),
-                }),
-            },
-            .right = @This(){
-                .term = self.term,
-                .min = (Vec2{
-                    .x = self._split_x.? + 1,
-                    .y = self.min.y + @intFromBool(self.border),
-                }),
-                .max = self.max.sub(.splat(@intCast(@intFromBool(self.border)))),
-            },
+    fn split_x(self: *@This(), x: i32, split: Split, borders: anytype) !@This() {
+        try self.draw_border(split, x, null, borders);
+
+        const other = @This(){
+            .term = self.term,
+            .min = (Vec2{
+                .x = x + 1,
+                .y = self.min.y + @intFromBool(self.border),
+            }),
+            .max = self.max.sub(.splat(@intCast(@intFromBool(self.border)))),
         };
+
+        self.* = @This(){
+            .term = self.term,
+            .min = self.min.add(.splat(@intCast(@intFromBool(self.border)))),
+            .max = (Vec2{
+                .x = x - @as(i32, if (split != .none) 1 else 0),
+                .y = self.max.y - @intFromBool(self.border),
+            }),
+        };
+
+        return other;
     }
 
-    fn split_y(self: *@This(), y: i32, split: Split, borders: anytype) !struct { top: Self, bottom: Self } {
-        self._split_y = y;
-        self.split = split;
-        try self._draw_border(borders);
-        return .{
-            .top = @This(){
-                .term = self.term,
-                .min = self.min.add(.splat(@intCast(@intFromBool(self.border)))),
-                .max = (Vec2{
-                    .y = self._split_y.? - @as(i32, if (split != .none) 1 else 0),
-                    .x = self.max.x - @intFromBool(self.border),
-                }),
-            },
-            .bottom = @This(){
-                .term = self.term,
-                .min = (Vec2{
-                    .y = self._split_y.? + 1,
-                    .x = self.min.x + @intFromBool(self.border),
-                }),
-                .max = self.max.sub(.splat(@intCast(@intFromBool(self.border)))),
-            },
+    fn split_y(self: *@This(), y: i32, split: Split, borders: anytype) !@This() {
+        try self.draw_border(split, null, y, borders);
+
+        const other = @This(){
+            .term = self.term,
+            .min = (Vec2{
+                .y = y + 1,
+                .x = self.min.x + @intFromBool(self.border),
+            }),
+            .max = self.max.sub(.splat(@intCast(@intFromBool(self.border)))),
         };
+
+        self.* = @This(){
+            .term = self.term,
+            .min = self.min.add(.splat(@intCast(@intFromBool(self.border)))),
+            .max = (Vec2{
+                .y = y - @as(i32, if (split != .none) 1 else 0),
+                .x = self.max.x - @intFromBool(self.border),
+            }),
+        };
+
+        return other;
     }
 };
 
@@ -1709,13 +1704,13 @@ const App = struct {
             const min = Vec2{};
             const max = min.add(self.term.size.sub(.splat(1)));
             const split_x: i32 = cast(i32, cast(f32, max.x) * self.x_split);
-            var entire = Surface{ .term = &self.term, .border = false, .min = min, .max = max };
-            try entire.clear();
+            var status = Surface{ .term = &self.term, .border = false, .min = min, .max = max };
+            try status.clear();
 
-            var vert = try entire.split_y(entire.max.y - 1, .none, border.rounded);
-            try vert.bottom.draw_buf(" huh does this work? ");
+            var bar = try status.split_y(status.max.y - 1, .none, border.rounded);
+            try bar.draw_buf(" huh does this work? ");
 
-            var hori = try vert.top.split_x(split_x, .gap, border.rounded);
+            var diffs = try status.split_x(split_x, .gap, border.rounded);
             var skip = self.y;
             self.changes.reset(self.status);
             while (try self.changes.next()) |change| {
@@ -1723,15 +1718,15 @@ const App = struct {
                     skip -= 1;
                     continue;
                 }
-                try hori.left.draw_buf(change.buf);
+                try status.draw_buf(change.buf);
             }
 
             if (self.diffcache.getPtr(self.focused_change.hash)) |cdiff| if (cdiff.diff) |diff| {
                 cdiff.y = @max(0, cdiff.y);
-                hori.right.y_scroll = cdiff.y;
-                try hori.right.draw_buf(diff);
+                diffs.y_scroll = cdiff.y;
+                try diffs.draw_buf(diff);
             } else {
-                try hori.right.draw_buf(" loading ... ");
+                try diffs.draw_buf(" loading ... ");
             };
         }
         try self.term.flush_writes();

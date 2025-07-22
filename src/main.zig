@@ -1309,6 +1309,18 @@ const Surface = struct {
         border,
     };
 
+    fn init(term: *Term, v: struct { min: ?Vec2 = null, max: ?Vec2 = null }) @This() {
+        return .{
+            .term = term,
+            .min = v.min orelse .{},
+            .max = v.max orelse term.size.sub(.splat(1)),
+        };
+    }
+
+    fn size(self: *const @This()) Vec2 {
+        return self.max.sub(self.min).add(.splat(1));
+    }
+
     fn clear(self: *@This()) !void {
         try self.term.clear_region(self.min, self.max);
     }
@@ -1701,17 +1713,14 @@ const App = struct {
 
         try self.term.update_size();
         {
-            const min = Vec2{};
-            const max = min.add(self.term.size.sub(.splat(1)));
-            const split_x: i32 = cast(i32, cast(f32, max.x) * self.x_split);
-            var status = Surface{ .term = &self.term, .min = min, .max = max };
+            var status = Surface.init(&self.term, .{});
             try status.clear();
-            try status.draw_border(border.rounded);
+            // try status.draw_border(border.rounded);
 
             var bar = try status.split_y(status.max.y - 1, .none);
             try bar.draw_buf(" huh does this work? ");
 
-            var diffs = try status.split_x(split_x, .gap);
+            var diffs = try status.split_x(cast(i32, cast(f32, status.size().x) * self.x_split), .gap);
             var skip = self.y;
             self.changes.reset(self.status);
             while (try self.changes.next()) |change| {

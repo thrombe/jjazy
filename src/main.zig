@@ -898,29 +898,37 @@ const Term = struct {
         try self.draw_at(.{ .x = max.x, .y = max.y }, corners.bottom_right);
     }
 
-    fn draw_split(self: *@This(), min: Vec2, max: Vec2, x: ?i32, y: ?i32) !void {
+    fn draw_split(self: *@This(), min: Vec2, max: Vec2, x: ?i32, y: ?i32, borders: bool) !void {
         if (y) |_y| {
             const x_lim = max.min(self.size).sub(min).max(.{}).x;
             try self.cursor_move(.{ .x = min.x, .y = _y });
             try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(x_lim));
-            try self.draw_at(.{ .y = _y, .x = min.x }, border.cross.nse);
-            try self.draw_at(.{ .y = _y, .x = max.x }, border.cross.nws);
+            if (borders) {
+                try self.draw_at(.{ .y = _y, .x = min.x }, border.cross.nse);
+                try self.draw_at(.{ .y = _y, .x = max.x }, border.cross.nws);
+            }
         }
         if (x) |_x| {
             for (@intCast(min.min(self.size).y)..@intCast(self.size.min(max.add(.splat(1))).y)) |_y| {
                 try self.draw_at(.{ .x = _x, .y = @intCast(_y) }, border.edge.vertical);
             }
-            try self.draw_at(.{ .x = _x, .y = min.y }, border.cross.wse);
-            try self.draw_at(.{ .x = _x, .y = max.y }, border.cross.wne);
+            if (borders) {
+                try self.draw_at(.{ .x = _x, .y = min.y }, border.cross.wse);
+                try self.draw_at(.{ .x = _x, .y = max.y }, border.cross.wne);
+            }
         }
         if (x) |_x| if (y) |_y| try self.draw_at(.{ .x = _x, .y = _y }, border.cross.nwse);
     }
 
-    fn draw_buf(self: *@This(), buf: []const u8, min: Vec2, max: Vec2, y_offset: i32, y_skip: u32) !i32 {
+    fn draw_buf(self: *@This(), buf: []const u8, min: Vec2, max: Vec2, y_offset: i32, y_skip: u32) !struct { y: i32, skipped: i32 } {
         var last_y: i32 = y_offset;
+        var skipped: i32 = 0;
 
         var line_it = utils_mod.LineIterator{ .buf = buf };
-        for (0..y_skip) |_| _ = line_it.next();
+        for (0..y_skip) |_| {
+            skipped += 1;
+            _ = line_it.next();
+        }
 
         // these ranges look crazy to handle edge conditions :P
         for (@intCast(self.size.min(.{ .x = min.x, .y = min.y + y_offset }).max(.{}).y)..@intCast(self.size.min((Vec2{ .x = max.x, .y = @max(max.y + 1, min.y + y_offset) })).y)) |y| {
@@ -946,7 +954,7 @@ const Term = struct {
             last_y += 1;
         }
 
-        return last_y;
+        return .{ .y = last_y, .skipped = skipped };
     }
 
     fn update_size(self: *@This()) !void {
@@ -1287,6 +1295,88 @@ const Change = struct {
     }
 };
 
+const Surface = struct {
+    border: bool = false,
+    _split_x: ?i32 = null,
+    _split_y: ?i32 = null,
+    y: i32 = 0,
+    y_scroll: i32 = 0,
+    min: Vec2,
+    max: Vec2,
+    term: *Term,
+
+    const Self = @This();
+
+    fn clear(self: *@This()) !void {
+        try self.term.clear_region(self.min, self.max);
+    }
+
+    fn draw_border(self: *@This(), borders: anytype) !void {
+        if (self.border) {
+            try self.term.draw_border(self.min, self.max, borders);
+        }
+        try self.term.draw_split(self.min, self.max, self._split_x, self._split_y, self.border);
+    }
+
+    fn draw_buf(self: *@This(), buf: []const u8) !void {
+        self.y = @max(0, self.y);
+        self.y_scroll = @max(0, self.y_scroll);
+        const res = try self.term.draw_buf(
+            buf,
+            self.min.add(.splat(@intCast(@intFromBool(self.border)))),
+            self.max.sub(.splat(@intCast(@intFromBool(self.border)))),
+            self.y,
+            cast(u32, self.y_scroll),
+        );
+        self.y = res.y;
+        self.y_scroll -= res.skipped;
+    }
+
+    fn split_x(self: *@This(), x: i32, _draw_border: bool) struct { left: Self, right: Self } {
+        self._split_x = x;
+        return .{
+            .left = @This(){
+                .term = self.term,
+                .min = self.min.add(.splat(@intCast(@intFromBool(self.border)))),
+                .max = (Vec2{
+                    .x = x - @as(i32, if (_draw_border) 1 else 0),
+                    .y = self.max.y - @intFromBool(self.border),
+                }),
+            },
+            .right = @This(){
+                .term = self.term,
+                .min = (Vec2{
+                    .x = x + @as(i32, if (_draw_border) 1 else 0),
+                    .y = self.min.y + @intFromBool(self.border),
+                }),
+                .max = self.max.sub(.splat(@intCast(@intFromBool(self.border)))),
+            },
+        };
+    }
+
+    fn split_y(self: *@This(), y: i32, _draw_border: bool) struct { top: Self, bottom: Self } {
+        self._split_y = y;
+        return .{
+            .top = @This(){
+                .term = self.term,
+                .min = self.min.add(.splat(@intCast(@intFromBool(self.border)))),
+                .max = (Vec2{
+                    .y = y - @as(i32, if (_draw_border) 1 else 0),
+                    .x = self.max.x - @intFromBool(self.border),
+                }),
+            },
+            .bottom = @This(){
+                .term = self.term,
+                .min = (Vec2{
+                    .y = y + @as(i32, if (_draw_border) 1 else 0),
+                    .x = self.min.x + @intFromBool(self.border),
+                }),
+                .max = self.max.sub(.splat(@intCast(@intFromBool(self.border)))),
+            },
+        };
+    }
+};
+
 const App = struct {
     term: Term,
 
@@ -1606,34 +1696,62 @@ const App = struct {
             const min = Vec2{};
             const max = min.add(self.term.size.sub(.splat(1)));
             const split_x: i32 = cast(i32, cast(f32, max.x) * self.x_split);
-            try self.term.clear_region(min, max);
-            try self.term.draw_border(min, max, border.rounded);
-            try self.term.draw_split(min, max, split_x, null);
+            var entire = Surface{ .term = &self.term, .border = true, .min = min, .max = max };
+            try entire.clear();
 
+            var hori = entire.split_x(split_x, true);
             var skip = self.y;
-            var y_off: i32 = 0;
             self.changes.reset(self.status);
             while (try self.changes.next()) |change| {
                 if (skip > 0) {
                     skip -= 1;
                     continue;
                 }
-                y_off = try self.term.draw_buf(
-                    change.buf,
-                    min.add(.splat(1)),
-                    (Vec2{ .x = split_x, .y = max.y }).sub(.splat(1)),
-                    y_off,
-                    0,
-                );
+                try hori.left.draw_buf(change.buf);
             }
 
             if (self.diffcache.getPtr(self.focused_change.hash)) |cdiff| if (cdiff.diff) |diff| {
                 cdiff.y = @max(0, cdiff.y);
-                _ = try self.term.draw_buf(diff, (Vec2{ .x = split_x, .y = min.y }).add(.splat(1)), max.sub(.splat(1)), 0, cast(u32, cdiff.y));
+                hori.right.y_scroll = cdiff.y;
+                try hori.right.draw_buf(diff);
             } else {
-                _ = try self.term.draw_buf(" loading ... ", (Vec2{ .x = split_x, .y = min.y }).add(.splat(1)), max.sub(.splat(1)), 0, 0);
+                try hori.right.draw_buf(" loading ... ");
             };
+
+            try entire.draw_border(border.rounded);
         }
+        // {
+        //     const min = Vec2{};
+        //     const max = min.add(self.term.size.sub(.splat(1)));
+        //     const split_x: i32 = cast(i32, cast(f32, max.x) * self.x_split);
+        //     try self.term.clear_region(min, max);
+        //     try self.term.draw_border(min, max, border.rounded);
+        //     try self.term.draw_split(min, max, split_x, null, true);
+
+        //     var skip = self.y;
+        //     var y_off: i32 = 0;
+        //     self.changes.reset(self.status);
+        //     while (try self.changes.next()) |change| {
+        //         if (skip > 0) {
+        //             skip -= 1;
+        //             continue;
+        //         }
+        //         y_off = try self.term.draw_buf(
+        //             change.buf,
+        //             min.add(.splat(1)),
+        //             (Vec2{ .x = split_x, .y = max.y }).sub(.splat(1)),
+        //             y_off,
+        //             0,
+        //         );
+        //     }
+
+        //     if (self.diffcache.getPtr(self.focused_change.hash)) |cdiff| if (cdiff.diff) |diff| {
+        //         cdiff.y = @max(0, cdiff.y);
+        //         _ = try self.term.draw_buf(diff, (Vec2{ .x = split_x, .y = min.y }).add(.splat(1)), max.sub(.splat(1)), 0, cast(u32, cdiff.y));
+        //     } else {
+        //         _ = try self.term.draw_buf(" loading ... ", (Vec2{ .x = split_x, .y = min.y }).add(.splat(1)), max.sub(.splat(1)), 0, 0);
+        //     };
+        // }
         try self.term.flush_writes();
     }
 };

@@ -795,7 +795,6 @@ const Term = struct {
     cooked_termios: ?std.posix.termios = null,
     raw: ?std.posix.termios = null,
 
-    alloc: std.mem.Allocator,
     cmdbuf: std.ArrayList(u8),
 
     fn init(alloc: std.mem.Allocator) !@This() {
@@ -804,7 +803,6 @@ const Term = struct {
 
         var self = @This(){
             .tty = tty,
-            .alloc = alloc,
             .cmdbuf = .init(alloc),
         };
 

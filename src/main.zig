@@ -901,7 +901,7 @@ const Term = struct {
     fn draw_split(self: *@This(), min: Vec2, max: Vec2, x: ?i32, y: ?i32, borders: bool) !void {
         if (y) |_y| {
             const x_lim = max.add(.splat(1)).min(self.size).sub(min).max(.{}).x;
-            if (_y < self.size.y) {
+            if (_y <= @min(self.size.y - 1, max.y) and _y >= min.y) {
                 try self.cursor_move(.{ .x = min.x, .y = _y });
                 try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(x_lim));
             }
@@ -933,7 +933,9 @@ const Term = struct {
         }
 
         // these ranges look crazy to handle edge conditions :P
-        for (@intCast(self.size.min(.{ .x = min.x, .y = min.y + y_offset }).max(.{}).y)..@intCast(self.size.min((Vec2{ .x = max.x, .y = @max(max.y + 1, min.y + y_offset) })).y)) |y| {
+        const low_y = @max(@min(self.size.y, min.y + y_offset), 0);
+        const high_y = @max(@min(self.size.y, @max(max.y + 1, min.y + y_offset)), 0);
+        for (low_y..high_y) |y| {
             const line = line_it.next() orelse break;
             try self.cursor_move(.{ .y = cast(i32, y), .x = min.x });
 
@@ -1380,27 +1382,48 @@ const Surface = struct {
     }
 
     fn split_y(self: *@This(), _y: i32, split: Split) !@This() {
+        const has_border = @as(i32, @intCast(@intFromBool(self.border)));
+        const has_split = @as(i32, @intCast(@intFromBool(split != .none)));
+
+        const min = self.min.add(.splat(has_border));
+        const max = self.max.sub(.splat(has_border));
+
         var max_y: i32 = undefined;
         var border_y: i32 = undefined;
         var other_y: i32 = undefined;
-        if (_y < 0) {
-            other_y = self.max.y + _y;
-            border_y = other_y - 1;
-            max_y = border_y - @as(i32, if (split != .none) 1 else 0);
-        } else {
-            max_y = self.min.y + _y;
-            border_y = max_y + 1;
-            other_y = border_y + @as(i32, if (split != .none) 1 else 0);
+        if (_y == 0) {
+            max_y = std.math.clamp(min.y - 1, min.y - 1, max.y);
         }
 
-        if (split == .border) {
+        if (_y < 0) {
+            other_y = @max(self.max.y + _y - has_border + 1, self.min.y);
+            border_y = other_y - 1;
+            max_y = border_y - has_split;
+        } else if (_y > 0) {
+            max_y = @min(self.min.y + _y + has_border - 1, self.max.y);
+            border_y = max_y + has_border;
+            other_y = border_y + has_split;
+        } else {
+            max_y = self.min.y - 1;
+            border_y = max_y + has_border;
+            other_y = border_y + has_split;
+        }
+
+        var draw_split = split == .border;
+        if (self.border and (border_y >= self.max.y or border_y <= self.min.y)) {
+            draw_split = false;
+        } else if (!self.border and (border_y > self.max.y or border_y < self.min.y)) {
+            draw_split = false;
+        }
+
+        if (draw_split) {
             try self.term.draw_split(self.min, self.max, null, border_y, self.border);
         }
 
         const other = @This(){
             .term = self.term,
             .min = (Vec2{
-                .y = other_y,
+                .y = @max(has_border, other_y),
                 .x = self.min.x + @intFromBool(self.border),
             }),
             .max = self.max.sub(.splat(@intCast(@intFromBool(self.border)))),
@@ -1410,8 +1433,8 @@ const Surface = struct {
             .term = self.term,
             .min = self.min.add(.splat(@intCast(@intFromBool(self.border)))),
             .max = (Vec2{
-                .y = max_y,
-                .x = self.max.x - @intFromBool(self.border),
+                .y = @min(max_y, self.max.y - has_border),
+                .x = self.max.x - has_border,
             }),
         };
 
@@ -1433,6 +1456,7 @@ const App = struct {
     alloc: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
 
+    y_split: i32 = 0,
     x_split: f32 = 0.55,
     y: i32 = 0,
     status: []const u8,
@@ -1593,12 +1617,14 @@ const App = struct {
                         }
                         if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{})) {
                             self.y += 1;
+                            self.y_split += 1;
                             try self.events.send(.rerender);
 
                             try self.request_jj();
                         }
                         if (key.key == 'k' and key.action.pressed() and key.mod.eq(.{})) {
                             self.y -= 1;
+                            self.y_split -= 1;
                             try self.events.send(.rerender);
 
                             try self.request_jj();
@@ -1730,6 +1756,7 @@ const App = struct {
     }
 
     fn render(self: *@This()) !void {
+        defer _ = self.arena.reset(.retain_capacity);
         self.y = @max(0, self.y);
         self.x_split = @min(@max(0.0, self.x_split), 1.0);
 
@@ -1737,10 +1764,10 @@ const App = struct {
         {
             var status = Surface.init(&self.term, .{});
             try status.clear();
-            try status.draw_border(border.rounded);
+            // try status.draw_border(border.rounded);
 
-            var bar = try status.split_y(-1, .border);
-            try bar.draw_buf(" huh does this work? ");
+            var bar = try status.split_y(self.y_split, .border);
+            try bar.draw_buf(try std.fmt.allocPrint(self.arena.allocator(), " huh does this work? {d} ", .{self.y_split}));
 
             var diffs = try status.split_x(cast(i32, cast(f32, status.size().x) * self.x_split), .gap);
             var skip = self.y;

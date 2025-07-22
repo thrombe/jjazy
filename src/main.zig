@@ -1720,38 +1720,6 @@ const App = struct {
 
             try entire.draw_border(border.rounded);
         }
-        // {
-        //     const min = Vec2{};
-        //     const max = min.add(self.term.size.sub(.splat(1)));
-        //     const split_x: i32 = cast(i32, cast(f32, max.x) * self.x_split);
-        //     try self.term.clear_region(min, max);
-        //     try self.term.draw_border(min, max, border.rounded);
-        //     try self.term.draw_split(min, max, split_x, null, true);
-
-        //     var skip = self.y;
-        //     var y_off: i32 = 0;
-        //     self.changes.reset(self.status);
-        //     while (try self.changes.next()) |change| {
-        //         if (skip > 0) {
-        //             skip -= 1;
-        //             continue;
-        //         }
-        //         y_off = try self.term.draw_buf(
-        //             change.buf,
-        //             min.add(.splat(1)),
-        //             (Vec2{ .x = split_x, .y = max.y }).sub(.splat(1)),
-        //             y_off,
-        //             0,
-        //         );
-        //     }
-
-        //     if (self.diffcache.getPtr(self.focused_change.hash)) |cdiff| if (cdiff.diff) |diff| {
-        //         cdiff.y = @max(0, cdiff.y);
-        //         _ = try self.term.draw_buf(diff, (Vec2{ .x = split_x, .y = min.y }).add(.splat(1)), max.sub(.splat(1)), 0, cast(u32, cdiff.y));
-        //     } else {
-        //         _ = try self.term.draw_buf(" loading ... ", (Vec2{ .x = split_x, .y = min.y }).add(.splat(1)), max.sub(.splat(1)), 0, 0);
-        //     };
-        // }
         try self.term.flush_writes();
     }
 };

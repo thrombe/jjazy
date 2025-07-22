@@ -1304,7 +1304,6 @@ const App = struct {
     x_split: f32 = 0.55,
     y: i32 = 0,
     status: []const u8,
-    diff: []const u8,
     changes: ChangeIterator,
     diffcache: DiffCache,
     focused_change: Change = .{},
@@ -1319,6 +1318,7 @@ const App = struct {
     };
 
     const CachedDiff = struct {
+        y: i32 = 0,
         diff: ?[]const u8 = null,
     };
     const DiffCache = std.HashMap([8]u8, CachedDiff, struct {
@@ -1363,7 +1363,6 @@ const App = struct {
             .events = events,
             .jj = jj,
             .status = &.{},
-            .diff = &.{},
             .changes = .init(alloc, &[_]u8{}),
             .diffcache = .init(alloc),
             .input_thread = undefined,
@@ -1471,6 +1470,18 @@ const App = struct {
                             try self.events.send(.rerender);
 
                             try self.request_jj();
+                        }
+                        if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
+                            if (self.diffcache.getPtr(self.focused_change.hash)) |diff| {
+                                diff.y += 10;
+                            }
+                            try self.events.send(.rerender);
+                        }
+                        if (key.key == 'k' and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
+                            if (self.diffcache.getPtr(self.focused_change.hash)) |diff| {
+                                diff.y -= 10;
+                            }
+                            try self.events.send(.rerender);
                         }
                         if (key.key == 'h' and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
                             self.x_split -= 0.05;
@@ -1592,12 +1603,6 @@ const App = struct {
 
         try self.term.update_size();
         {
-            if (self.diffcache.get(self.focused_change.hash)) |cdiff| if (cdiff.diff) |diff| {
-                self.diff = diff;
-            } else {
-                self.diff = " loading ... ";
-            };
-
             const min = Vec2{};
             const max = min.add(self.term.size.sub(.splat(1)));
             const split_x: i32 = cast(i32, cast(f32, max.x) * self.x_split);
@@ -1621,7 +1626,13 @@ const App = struct {
                     0,
                 );
             }
-            _ = try self.term.draw_buf(self.diff, (Vec2{ .x = split_x, .y = min.y }).add(.splat(1)), max.sub(.splat(1)), 0, 0);
+
+            if (self.diffcache.getPtr(self.focused_change.hash)) |cdiff| if (cdiff.diff) |diff| {
+                cdiff.y = @max(0, cdiff.y);
+                _ = try self.term.draw_buf(diff, (Vec2{ .x = split_x, .y = min.y }).add(.splat(1)), max.sub(.splat(1)), 0, cast(u32, cdiff.y));
+            } else {
+                _ = try self.term.draw_buf(" loading ... ", (Vec2{ .x = split_x, .y = min.y }).add(.splat(1)), max.sub(.splat(1)), 0, 0);
+            };
         }
         try self.term.flush_writes();
     }

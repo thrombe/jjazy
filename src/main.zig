@@ -1297,7 +1297,7 @@ const Change = struct {
 
 const Surface = struct {
     border: bool = false,
-    draw_split: bool = false,
+    split: Split = .none,
     _split_x: ?i32 = null,
     _split_y: ?i32 = null,
     y: i32 = 0,
@@ -1308,6 +1308,12 @@ const Surface = struct {
 
     const Self = @This();
 
+    const Split = enum {
+        none,
+        gap,
+        border,
+    };
+
     fn clear(self: *@This()) !void {
         try self.term.clear_region(self.min, self.max);
     }
@@ -1316,7 +1322,7 @@ const Surface = struct {
         if (self.border) {
             try self.term.draw_border(self.min, self.max, borders);
         }
-        if (self.draw_split) {
+        if (self.split == .border) {
             try self.term.draw_split(self.min, self.max, self._split_x, self._split_y, self.border);
         }
     }
@@ -1335,22 +1341,22 @@ const Surface = struct {
         self.y_scroll -= res.skipped;
     }
 
-    fn split_x(self: *@This(), x: i32, draw_split: bool) struct { left: Self, right: Self } {
+    fn split_x(self: *@This(), x: i32, split: Split) struct { left: Self, right: Self } {
         self._split_x = x;
-        self.draw_split = draw_split;
+        self.split = split;
         return .{
             .left = @This(){
                 .term = self.term,
                 .min = self.min.add(.splat(@intCast(@intFromBool(self.border)))),
                 .max = (Vec2{
-                    .x = @max(0, x - 1),
+                    .x = x - 1,
                     .y = self.max.y - @intFromBool(self.border),
                 }),
             },
             .right = @This(){
                 .term = self.term,
                 .min = (Vec2{
-                    .x = x + @as(i32, if (draw_split) 1 else 0),
+                    .x = x + @as(i32, if (split != .none) 1 else 0),
                     .y = self.min.y + @intFromBool(self.border),
                 }),
                 .max = self.max.sub(.splat(@intCast(@intFromBool(self.border)))),
@@ -1358,21 +1364,22 @@ const Surface = struct {
         };
     }
 
-    fn split_y(self: *@This(), y: i32, _draw_border: bool) struct { top: Self, bottom: Self } {
+    fn split_y(self: *@This(), y: i32, split: Split) struct { top: Self, bottom: Self } {
         self._split_y = y;
+        self.split = split;
         return .{
             .top = @This(){
                 .term = self.term,
                 .min = self.min.add(.splat(@intCast(@intFromBool(self.border)))),
                 .max = (Vec2{
-                    .y = @max(0, y - 1),
+                    .y = y - 1,
                     .x = self.max.x - @intFromBool(self.border),
                 }),
             },
             .bottom = @This(){
                 .term = self.term,
                 .min = (Vec2{
-                    .y = y + @as(i32, if (_draw_border) 1 else 0),
+                    .y = y + @as(i32, if (split != .none) 1 else 0),
                     .x = self.min.x + @intFromBool(self.border),
                 }),
                 .max = self.max.sub(.splat(@intCast(@intFromBool(self.border)))),
@@ -1700,10 +1707,10 @@ const App = struct {
             const min = Vec2{};
             const max = min.add(self.term.size.sub(.splat(1)));
             const split_x: i32 = cast(i32, cast(f32, max.x) * self.x_split);
-            var entire = Surface{ .term = &self.term, .border = false, .min = min, .max = max };
+            var entire = Surface{ .term = &self.term, .border = true, .min = min, .max = max };
             try entire.clear();
 
-            var hori = entire.split_x(split_x, false);
+            var hori = entire.split_x(split_x, .border);
             var skip = self.y;
             self.changes.reset(self.status);
             while (try self.changes.next()) |change| {

@@ -900,9 +900,11 @@ const Term = struct {
 
     fn draw_split(self: *@This(), min: Vec2, max: Vec2, x: ?i32, y: ?i32, borders: bool) !void {
         if (y) |_y| {
-            const x_lim = max.min(self.size).sub(min).max(.{}).x;
-            try self.cursor_move(.{ .x = min.x, .y = _y });
-            try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(x_lim));
+            const x_lim = max.add(.splat(1)).min(self.size).sub(min).max(.{}).x;
+            if (_y < self.size.y) {
+                try self.cursor_move(.{ .x = min.x, .y = _y });
+                try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(x_lim));
+            }
             if (borders) {
                 try self.draw_at(.{ .y = _y, .x = min.x }, border.cross.nse);
                 try self.draw_at(.{ .y = _y, .x = max.x }, border.cross.nws);
@@ -1378,21 +1380,27 @@ const Surface = struct {
     }
 
     fn split_y(self: *@This(), _y: i32, split: Split) !@This() {
-        var y: i32 = undefined;
+        var max_y: i32 = undefined;
+        var border_y: i32 = undefined;
+        var other_y: i32 = undefined;
         if (_y < 0) {
-            y = self.max.y + _y;
+            other_y = self.max.y + _y;
+            border_y = other_y - 1;
+            max_y = border_y - @as(i32, if (split != .none) 1 else 0);
         } else {
-            y = self.min.y + _y;
+            max_y = self.min.y + _y;
+            border_y = max_y + 1;
+            other_y = border_y + @as(i32, if (split != .none) 1 else 0);
         }
 
         if (split == .border) {
-            try self.term.draw_split(self.min, self.max, null, y, self.border);
+            try self.term.draw_split(self.min, self.max, null, border_y, self.border);
         }
 
         const other = @This(){
             .term = self.term,
             .min = (Vec2{
-                .y = y + 1,
+                .y = other_y,
                 .x = self.min.x + @intFromBool(self.border),
             }),
             .max = self.max.sub(.splat(@intCast(@intFromBool(self.border)))),
@@ -1402,7 +1410,7 @@ const Surface = struct {
             .term = self.term,
             .min = self.min.add(.splat(@intCast(@intFromBool(self.border)))),
             .max = (Vec2{
-                .y = y - @as(i32, if (split != .none) 1 else 0),
+                .y = max_y,
                 .x = self.max.x - @intFromBool(self.border),
             }),
         };
@@ -1729,9 +1737,9 @@ const App = struct {
         {
             var status = Surface.init(&self.term, .{});
             try status.clear();
-            // try status.draw_border(border.rounded);
+            try status.draw_border(border.rounded);
 
-            var bar = try status.split_y(status.size().y, .border);
+            var bar = try status.split_y(-1, .border);
             try bar.draw_buf(" huh does this work? ");
 
             var diffs = try status.split_x(cast(i32, cast(f32, status.size().x) * self.x_split), .gap);

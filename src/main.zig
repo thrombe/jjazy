@@ -1344,7 +1344,14 @@ const Surface = struct {
         self.y_scroll -= res.skipped;
     }
 
-    fn split_x(self: *@This(), x: i32, split: Split) !@This() {
+    fn split_x(self: *@This(), _x: i32, split: Split) !@This() {
+        var x: i32 = undefined;
+        if (_x < 0) {
+            x = self.max.y + _x;
+        } else {
+            x = self.min.y + _x;
+        }
+
         if (split == .border) {
             try self.term.draw_split(self.min, self.max, x, null, self.border);
         }
@@ -1370,7 +1377,14 @@ const Surface = struct {
         return other;
     }
 
-    fn split_y(self: *@This(), y: i32, split: Split) !@This() {
+    fn split_y(self: *@This(), _y: i32, split: Split) !@This() {
+        var y: i32 = undefined;
+        if (_y < 0) {
+            y = self.max.y + _y;
+        } else {
+            y = self.min.y + _y;
+        }
+
         if (split == .border) {
             try self.term.draw_split(self.min, self.max, null, y, self.border);
         }
@@ -1717,7 +1731,7 @@ const App = struct {
             try status.clear();
             // try status.draw_border(border.rounded);
 
-            var bar = try status.split_y(status.max.y - 1, .none);
+            var bar = try status.split_y(status.size().y, .border);
             try bar.draw_buf(" huh does this work? ");
 
             var diffs = try status.split_x(cast(i32, cast(f32, status.size().x) * self.x_split), .gap);

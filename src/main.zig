@@ -1313,13 +1313,9 @@ const Surface = struct {
         try self.term.clear_region(self.min, self.max);
     }
 
-    fn draw_border(self: *@This(), split: Split, _split_x: ?i32, _split_y: ?i32, borders: anytype) !void {
-        if (self.border) {
-            try self.term.draw_border(self.min, self.max, borders);
-        }
-        if (split == .border) {
-            try self.term.draw_split(self.min, self.max, _split_x, _split_y, self.border);
-        }
+    fn draw_border(self: *@This(), borders: anytype) !void {
+        self.border = true;
+        try self.term.draw_border(self.min, self.max, borders);
     }
 
     fn draw_buf(self: *@This(), buf: []const u8) !void {
@@ -1336,8 +1332,10 @@ const Surface = struct {
         self.y_scroll -= res.skipped;
     }
 
-    fn split_x(self: *@This(), x: i32, split: Split, borders: anytype) !@This() {
-        try self.draw_border(split, x, null, borders);
+    fn split_x(self: *@This(), x: i32, split: Split) !@This() {
+        if (split == .border) {
+            try self.term.draw_split(self.min, self.max, x, null, self.border);
+        }
 
         const other = @This(){
             .term = self.term,
@@ -1360,8 +1358,10 @@ const Surface = struct {
         return other;
     }
 
-    fn split_y(self: *@This(), y: i32, split: Split, borders: anytype) !@This() {
-        try self.draw_border(split, null, y, borders);
+    fn split_y(self: *@This(), y: i32, split: Split) !@This() {
+        if (split == .border) {
+            try self.term.draw_split(self.min, self.max, null, y, self.border);
+        }
 
         const other = @This(){
             .term = self.term,
@@ -1704,13 +1704,14 @@ const App = struct {
             const min = Vec2{};
             const max = min.add(self.term.size.sub(.splat(1)));
             const split_x: i32 = cast(i32, cast(f32, max.x) * self.x_split);
-            var status = Surface{ .term = &self.term, .border = false, .min = min, .max = max };
+            var status = Surface{ .term = &self.term, .min = min, .max = max };
             try status.clear();
+            try status.draw_border(border.rounded);
 
-            var bar = try status.split_y(status.max.y - 1, .none, border.rounded);
+            var bar = try status.split_y(status.max.y - 1, .none);
             try bar.draw_buf(" huh does this work? ");
 
-            var diffs = try status.split_x(split_x, .gap, border.rounded);
+            var diffs = try status.split_x(split_x, .gap);
             var skip = self.y;
             self.changes.reset(self.status);
             while (try self.changes.next()) |change| {

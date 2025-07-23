@@ -1,5 +1,8 @@
 const std = @import("std");
 
+const utils_mod = @import("utils.zig");
+const cast = utils_mod.cast;
+
 pub const Vec2 = struct {
     x: i32 = 0,
     y: i32 = 0,
@@ -22,6 +25,13 @@ pub const Vec2 = struct {
 
     pub fn min(self: *const @This(), other: @This()) @This() {
         return .{ .x = @min(self.x, other.x), .y = @min(self.y, other.y) };
+    }
+
+    pub fn mul(self: *const @This(), t: f32) @This() {
+        return .{
+            .x = cast(i32, cast(f32, self.x) * t),
+            .y = cast(i32, cast(f32, self.y) * t),
+        };
     }
 };
 

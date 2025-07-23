@@ -51,6 +51,19 @@ const Surface = struct {
         try self.term.draw_border(self.region, borders);
     }
 
+    fn draw_border_heading(self: *@This(), heading: []const u8) !void {
+        _ = try self.term.draw_buf(heading, self.region.clamp(.{
+            .origin = .{
+                .x = self.region.origin.x + 1,
+                .y = self.region.origin.y,
+            },
+            .size = .{
+                .x = self.region.size.x - 2,
+                .y = self.region.size.y,
+            },
+        }), 0, 0);
+    }
+
     fn draw_buf(self: *@This(), buf: []const u8) !void {
         if (self.is_full()) return;
 
@@ -127,6 +140,12 @@ pub const App = struct {
     changes: jj_mod.ChangeIterator,
     diffcache: DiffCache,
     focused_change: jj_mod.Change = .{},
+
+    focus: enum {
+        status,
+        diff,
+        command,
+    } = .status,
 
     pub const Event = union(enum) {
         sigwinch,
@@ -312,6 +331,11 @@ pub const App = struct {
                             try self.events.send(.rerender);
                         }
 
+                        if (key.key == ':' and key.action.just_pressed() and key.mod.eq(.{ .shift = true })) {
+                            self.focus = .command;
+                            try self.events.send(.rerender);
+                        }
+
                         if (comptime builtin.mode == .Debug) {
                             if (key.action.just_pressed() and key.mod.eq(.{ .ctrl = true })) switch (key.key) {
                                 '1' => try self.term.tty.writeAll(term_mod.codes.kitty.disable_input_protocol),
@@ -328,8 +352,13 @@ pub const App = struct {
                         }
                     },
                     .functional => |key| {
-                        _ = key;
+                        // _ = key;
                         // std.log.debug("got input event: {any}", .{key});
+
+                        if (key.key == .escape and key.action.just_pressed() and key.mod.eq(.{})) {
+                            self.focus = .status;
+                            try self.events.send(.rerender);
+                        }
                     },
                     .mouse => |key| {
                         // std.log.debug("got mouse input event: {any}", .{key});
@@ -452,6 +481,16 @@ pub const App = struct {
             } else {
                 try diffs.draw_buf(" loading ... ");
             };
+
+            if (self.focus == .command) {
+                const screen = self.term.screen;
+                const popup_size = Vec2{ .x = 60, .y = 20 };
+                const origin = screen.origin.add(screen.size.mul(0.5)).sub(popup_size.mul(0.5));
+                var command = Surface.init(&self.term, .{ .origin = origin, .size = popup_size });
+                try command.clear();
+                try command.draw_border(term_mod.border.rounded);
+                try command.draw_border_heading(" Command ");
+            }
         }
         try self.term.flush_writes();
     }

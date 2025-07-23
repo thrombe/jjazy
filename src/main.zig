@@ -8,6 +8,7 @@ const lay_mod = @import("lay.zig");
 const Vec2 = lay_mod.Vec2;
 
 const term_mod = @import("term.zig");
+const codes = term_mod.codes;
 
 const jj_mod = @import("jj.zig");
 
@@ -308,15 +309,15 @@ pub const App = struct {
 
                         if (comptime builtin.mode == .Debug) {
                             if (key.action.just_pressed() and key.mod.eq(.{ .ctrl = true })) switch (key.key) {
-                                '1' => try self.term.tty.writeAll(term_mod.codes.kitty.disable_input_protocol),
-                                '2' => try self.term.tty.writeAll(term_mod.codes.focus.disable),
-                                '3' => try self.term.tty.writeAll(term_mod.codes.mouse.disable_any_event ++ term_mod.codes.mouse.disable_sgr_mouse_mode),
+                                '1' => try self.term.tty.writeAll(codes.kitty.disable_input_protocol),
+                                '2' => try self.term.tty.writeAll(codes.focus.disable),
+                                '3' => try self.term.tty.writeAll(codes.mouse.disable_any_event ++ codes.mouse.disable_sgr_mouse_mode),
                                 else => {},
                             };
                             if (key.action.just_pressed() and key.mod.eq(.{})) switch (key.key) {
-                                '1' => try self.term.tty.writeAll(term_mod.codes.kitty.enable_input_protocol),
-                                '2' => try self.term.tty.writeAll(term_mod.codes.focus.enable),
-                                '3' => try self.term.tty.writeAll(term_mod.codes.mouse.enable_any_event ++ term_mod.codes.mouse.enable_sgr_mouse_mode),
+                                '1' => try self.term.tty.writeAll(codes.kitty.enable_input_protocol),
+                                '2' => try self.term.tty.writeAll(codes.focus.enable),
+                                '3' => try self.term.tty.writeAll(codes.mouse.enable_any_event ++ codes.mouse.enable_sgr_mouse_mode),
                                 else => {},
                             };
                         }
@@ -537,9 +538,9 @@ pub const App = struct {
                 try command.draw_border(term_mod.border.rounded);
                 try command.draw_border_heading(" Command ");
                 try command.draw_buf(self.command_text.items);
-                try command.draw_buf("\x1B[7m");
+                try command.draw_buf(codes.style.invert);
                 try command.draw_buf(" ");
-                try command.draw_buf("\x1B[0m");
+                try command.draw_buf(codes.style.reset);
             }
         }
         try self.term.flush_writes();

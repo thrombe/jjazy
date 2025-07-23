@@ -10,7 +10,6 @@ const Region = lay_mod.Region;
 
 pub const codes = struct {
     pub const clear = "\x1B[2J";
-    pub const attr_reset = "\x1B[0m";
     pub const sync_set = "\x1B[?2026h";
     pub const sync_reset = "\x1B[?2026l";
     pub const clear_to_line_end = "\x1B[0K";
@@ -38,6 +37,10 @@ pub const codes = struct {
     pub const focus = struct {
         pub const enable = "\x1B[?1004h";
         pub const disable = "\x1B[?1004l";
+    };
+    pub const style = struct {
+        pub const reset = "\x1B[0m";
+        pub const invert = "\x1B[7m";
     };
 
     pub const kitty = struct {
@@ -818,7 +821,7 @@ pub const Term = struct {
             codes.clear ++
             codes.alt_buf.leave ++
             codes.cursor.show ++
-            codes.attr_reset ++
+            codes.style.reset ++
             "");
         try std.posix.tcsetattr(self.tty.handle, .FLUSH, self.cooked_termios.?);
         self.raw = null;

@@ -860,7 +860,7 @@ pub const Term = struct {
 
     pub fn draw_border(self: *@This(), region: Region, corners: anytype) !void {
         const out = self.screen.clamp(region);
-        const end = out.end();
+        const end = region.end();
         const range_y = out.range_y();
 
         if (out.size.x == 0 or out.size.y == 0) {
@@ -882,7 +882,7 @@ pub const Term = struct {
             try self.cursor_move(out.origin);
             try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(out.size.x));
         }
-        if (self.screen.contains_y(region.end().y)) {
+        if (self.screen.contains_y(end.y)) {
             try self.cursor_move(.{ .x = out.origin.x, .y = end.y });
             try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(out.size.x));
         }

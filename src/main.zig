@@ -1565,7 +1565,6 @@ const App = struct {
     alloc: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
 
-    y_split: i32 = 0,
     x_split: f32 = 0.55,
     y: i32 = 0,
     status: []const u8,
@@ -1725,15 +1724,13 @@ const App = struct {
                             try self.events.send(.quit);
                         }
                         if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{})) {
-                            // self.y += 1;
-                            self.y_split += 1;
+                            self.y += 1;
                             try self.events.send(.rerender);
 
                             try self.request_jj();
                         }
                         if (key.key == 'k' and key.action.pressed() and key.mod.eq(.{})) {
-                            // self.y -= 1;
-                            self.y_split -= 1;
+                            self.y -= 1;
                             try self.events.send(.rerender);
 
                             try self.request_jj();
@@ -1751,11 +1748,11 @@ const App = struct {
                             try self.events.send(.rerender);
                         }
                         if (key.key == 'h' and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
-                            self.x_split -= 0.01;
+                            self.x_split -= 0.05;
                             try self.events.send(.rerender);
                         }
                         if (key.key == 'l' and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
-                            self.x_split += 0.01;
+                            self.x_split += 0.05;
                             try self.events.send(.rerender);
                         }
 
@@ -1873,14 +1870,12 @@ const App = struct {
         {
             var status = Surface.init(&self.term, .{});
             try status.clear();
-            try status.draw_border(border.rounded);
+            // try status.draw_border(border.rounded);
 
-            var bar = try status.split_y(self.y_split, .border);
-            try bar.draw_buf(try std.fmt.allocPrint(self.arena.allocator(), " huh does this work? {d} ", .{self.y_split}));
-            try status.draw_border(border.rounded);
+            var bar = try status.split_y(-1, .none);
+            try bar.draw_buf(try std.fmt.allocPrint(self.arena.allocator(), " huh does this work?  ", .{}));
 
             var diffs = try status.split_x(cast(i32, cast(f32, status.size().x) * self.x_split), .border);
-            try status.draw_border(border.rounded);
             var skip = self.y;
             self.changes.reset(self.status);
             while (try self.changes.next()) |change| {

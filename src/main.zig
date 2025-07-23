@@ -132,7 +132,8 @@ const Region = struct {
 
     fn clamp(self: *const @This(), other: @This()) @This() {
         const origin = self.clamp_vec(other.origin);
-        const size = self.clamp_vec(other.origin.add(other.size)).sub(origin);
+        // const size = self.clamp_vec(other.origin.add(other.size)).max(origin).sub(origin);
+        const size = other.size.sub(origin.sub(other.origin)).add(origin).min(self.origin.add(self.size)).sub(origin);
         return .{ .origin = origin, .size = size };
     }
 
@@ -203,7 +204,7 @@ const Region = struct {
             });
             const bottom = self.clamp(.{
                 .origin = .{
-                    .y = top.origin.y + top.size.y + @intFromBool(gap),
+                    .y = top.end().y + @intFromBool(gap) + 1,
                     .x = self.origin.x,
                 },
                 .size = .{
@@ -1454,12 +1455,12 @@ const Surface = struct {
         border,
     };
 
-    fn init(term: *Term, v: struct { min: ?Vec2 = null, max: ?Vec2 = null }) @This() {
+    fn init(term: *Term, v: struct { origin: ?Vec2 = null, size: ?Vec2 = null }) @This() {
         return .{
             .term = term,
             .region = .{
-                .origin = v.min orelse term.screen.origin,
-                .size = v.max orelse term.screen.size,
+                .origin = v.origin orelse term.screen.origin,
+                .size = v.size orelse term.screen.size,
             },
         };
     }
@@ -1491,7 +1492,7 @@ const Surface = struct {
     }
 
     fn split_x(self: *@This(), x: i32, split: Split) !@This() {
-        const regions = self.region.split_x(x, split != .none);
+        const regions = self.region.border_sub(.splat(@intFromBool(self.border))).split_x(x, split != .none);
 
         if (split == .border) {
             try self.term.draw_split(self.region, regions.split, null, self.border);
@@ -1511,7 +1512,7 @@ const Surface = struct {
     }
 
     fn split_y(self: *@This(), y: i32, split: Split) !@This() {
-        const regions = self.region.split_y(y, split != .none);
+        const regions = self.region.border_sub(.splat(@intFromBool(self.border))).split_y(y, split != .none);
 
         if (split == .border) {
             try self.term.draw_split(self.region, null, regions.split, self.border);

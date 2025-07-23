@@ -148,8 +148,90 @@ const Region = struct {
         return .{ .begin = self.origin.y, .end = self.origin.y + self.size.y };
     }
 
-    fn border_sub(self: *const @This(), t: i32) @This() {
-        return .{ .origin = self.origin.add(.splat(t)), .size = self.size.sub(.splat(t * 2)).max(.{}) };
+    fn border_sub(self: *const @This(), vec: Vec2) @This() {
+        return .{ .origin = self.origin.add(vec), .size = self.size.sub(.{ .x = vec.x * 2, .y = vec.y * 2 }).max(.{}) };
+    }
+
+    fn split_x(self: *const @This(), x: i32, gap: bool) struct { left: Region, right: Region, split: i32 } {
+        // gives prefrence from left when x >= 0 else to right
+
+        if (x >= 0) {
+            const left = self.clamp(.{
+                .origin = self.origin,
+                .size = .{ .x = x, .y = self.size.y },
+            });
+            const right = self.clamp(.{
+                .origin = .{
+                    .x = left.origin.x + left.size.x + @intFromBool(gap),
+                    .y = self.origin.y,
+                },
+                .size = .{
+                    .x = self.size.x - left.size.x - @intFromBool(gap),
+                    .y = self.size.y,
+                },
+            });
+            return .{ .split = left.end().x + 1, .left = left, .right = right };
+        } else {
+            const right = self.clamp(.{
+                .origin = .{
+                    .x = self.end().x + x,
+                    .y = self.origin.y,
+                },
+                .size = .{
+                    .x = -x,
+                    .y = self.size.y,
+                },
+            });
+            const left = self.clamp(.{
+                .origin = self.origin,
+                .size = .{
+                    .x = self.size.x - right.size.x - @intFromBool(gap),
+                    .y = self.size.y,
+                },
+            });
+            return .{ .split = right.origin.x - 1, .left = left, .right = right };
+        }
+    }
+
+    fn split_y(self: *const @This(), y: i32, gap: bool) struct { top: Region, bottom: Region, split: i32 } {
+        // gives prefrence from top when y >= 0 else to bottom
+
+        if (y >= 0) {
+            const top = self.clamp(.{
+                .origin = self.origin,
+                .size = .{ .y = y, .x = self.size.x },
+            });
+            const bottom = self.clamp(.{
+                .origin = .{
+                    .y = top.origin.y + top.size.y + @intFromBool(gap),
+                    .x = self.origin.x,
+                },
+                .size = .{
+                    .y = self.size.y - top.size.y - @intFromBool(gap),
+                    .x = self.size.x,
+                },
+            });
+            return .{ .split = top.end().y + 1, .top = top, .bottom = bottom };
+        } else {
+            const bottom = self.clamp(.{
+                .origin = .{
+                    .y = self.end().y + y,
+                    .x = self.origin.x,
+                },
+                .size = .{
+                    .y = -y,
+                    .x = self.size.x,
+                },
+            });
+            const top = self.clamp(.{
+                .origin = self.origin,
+                .size = .{
+                    .y = self.size.y - bottom.size.y - @intFromBool(gap),
+                    .x = self.size.x,
+                },
+            });
+            return .{ .split = bottom.origin.y - 1, .top = top, .bottom = bottom };
+        }
     }
 };
 
@@ -836,7 +918,7 @@ const TermInputIterator = struct {
 const Term = struct {
     tty: std.fs.File,
 
-    screen: Region = .{},
+    screen: Region = .{ .size = .{} },
     cooked_termios: ?std.posix.termios = null,
     raw: ?std.posix.termios = null,
 
@@ -911,9 +993,9 @@ const Term = struct {
     fn clear_region(self: *@This(), region: Region) !void {
         const out = self.screen.clamp(region);
         const range_y = out.range_y();
-        for (range_y.begin..range_y.end) |y| {
+        for (@intCast(range_y.begin)..@intCast(range_y.end)) |y| {
             try self.cursor_move(.{ .y = cast(u16, y), .x = out.origin.x });
-            try self.writer().writeByteNTimes(' ', out.size.x);
+            try self.writer().writeByteNTimes(' ', @intCast(out.size.x));
         }
     }
 
@@ -938,7 +1020,7 @@ const Term = struct {
             try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(out.size.x));
         }
 
-        for (range_y.begin..range_y.end) |y| {
+        for (@intCast(range_y.begin)..@intCast(range_y.end)) |y| {
             try self.draw_at(.{ .y = @intCast(y), .x = out.origin.x }, border.edge.vertical);
             try self.draw_at(.{ .y = @intCast(y), .x = end.x }, border.edge.vertical);
         }
@@ -951,34 +1033,38 @@ const Term = struct {
     }
 
     fn draw_split(self: *@This(), region: Region, _x: ?i32, _y: ?i32, borders: bool) !void {
-        const out = self.screen.clamp(region);
+        const in_region = region.border_sub(.splat(@intFromBool(borders)));
+        const out = self.screen.clamp(in_region);
         const end = out.end();
         const range_y = out.range_y();
 
         if (_y) |y| {
-            if (self.screen.contains_y(y)) {
+            if (self.screen.contains_y(y) and in_region.contains_y(y)) {
                 try self.cursor_move(.{ .x = out.origin.x, .y = y });
                 try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(out.size.x));
             }
             if (borders) {
-                try self.draw_at(.{ .y = y, .x = out.origin.x }, border.cross.nse);
-                try self.draw_at(.{ .y = y, .x = end.x }, border.cross.nws);
+                if (in_region.contains_x(out.origin.x)) try self.draw_at(.{ .y = y, .x = out.origin.x }, border.cross.nse);
+                if (in_region.contains_x(end.x)) try self.draw_at(.{ .y = y, .x = end.x }, border.cross.nws);
             }
         }
         if (_x) |x| {
-            for (range_y.begin..range_y.end) |y| {
+            for (@intCast(range_y.begin)..@intCast(range_y.end)) |y| {
                 try self.draw_at(.{ .x = x, .y = @intCast(y) }, border.edge.vertical);
             }
             if (borders) {
-                try self.draw_at(.{ .x = x, .y = out.origin.y }, border.cross.wse);
-                try self.draw_at(.{ .x = x, .y = end.y }, border.cross.wne);
+                if (in_region.contains_y(out.origin.y)) try self.draw_at(.{ .x = x, .y = out.origin.y }, border.cross.wse);
+                if (in_region.contains_y(end.y)) try self.draw_at(.{ .x = x, .y = end.y }, border.cross.wne);
             }
         }
-        if (_x) |x| if (_y) |y| try self.draw_at(.{ .x = x, .y = y }, border.cross.nwse);
+        if (_x) |x| if (_y) |y| if (in_region.contains_vec(.{ .x = x, .y = y })) try self.draw_at(.{ .x = x, .y = y }, border.cross.nwse);
     }
 
     fn draw_buf(self: *@This(), buf: []const u8, region: Region, y_offset: i32, y_skip: u32) !struct { y: i32, skipped: i32 } {
-        const out = self.screen.clamp(region);
+        const out = self.screen.clamp(region.clamp(.{
+            .origin = region.origin.add(.{ .y = y_offset }),
+            .size = region.size.sub(.{ .y = y_offset }),
+        }));
         const end = out.end();
         const range_y = out.range_y();
 
@@ -991,7 +1077,7 @@ const Term = struct {
             _ = line_it.next();
         }
 
-        for (range_y.begin..range_y.end) |y| {
+        for (@intCast(range_y.begin)..@intCast(range_y.end)) |y| {
             const line = line_it.next() orelse break;
             try self.cursor_move(.{ .y = cast(i32, y), .x = out.origin.x });
 
@@ -1359,8 +1445,7 @@ const Surface = struct {
     border: bool = false,
     y: i32 = 0,
     y_scroll: i32 = 0,
-    min: Vec2,
-    max: Vec2,
+    region: Region,
     term: *Term,
 
     const Split = enum {
@@ -1372,22 +1457,24 @@ const Surface = struct {
     fn init(term: *Term, v: struct { min: ?Vec2 = null, max: ?Vec2 = null }) @This() {
         return .{
             .term = term,
-            .min = v.min orelse .{},
-            .max = v.max orelse term.size.sub(.splat(1)),
+            .region = .{
+                .origin = v.min orelse term.screen.origin,
+                .size = v.max orelse term.screen.size,
+            },
         };
     }
 
     fn size(self: *const @This()) Vec2 {
-        return self.max.sub(self.min).add(.splat(1));
+        return self.region.size;
     }
 
     fn clear(self: *@This()) !void {
-        try self.term.clear_region(self.min, self.max);
+        try self.term.clear_region(self.region);
     }
 
     fn draw_border(self: *@This(), borders: anytype) !void {
         self.border = true;
-        try self.term.draw_border(self.min, self.max, borders);
+        try self.term.draw_border(self.region, borders);
     }
 
     fn draw_buf(self: *@This(), buf: []const u8) !void {
@@ -1395,8 +1482,7 @@ const Surface = struct {
         self.y_scroll = @max(0, self.y_scroll);
         const res = try self.term.draw_buf(
             buf,
-            self.min.add(.splat(@intCast(@intFromBool(self.border)))),
-            self.max.sub(.splat(@intCast(@intFromBool(self.border)))),
+            self.region.border_sub(.splat(@intFromBool(self.border))),
             self.y,
             cast(u32, self.y_scroll),
         );
@@ -1404,94 +1490,41 @@ const Surface = struct {
         self.y_scroll -= res.skipped;
     }
 
-    fn split_x(self: *@This(), _x: i32, split: Split) !@This() {
-        var x: i32 = undefined;
-        if (_x < 0) {
-            x = self.max.y + _x;
-        } else {
-            x = self.min.y + _x;
-        }
+    fn split_x(self: *@This(), x: i32, split: Split) !@This() {
+        const regions = self.region.split_x(x, split != .none);
 
         if (split == .border) {
-            try self.term.draw_split(self.min, self.max, x, null, self.border);
+            try self.term.draw_split(self.region, regions.split, null, self.border);
         }
 
         const other = @This(){
             .term = self.term,
-            .min = (Vec2{
-                .x = x + 1,
-                .y = self.min.y + @intFromBool(self.border),
-            }),
-            .max = self.max.sub(.splat(@intCast(@intFromBool(self.border)))),
+            .region = regions.right,
         };
 
         self.* = @This(){
             .term = self.term,
-            .min = self.min.add(.splat(@intCast(@intFromBool(self.border)))),
-            .max = (Vec2{
-                .x = x - @as(i32, if (split != .none) 1 else 0),
-                .y = self.max.y - @intFromBool(self.border),
-            }),
+            .region = regions.left,
         };
 
         return other;
     }
 
-    fn split_y(self: *@This(), _y: i32, split: Split) !@This() {
-        const has_border = @as(i32, @intCast(@intFromBool(self.border)));
-        const has_split = @as(i32, @intCast(@intFromBool(split != .none)));
+    fn split_y(self: *@This(), y: i32, split: Split) !@This() {
+        const regions = self.region.split_y(y, split != .none);
 
-        const min = self.min.add(.splat(has_border));
-        const max = self.max.sub(.splat(has_border));
-
-        var max_y: i32 = undefined;
-        var border_y: i32 = undefined;
-        var other_y: i32 = undefined;
-        if (_y == 0) {
-            max_y = std.math.clamp(min.y - 1, min.y - 1, max.y);
-        }
-
-        if (_y < 0) {
-            other_y = @max(self.max.y + _y - has_border + 1, self.min.y);
-            border_y = other_y - 1;
-            max_y = border_y - has_split;
-        } else if (_y > 0) {
-            max_y = @min(self.min.y + _y + has_border - 1, self.max.y);
-            border_y = max_y + has_border;
-            other_y = border_y + has_split;
-        } else {
-            max_y = self.min.y - 1;
-            border_y = max_y + has_border;
-            other_y = border_y + has_split;
-        }
-
-        var draw_split = split == .border;
-        if (self.border and (border_y >= self.max.y or border_y <= self.min.y)) {
-            draw_split = false;
-        } else if (!self.border and (border_y > self.max.y or border_y < self.min.y)) {
-            draw_split = false;
-        }
-
-        if (draw_split) {
-            try self.term.draw_split(self.min, self.max, null, border_y, self.border);
+        if (split == .border) {
+            try self.term.draw_split(self.region, null, regions.split, self.border);
         }
 
         const other = @This(){
             .term = self.term,
-            .min = (Vec2{
-                .y = @max(has_border, other_y),
-                .x = self.min.x + @intFromBool(self.border),
-            }),
-            .max = self.max.sub(.splat(@intCast(@intFromBool(self.border)))),
+            .region = regions.bottom,
         };
 
         self.* = @This(){
             .term = self.term,
-            .min = self.min.add(.splat(@intCast(@intFromBool(self.border)))),
-            .max = (Vec2{
-                .y = @min(max_y, self.max.y - has_border),
-                .x = self.max.x - has_border,
-            }),
+            .region = regions.top,
         };
 
         return other;
@@ -1672,14 +1705,14 @@ const App = struct {
                             try self.events.send(.quit);
                         }
                         if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{})) {
-                            self.y += 1;
+                            // self.y += 1;
                             self.y_split += 1;
                             try self.events.send(.rerender);
 
                             try self.request_jj();
                         }
                         if (key.key == 'k' and key.action.pressed() and key.mod.eq(.{})) {
-                            self.y -= 1;
+                            // self.y -= 1;
                             self.y_split -= 1;
                             try self.events.send(.rerender);
 

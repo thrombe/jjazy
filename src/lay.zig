@@ -53,7 +53,8 @@ pub const Region = struct {
             .min(self.origin.add(self.size));
         const size = other.size.add(other.origin)
             .min(self.origin.add(self.size))
-            .sub(origin);
+            .sub(origin)
+            .max(.{});
         return .{ .origin = origin, .size = size };
     }
 

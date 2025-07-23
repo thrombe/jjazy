@@ -166,7 +166,7 @@ const Region = struct {
             });
             const right = self.clamp(.{
                 .origin = .{
-                    .x = left.origin.x + left.size.x + @intFromBool(gap),
+                    .x = left.end().x + @intFromBool(gap) + 1,
                     .y = self.origin.y,
                 },
                 .size = .{
@@ -178,7 +178,7 @@ const Region = struct {
         } else {
             const right = self.clamp(.{
                 .origin = .{
-                    .x = self.end().x + x,
+                    .x = self.end().x + x + 1,
                     .y = self.origin.y,
                 },
                 .size = .{
@@ -219,7 +219,7 @@ const Region = struct {
         } else {
             const bottom = self.clamp(.{
                 .origin = .{
-                    .y = self.end().y + y,
+                    .y = self.end().y + y + 1,
                     .x = self.origin.x,
                 },
                 .size = .{
@@ -1857,12 +1857,12 @@ const App = struct {
         {
             var status = Surface.init(&self.term, .{});
             try status.clear();
-            // try status.draw_border(border.rounded);
+            try status.draw_border(border.rounded);
 
             var bar = try status.split_y(self.y_split, .border);
             try bar.draw_buf(try std.fmt.allocPrint(self.arena.allocator(), " huh does this work? {d} ", .{self.y_split}));
 
-            var diffs = try status.split_x(cast(i32, cast(f32, status.size().x) * self.x_split), .gap);
+            var diffs = try status.split_x(cast(i32, cast(f32, status.size().x) * self.x_split), .border);
             var skip = self.y;
             self.changes.reset(self.status);
             while (try self.changes.next()) |change| {

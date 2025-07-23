@@ -131,9 +131,12 @@ const Region = struct {
     }
 
     fn clamp(self: *const @This(), other: @This()) @This() {
-        const origin = self.clamp_vec(other.origin);
-        // const size = self.clamp_vec(other.origin.add(other.size)).max(origin).sub(origin);
-        const size = other.size.sub(origin.sub(other.origin)).add(origin).min(self.origin.add(self.size)).sub(origin);
+        const origin = other.origin
+            .max(self.origin)
+            .min(self.origin.add(self.size));
+        const size = other.size.add(other.origin)
+            .min(self.origin.add(self.size))
+            .sub(origin);
         return .{ .origin = origin, .size = size };
     }
 

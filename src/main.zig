@@ -1015,6 +1015,21 @@ const Term = struct {
         const end = out.end();
         const range_y = out.range_y();
 
+        if (out.size.x == 0 or out.size.y == 0) {
+            return;
+        } else if (std.meta.eql(out.size, .splat(1))) {
+            return;
+        } else if (out.size.x == 1) {
+            for (@intCast(range_y.begin)..@intCast(range_y.end)) |y| {
+                try self.draw_at(.{ .y = @intCast(y), .x = out.origin.x }, border.edge.vertical);
+            }
+            return;
+        } else if (out.size.y == 1) {
+            try self.cursor_move(out.origin);
+            try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(out.size.x));
+            return;
+        }
+
         if (self.screen.contains_y(region.origin.y)) {
             try self.cursor_move(out.origin);
             try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(out.size.x));
@@ -1037,6 +1052,7 @@ const Term = struct {
     }
 
     fn draw_split(self: *@This(), region: Region, _x: ?i32, _y: ?i32, borders: bool) !void {
+        const border_out = self.screen.clamp(region);
         const in_region = region.border_sub(.splat(@intFromBool(borders)));
         const out = self.screen.clamp(in_region);
         const end = out.end();
@@ -1047,18 +1063,18 @@ const Term = struct {
                 try self.cursor_move(.{ .x = out.origin.x, .y = y });
                 try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(out.size.x));
             }
-            if (borders) {
-                if (in_region.contains_x(out.origin.x)) try self.draw_at(.{ .y = y, .x = out.origin.x }, border.cross.nse);
-                if (in_region.contains_x(end.x)) try self.draw_at(.{ .y = y, .x = end.x }, border.cross.nws);
+            if (borders and in_region.contains_y(y)) {
+                if (in_region.contains_x(out.origin.x)) try self.draw_at(.{ .y = y, .x = border_out.origin.x }, border.cross.nse);
+                if (in_region.contains_x(end.x)) try self.draw_at(.{ .y = y, .x = border_out.end().x }, border.cross.nws);
             }
         }
         if (_x) |x| {
             for (@intCast(range_y.begin)..@intCast(range_y.end)) |y| {
                 try self.draw_at(.{ .x = x, .y = @intCast(y) }, border.edge.vertical);
             }
-            if (borders) {
-                if (in_region.contains_y(out.origin.y)) try self.draw_at(.{ .x = x, .y = out.origin.y }, border.cross.wse);
-                if (in_region.contains_y(end.y)) try self.draw_at(.{ .x = x, .y = end.y }, border.cross.wne);
+            if (borders and in_region.contains_x(x)) {
+                if (in_region.contains_y(out.origin.y)) try self.draw_at(.{ .x = x, .y = border_out.origin.y }, border.cross.wse);
+                if (in_region.contains_y(end.y)) try self.draw_at(.{ .x = x, .y = border_out.end().y }, border.cross.wne);
             }
         }
         if (_x) |x| if (_y) |y| if (in_region.contains_vec(.{ .x = x, .y = y })) try self.draw_at(.{ .x = x, .y = y }, border.cross.nwse);
@@ -1735,11 +1751,11 @@ const App = struct {
                             try self.events.send(.rerender);
                         }
                         if (key.key == 'h' and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
-                            self.x_split -= 0.05;
+                            self.x_split -= 0.01;
                             try self.events.send(.rerender);
                         }
                         if (key.key == 'l' and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
-                            self.x_split += 0.05;
+                            self.x_split += 0.01;
                             try self.events.send(.rerender);
                         }
 
@@ -1861,8 +1877,10 @@ const App = struct {
 
             var bar = try status.split_y(self.y_split, .border);
             try bar.draw_buf(try std.fmt.allocPrint(self.arena.allocator(), " huh does this work? {d} ", .{self.y_split}));
+            try status.draw_border(border.rounded);
 
             var diffs = try status.split_x(cast(i32, cast(f32, status.size().x) * self.x_split), .border);
+            try status.draw_border(border.rounded);
             var skip = self.y;
             self.changes.reset(self.status);
             while (try self.changes.next()) |change| {

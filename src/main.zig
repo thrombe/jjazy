@@ -108,6 +108,51 @@ const Vec2 = struct {
     }
 };
 
+const Region = struct {
+    origin: Vec2 = .{},
+    size: Vec2,
+
+    const Range = struct { begin: i32, end: i32 };
+
+    fn contains_x(self: *const @This(), x: i32) bool {
+        return self.contains_vec(.{ .x = x, .y = self.origin.y });
+    }
+
+    fn contains_y(self: *const @This(), y: i32) bool {
+        return self.contains_vec(.{ .x = self.origin.x, .y = y });
+    }
+
+    fn contains_vec(self: *const @This(), vec: Vec2) bool {
+        return std.meta.eql(self.clamp_vec(vec), vec);
+    }
+
+    fn clamp_vec(self: *const @This(), vec: Vec2) Vec2 {
+        return self.origin.max(vec).min(self.end());
+    }
+
+    fn clamp(self: *const @This(), other: @This()) @This() {
+        const origin = self.clamp_vec(other.origin);
+        const size = self.clamp_vec(other.origin.add(other.size)).sub(origin);
+        return .{ .origin = origin, .size = size };
+    }
+
+    fn end(self: *const @This()) Vec2 {
+        return self.origin.add(self.size).sub(.splat(1));
+    }
+
+    fn range_x(self: *const @This()) Range {
+        return .{ .begin = self.origin.x, .end = self.origin.x + self.size.x };
+    }
+
+    fn range_y(self: *const @This()) Range {
+        return .{ .begin = self.origin.y, .end = self.origin.y + self.size.y };
+    }
+
+    fn border_sub(self: *const @This(), t: i32) @This() {
+        return .{ .origin = self.origin.add(.splat(t)), .size = self.size.sub(.splat(t * 2)).max(.{}) };
+    }
+};
+
 const TermStyledGraphemeIterator = struct {
     utf8: std.unicode.Utf8Iterator,
 
@@ -791,7 +836,7 @@ const TermInputIterator = struct {
 const Term = struct {
     tty: std.fs.File,
 
-    size: Vec2 = .{},
+    screen: Region = .{},
     cooked_termios: ?std.posix.termios = null,
     raw: ?std.posix.termios = null,
 
@@ -863,66 +908,80 @@ const Term = struct {
         try self.writer().writeAll(codes.sync_set ++ codes.clear);
     }
 
-    fn clear_region(self: *@This(), min: Vec2, max: Vec2) !void {
-        for (@intCast(self.size.min(min).max(.{}).y)..@intCast(self.size.min(max.add(.splat(1))).y)) |y| {
-            try self.cursor_move(.{ .y = cast(u16, y), .x = min.x });
-            try self.writer().writeByteNTimes(' ', @intCast(max.min(self.size).sub(min).max(.{}).x));
+    fn clear_region(self: *@This(), region: Region) !void {
+        const out = self.screen.clamp(region);
+        const range_y = out.range_y();
+        for (range_y.begin..range_y.end) |y| {
+            try self.cursor_move(.{ .y = cast(u16, y), .x = out.origin.x });
+            try self.writer().writeByteNTimes(' ', out.size.x);
         }
     }
 
     fn draw_at(self: *@This(), pos: Vec2, token: []const u8) !void {
-        if (self.size.x > pos.x and self.size.y > pos.y) {
+        if (self.screen.contains_vec(pos)) {
             try self.cursor_move(pos);
             try self.writer().writeAll(token);
         }
     }
 
-    fn draw_border(self: *@This(), min: Vec2, max: Vec2, corners: anytype) !void {
-        const x_lim = max.min(self.size).sub(min).max(.{}).x;
-        try self.cursor_move(min);
-        try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(x_lim));
-        if (max.y < self.size.y) {
-            try self.cursor_move(.{ .x = min.x, .y = max.y });
-            try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(x_lim));
+    fn draw_border(self: *@This(), region: Region, corners: anytype) !void {
+        const out = self.screen.clamp(region);
+        const end = out.end();
+        const range_y = out.range_y();
+
+        if (self.screen.contains_y(region.origin.y)) {
+            try self.cursor_move(out.origin);
+            try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(out.size.x));
+        }
+        if (self.screen.contains_y(region.end().y)) {
+            try self.cursor_move(.{ .x = out.origin.x, .y = end.y });
+            try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(out.size.x));
         }
 
-        for (@intCast(min.min(self.size).y)..@intCast(self.size.min(max.add(.splat(1))).y)) |y| {
-            try self.draw_at(.{ .y = @intCast(y), .x = min.x }, border.edge.vertical);
-            try self.draw_at(.{ .y = @intCast(y), .x = max.x }, border.edge.vertical);
+        for (range_y.begin..range_y.end) |y| {
+            try self.draw_at(.{ .y = @intCast(y), .x = out.origin.x }, border.edge.vertical);
+            try self.draw_at(.{ .y = @intCast(y), .x = end.x }, border.edge.vertical);
         }
 
         // write corners last so that it overwrites the edges (this simplifies code)
-        try self.draw_at(.{ .x = min.x, .y = min.y }, corners.top_left);
-        try self.draw_at(.{ .x = max.x, .y = min.y }, corners.top_right);
-        try self.draw_at(.{ .x = min.x, .y = max.y }, corners.bottom_left);
-        try self.draw_at(.{ .x = max.x, .y = max.y }, corners.bottom_right);
+        try self.draw_at(.{ .x = out.origin.x, .y = out.origin.y }, corners.top_left);
+        try self.draw_at(.{ .x = end.x, .y = out.origin.y }, corners.top_right);
+        try self.draw_at(.{ .x = out.origin.x, .y = end.y }, corners.bottom_left);
+        try self.draw_at(.{ .x = end.x, .y = end.y }, corners.bottom_right);
     }
 
-    fn draw_split(self: *@This(), min: Vec2, max: Vec2, x: ?i32, y: ?i32, borders: bool) !void {
-        if (y) |_y| {
-            const x_lim = max.add(.splat(1)).min(self.size).sub(min).max(.{}).x;
-            if (_y <= @min(self.size.y - 1, max.y) and _y >= min.y) {
-                try self.cursor_move(.{ .x = min.x, .y = _y });
-                try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(x_lim));
+    fn draw_split(self: *@This(), region: Region, _x: ?i32, _y: ?i32, borders: bool) !void {
+        const out = self.screen.clamp(region);
+        const end = out.end();
+        const range_y = out.range_y();
+
+        if (_y) |y| {
+            if (self.screen.contains_y(y)) {
+                try self.cursor_move(.{ .x = out.origin.x, .y = y });
+                try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(out.size.x));
             }
             if (borders) {
-                try self.draw_at(.{ .y = _y, .x = min.x }, border.cross.nse);
-                try self.draw_at(.{ .y = _y, .x = max.x }, border.cross.nws);
+                try self.draw_at(.{ .y = y, .x = out.origin.x }, border.cross.nse);
+                try self.draw_at(.{ .y = y, .x = end.x }, border.cross.nws);
             }
         }
-        if (x) |_x| {
-            for (@intCast(min.min(self.size).y)..@intCast(self.size.min(max.add(.splat(1))).y)) |_y| {
-                try self.draw_at(.{ .x = _x, .y = @intCast(_y) }, border.edge.vertical);
+        if (_x) |x| {
+            for (range_y.begin..range_y.end) |y| {
+                try self.draw_at(.{ .x = x, .y = @intCast(y) }, border.edge.vertical);
             }
             if (borders) {
-                try self.draw_at(.{ .x = _x, .y = min.y }, border.cross.wse);
-                try self.draw_at(.{ .x = _x, .y = max.y }, border.cross.wne);
+                try self.draw_at(.{ .x = x, .y = out.origin.y }, border.cross.wse);
+                try self.draw_at(.{ .x = x, .y = end.y }, border.cross.wne);
             }
         }
-        if (x) |_x| if (y) |_y| try self.draw_at(.{ .x = _x, .y = _y }, border.cross.nwse);
+        if (_x) |x| if (_y) |y| try self.draw_at(.{ .x = x, .y = y }, border.cross.nwse);
     }
 
-    fn draw_buf(self: *@This(), buf: []const u8, min: Vec2, max: Vec2, y_offset: i32, y_skip: u32) !struct { y: i32, skipped: i32 } {
+    fn draw_buf(self: *@This(), buf: []const u8, region: Region, y_offset: i32, y_skip: u32) !struct { y: i32, skipped: i32 } {
+        const out = self.screen.clamp(region);
+        const end = out.end();
+        const range_y = out.range_y();
+
         var last_y: i32 = y_offset;
         var skipped: i32 = 0;
 
@@ -932,16 +991,13 @@ const Term = struct {
             _ = line_it.next();
         }
 
-        // these ranges look crazy to handle edge conditions :P
-        const low_y = @max(@min(self.size.y, min.y + y_offset), 0);
-        const high_y = @max(@min(self.size.y, @max(max.y + 1, min.y + y_offset)), 0);
-        for (low_y..high_y) |y| {
+        for (range_y.begin..range_y.end) |y| {
             const line = line_it.next() orelse break;
-            try self.cursor_move(.{ .y = cast(i32, y), .x = min.x });
+            try self.cursor_move(.{ .y = cast(i32, y), .x = out.origin.x });
 
             var codepoint_it = try TermStyledGraphemeIterator.init(line);
 
-            var x: i32 = min.x;
+            var x: i32 = out.origin.x;
             while (try codepoint_it.next()) |token| {
                 // execute all control chars
                 // but don't print beyond the size
@@ -949,7 +1005,7 @@ const Term = struct {
                     if (codepoint != .erase_in_line) {
                         try self.writer().writeAll(token.grapheme);
                     }
-                } else if (x <= max.min(self.size.sub(.splat(1))).x) {
+                } else if (x <= end.x) {
                     try self.writer().writeAll(token.grapheme);
                     x += 1;
                 }
@@ -967,7 +1023,7 @@ const Term = struct {
         if (std.posix.errno(err) != .SUCCESS) {
             return std.posix.unexpectedErrno(@as(std.posix.E, @enumFromInt(err)));
         }
-        self.size = .{ .y = win_size.row, .x = win_size.col };
+        self.screen.size = .{ .y = win_size.row, .x = win_size.col };
     }
 
     fn cursor_move(self: *@This(), v: Vec2) !void {

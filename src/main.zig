@@ -140,6 +140,7 @@ pub const App = struct {
     changes: jj_mod.ChangeIterator,
     diffcache: DiffCache,
     focused_change: jj_mod.Change = .{},
+    command_text: std.ArrayList(u8),
 
     focus: enum {
         status,
@@ -204,6 +205,7 @@ pub const App = struct {
             .status = &.{},
             .changes = .init(alloc, &[_]u8{}),
             .diffcache = .init(alloc),
+            .command_text = .init(alloc),
             .input_thread = undefined,
         };
 
@@ -231,6 +233,7 @@ pub const App = struct {
             };
             self.diffcache.deinit();
         }
+        defer self.command_text.deinit();
         defer self.arena.deinit();
         defer self.term.deinit();
         defer self.term.cook_restore() catch |e| utils_mod.dump_error(e);
@@ -293,8 +296,46 @@ pub const App = struct {
             .input => |input| {
                 switch (input) {
                     .key => |key| {
-                        std.log.debug("got input event: {any}", .{key});
+                        // _ = key;
+                        // std.log.debug("got input event: {any}", .{key});
 
+                        if (comptime builtin.mode == .Debug) {
+                            if (key.action.just_pressed() and key.mod.eq(.{ .ctrl = true })) switch (key.key) {
+                                '1' => try self.term.tty.writeAll(term_mod.codes.kitty.disable_input_protocol),
+                                '2' => try self.term.tty.writeAll(term_mod.codes.focus.disable),
+                                '3' => try self.term.tty.writeAll(term_mod.codes.mouse.disable_any_event ++ term_mod.codes.mouse.disable_sgr_mouse_mode),
+                                else => {},
+                            };
+                            if (key.action.just_pressed() and key.mod.eq(.{})) switch (key.key) {
+                                '1' => try self.term.tty.writeAll(term_mod.codes.kitty.enable_input_protocol),
+                                '2' => try self.term.tty.writeAll(term_mod.codes.focus.enable),
+                                '3' => try self.term.tty.writeAll(term_mod.codes.mouse.enable_any_event ++ term_mod.codes.mouse.enable_sgr_mouse_mode),
+                                else => {},
+                            };
+                        }
+                    },
+                    .functional => |key| {
+                        // _ = key;
+                        // std.log.debug("got input event: {any}", .{key});
+
+                        if (key.key == .escape and key.action.just_pressed() and key.mod.eq(.{})) {
+                            self.focus = .status;
+                            try self.events.send(.rerender);
+                        }
+                    },
+                    .mouse => |key| {
+                        _ = key;
+                        // std.log.debug("got mouse input event: {any}", .{key});
+                    },
+                    .focus => |e| {
+                        _ = e;
+                        // std.log.debug("got focus event: {any}", .{e});
+                    },
+                    .unsupported => {},
+                }
+
+                if (self.focus == .status) switch (input) {
+                    .key => |key| {
                         if (key.key == 'q') {
                             try self.events.send(.quit);
                         }
@@ -334,35 +375,10 @@ pub const App = struct {
                         if (key.key == ':' and key.action.just_pressed() and key.mod.eq(.{ .shift = true })) {
                             self.focus = .command;
                             try self.events.send(.rerender);
-                        }
-
-                        if (comptime builtin.mode == .Debug) {
-                            if (key.action.just_pressed() and key.mod.eq(.{ .ctrl = true })) switch (key.key) {
-                                '1' => try self.term.tty.writeAll(term_mod.codes.kitty.disable_input_protocol),
-                                '2' => try self.term.tty.writeAll(term_mod.codes.focus.disable),
-                                '3' => try self.term.tty.writeAll(term_mod.codes.mouse.disable_any_event ++ term_mod.codes.mouse.disable_sgr_mouse_mode),
-                                else => {},
-                            };
-                            if (key.action.just_pressed() and key.mod.eq(.{})) switch (key.key) {
-                                '1' => try self.term.tty.writeAll(term_mod.codes.kitty.enable_input_protocol),
-                                '2' => try self.term.tty.writeAll(term_mod.codes.focus.enable),
-                                '3' => try self.term.tty.writeAll(term_mod.codes.mouse.enable_any_event ++ term_mod.codes.mouse.enable_sgr_mouse_mode),
-                                else => {},
-                            };
-                        }
-                    },
-                    .functional => |key| {
-                        // _ = key;
-                        // std.log.debug("got input event: {any}", .{key});
-
-                        if (key.key == .escape and key.action.just_pressed() and key.mod.eq(.{})) {
-                            self.focus = .status;
-                            try self.events.send(.rerender);
+                            self.command_text.clearRetainingCapacity();
                         }
                     },
                     .mouse => |key| {
-                        // std.log.debug("got mouse input event: {any}", .{key});
-
                         if (key.key == .scroll_down and key.action.pressed() and key.mod.eq(.{})) {
                             self.y += 1;
                             try self.events.send(.rerender);
@@ -376,12 +392,33 @@ pub const App = struct {
                             try self.request_jj();
                         }
                     },
-                    .focus => |e| {
-                        // _ = e;
-                        std.log.debug("got focus event: {any}", .{e});
+                    else => {},
+                };
+
+                if (self.focus == .command) switch (input) {
+                    .key => |key| {
+                        if (key.action.pressed() and (key.mod.eq(.{ .shift = true }) or key.mod.eq(.{}))) {
+                            try self.command_text.append(cast(u8, key.key));
+                            try self.events.send(.rerender);
+                        }
                     },
-                    .unsupported => {},
-                }
+                    .functional => |key| {
+                        if (key.key == .backspace and key.action.pressed() and key.mod.eq(.{})) {
+                            _ = self.command_text.pop();
+                            try self.events.send(.rerender);
+                        }
+                        if (key.key == .backspace and key.action.pressed() and key.mod.eq(.{ .alt = true })) {
+                            _ = self.command_text.pop();
+                            while (self.command_text.pop()) |_| {
+                                if (self.command_text.getLastOrNull() == ' ') {
+                                    break;
+                                }
+                            }
+                            try self.events.send(.rerender);
+                        }
+                    },
+                    else => {},
+                };
             },
             .jj => |res| switch (res.req) {
                 .status => {
@@ -490,6 +527,7 @@ pub const App = struct {
                 try command.clear();
                 try command.draw_border(term_mod.border.rounded);
                 try command.draw_border_heading(" Command ");
+                try command.draw_buf(self.command_text.items);
             }
         }
         try self.term.flush_writes();

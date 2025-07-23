@@ -42,12 +42,18 @@ const Surface = struct {
         try self.term.clear_region(self.region);
     }
 
+    fn is_full(self: *@This()) bool {
+        return !self.region.contains_y(self.region.origin.y + self.y);
+    }
+
     fn draw_border(self: *@This(), borders: anytype) !void {
         self.border = true;
         try self.term.draw_border(self.region, borders);
     }
 
     fn draw_buf(self: *@This(), buf: []const u8) !void {
+        if (self.is_full()) return;
+
         self.y = @max(0, self.y);
         self.y_scroll = @max(0, self.y_scroll);
         const res = try self.term.draw_buf(
@@ -399,6 +405,8 @@ pub const App = struct {
                     try self.diffcache.put(change.change.hash, .{});
                     try self.jj.requests.send(.{ .diff = change.change });
                 }
+            } else if (self.y + n < i) {
+                break;
             }
             i += 1;
         }
@@ -434,6 +442,7 @@ pub const App = struct {
                     continue;
                 }
                 try status.draw_buf(change.buf);
+                if (status.is_full()) break;
             }
 
             if (self.diffcache.getPtr(self.focused_change.hash)) |cdiff| if (cdiff.diff) |diff| {

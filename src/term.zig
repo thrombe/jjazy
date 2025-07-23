@@ -928,7 +928,18 @@ pub const Term = struct {
         if (_x) |x| if (_y) |y| if (in_region.contains_vec(.{ .x = x, .y = y })) try self.draw_at(.{ .x = x, .y = y }, border.cross.nwse);
     }
 
-    pub fn draw_buf(self: *@This(), buf: []const u8, region: Region, y_offset: i32, y_skip: u32) !struct { y: i32, skipped: i32 } {
+    pub fn draw_buf(
+        self: *@This(),
+        buf: []const u8,
+        region: Region,
+        y_offset: i32,
+        x_offset: i32,
+        y_skip: u32,
+    ) !struct {
+        x: i32,
+        y: i32,
+        skipped: i32,
+    } {
         const out = self.screen.clamp(region.clamp(.{
             .origin = region.origin.add(.{ .y = y_offset }),
             .size = region.size.sub(.{ .y = y_offset }),
@@ -937,6 +948,7 @@ pub const Term = struct {
         const range_y = out.range_y();
 
         var last_y: i32 = y_offset;
+        var last_x: i32 = out.origin.x + x_offset;
         var skipped: i32 = 0;
 
         var line_it = utils_mod.LineIterator{ .buf = buf };
@@ -945,13 +957,13 @@ pub const Term = struct {
             _ = line_it.next();
         }
 
+        var line = line_it.next();
         for (@intCast(range_y.begin)..@intCast(range_y.end)) |y| {
-            const line = line_it.next() orelse break;
-            try self.cursor_move(.{ .y = cast(i32, y), .x = out.origin.x });
+            _ = line orelse break;
+            try self.cursor_move(.{ .y = cast(i32, y), .x = last_x });
 
-            var codepoint_it = try TermStyledGraphemeIterator.init(line);
+            var codepoint_it = try TermStyledGraphemeIterator.init(line.?);
 
-            var x: i32 = out.origin.x;
             while (try codepoint_it.next()) |token| {
                 // execute all control chars
                 // but don't print beyond the size
@@ -959,16 +971,18 @@ pub const Term = struct {
                     if (codepoint != .erase_in_line) {
                         try self.writer().writeAll(token.grapheme);
                     }
-                } else if (x <= end.x) {
+                } else if (last_x <= end.x) {
                     try self.writer().writeAll(token.grapheme);
-                    x += 1;
+                    last_x += 1;
                 }
             }
 
+            line = line_it.next() orelse break;
+            last_x = out.origin.x;
             last_y += 1;
         }
 
-        return .{ .y = last_y, .skipped = skipped };
+        return .{ .x = last_x - out.origin.x, .y = last_y, .skipped = skipped };
     }
 
     pub fn update_size(self: *@This()) !void {

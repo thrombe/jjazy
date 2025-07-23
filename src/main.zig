@@ -14,6 +14,7 @@ const jj_mod = @import("jj.zig");
 const Surface = struct {
     border: bool = false,
     y: i32 = 0,
+    x: i32 = 0,
     y_scroll: i32 = 0,
     region: lay_mod.Region,
     term: *term_mod.Term,
@@ -46,6 +47,10 @@ const Surface = struct {
         return !self.region.contains_y(self.region.origin.y + self.y);
     }
 
+    fn new_line(self: *@This()) !void {
+        try self.draw_buf("\n\n");
+    }
+
     fn draw_border(self: *@This(), borders: anytype) !void {
         self.border = true;
         try self.term.draw_border(self.region, borders);
@@ -61,7 +66,7 @@ const Surface = struct {
                 .x = self.region.size.x - 2,
                 .y = self.region.size.y,
             },
-        }), 0, 0);
+        }), 0, 0, 0);
     }
 
     fn draw_buf(self: *@This(), buf: []const u8) !void {
@@ -73,9 +78,11 @@ const Surface = struct {
             buf,
             self.region.border_sub(.splat(@intFromBool(self.border))),
             self.y,
+            self.x,
             cast(u32, self.y_scroll),
         );
         self.y = res.y;
+        self.x = res.x;
         self.y_scroll -= res.skipped;
     }
 
@@ -376,6 +383,7 @@ pub const App = struct {
                             self.focus = .command;
                             try self.events.send(.rerender);
                             self.command_text.clearRetainingCapacity();
+                            continue;
                         }
                     },
                     .mouse => |key| {
@@ -508,6 +516,7 @@ pub const App = struct {
                     continue;
                 }
                 try status.draw_buf(change.buf);
+                try status.new_line();
                 if (status.is_full()) break;
             }
 
@@ -528,6 +537,9 @@ pub const App = struct {
                 try command.draw_border(term_mod.border.rounded);
                 try command.draw_border_heading(" Command ");
                 try command.draw_buf(self.command_text.items);
+                try command.draw_buf("\x1B[7m");
+                try command.draw_buf(" ");
+                try command.draw_buf("\x1B[0m");
             }
         }
         try self.term.flush_writes();

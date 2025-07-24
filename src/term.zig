@@ -4,6 +4,8 @@ const builtin = @import("builtin");
 const utils_mod = @import("utils.zig");
 const cast = utils_mod.cast;
 
+const math_mod = @import("math.zig");
+
 const lay_mod = @import("lay.zig");
 const Vec2 = lay_mod.Vec2;
 const Region = lay_mod.Region;
@@ -208,7 +210,7 @@ pub const TermStyledGraphemeIterator = struct {
                             .background_color => @as(u32, v) + 40,
                             else => unreachable,
                         }}),
-                        else => return,
+                        else => {},
                     }
 
                     switch (self) {
@@ -217,13 +219,9 @@ pub const TermStyledGraphemeIterator = struct {
                         else => unreachable,
                     }
                     switch (col) {
-                        .bit3 => |v| try writer.print(";{d}m", .{switch (self) {
-                            .foreground_color => @as(u32, v) + 30,
-                            .background_color => @as(u32, v) + 40,
-                            else => unreachable,
-                        }}),
                         .bit8 => |v| try writer.print(";5;{d}m", .{v}),
                         .bit24 => |v| try writer.print(";2;{d};{d};{d}m", .{ v[0], v[1], v[2] }),
+                        else => unreachable,
                     }
                 },
                 .double_underline, .normal_intensity, .not_supported => {},
@@ -245,6 +243,32 @@ pub const TermStyledGraphemeIterator = struct {
                 } },
                 else => return null,
             }
+        }
+
+        pub fn from_hex(comptime hex: []const u8) @This() {
+            const col = math_mod.ColorParse.hex_u8rgba(struct { r: u8, g: u8, b: u8, a: u8 }, hex);
+            return .{ .bit24 = [3]u8{ col.r, col.g, col.b } };
+        }
+
+        pub fn from_theme(t: enum(u8) {
+            default_background = 0,
+            errors = 1,
+            success = 2,
+            warnings = 3,
+            info = 4,
+            alt_info = 5,
+            status = 6,
+            default_foreground = 7,
+            dim_text = 8,
+            bright_errors = 9,
+            bright_success = 10,
+            bright_warnings = 11,
+            bright_info = 12,
+            bright_alt_info = 13,
+            bright_status = 14,
+            max_contrast = 15,
+        }) @This() {
+            return .{ .bit8 = @intFromEnum(t) };
         }
     };
 

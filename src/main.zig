@@ -44,8 +44,12 @@ const Surface = struct {
         try self.term.clear_region(self.region);
     }
 
-    fn is_full(self: *@This()) bool {
+    fn is_y_out(self: *@This()) bool {
         return !self.region.contains_y(self.region.origin.y + self.y);
+    }
+
+    fn is_x_out(self: *@This()) bool {
+        return !self.region.contains_x(self.region.origin.x + self.x);
     }
 
     fn new_line(self: *@This()) !void {
@@ -75,7 +79,7 @@ const Surface = struct {
     }
 
     fn draw_buf(self: *@This(), buf: []const u8) !void {
-        if (self.is_full()) return;
+        if (self.is_y_out()) return;
 
         self.y = @max(0, self.y);
         self.y_scroll = @max(0, self.y_scroll);
@@ -632,7 +636,21 @@ pub const App = struct {
             // try status.draw_border(border.rounded);
 
             var bar = try status.split_y(-1, .none);
-            try bar.draw_buf(try std.fmt.allocPrint(self.arena.allocator(), " huh does this work?  ", .{}));
+            try bar.apply_style(.{ .background_color = .from_theme(.default_foreground) });
+            try bar.apply_style(.{ .foreground_color = .from_theme(.default_background) });
+            try bar.apply_style(.bold);
+            try bar.draw_buf(" NORMAL ");
+            var j: u8 = 0;
+            while (!bar.is_x_out()) {
+                if (j < 16) {
+                    try bar.apply_style(.{ .background_color = .{ .bit8 = j } });
+                } else if (j == 16) {
+                    try bar.apply_style(.{ .background_color = .from_theme(.default_background) });
+                }
+                try bar.draw_buf(" ");
+                j += 1;
+            }
+            try bar.apply_style(.reset);
 
             var diffs = try status.split_x(cast(i32, cast(f32, status.size().x) * self.x_split), .border);
 
@@ -655,7 +673,7 @@ pub const App = struct {
 
                 try status.draw_buf(change.buf);
                 try status.new_line();
-                if (status.is_full()) break;
+                if (status.is_y_out()) break;
             }
             if (self.y >= i) {
                 self.skip_y += 1;

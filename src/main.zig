@@ -57,6 +57,10 @@ const Surface = struct {
         try self.term.draw_border(self.region, borders);
     }
 
+    fn apply_style(self: *@This(), style: term_mod.TermStyledGraphemeIterator.Style) !void {
+        try style.write_to(self.term.writer());
+    }
+
     fn draw_border_heading(self: *@This(), heading: []const u8) !void {
         _ = try self.term.draw_buf(heading, self.region.clamp(.{
             .origin = .{
@@ -210,13 +214,13 @@ pub const TextInput = struct {
 
     fn draw(self: *const @This(), surf: *Surface) !void {
         try surf.draw_buf(self.text.items[0..self.cursor]);
-        try surf.draw_buf(codes.style.invert);
+        try surf.apply_style(.invert);
         if (self.text.items.len > self.cursor) {
             try surf.draw_buf(self.text.items[self.cursor..][0..1]);
         } else {
             try surf.draw_buf(" ");
         }
-        try surf.draw_buf(codes.style.reset);
+        try surf.apply_style(.reset);
         if (self.text.items.len > self.cursor + 1) {
             try surf.draw_buf(self.text.items[self.cursor + 1 ..]);
         }

@@ -184,6 +184,51 @@ pub const TermStyledGraphemeIterator = struct {
         background_color: Color,
 
         not_supported,
+
+        pub fn write_to(self: @This(), writer: anytype) !void {
+            switch (self) {
+                .reset => try writer.print("\x1B[0m", .{}),
+                .bold => try writer.print("\x1B[1m", .{}),
+                .faint => try writer.print("\x1B[2m", .{}),
+                .italic => try writer.print("\x1B[3m", .{}),
+                .underline => try writer.print("\x1B[4m", .{}),
+                .slow_blink => try writer.print("\x1B[5m", .{}),
+                .rapid_blink => try writer.print("\x1B[6m", .{}),
+                .invert => try writer.print("\x1B[7m", .{}),
+                .hide => try writer.print("\x1B[8m", .{}),
+                .strike => try writer.print("\x1B[9m", .{}),
+                .font_default => try writer.print("\x1B[10m", .{}),
+                .alt_font => |alt| try writer.print("\x1B[{d}m", .{alt + 1}),
+                .default_foreground_color => try writer.print("\x1B[39m", .{}),
+                .default_background_color => try writer.print("\x1B[49m", .{}),
+                .foreground_color, .background_color => |col| {
+                    switch (col) {
+                        .bit3 => |v| try writer.print("\x1B[{d}m", .{switch (self) {
+                            .foreground_color => @as(u32, v) + 30,
+                            .background_color => @as(u32, v) + 40,
+                            else => unreachable,
+                        }}),
+                        else => return,
+                    }
+
+                    switch (self) {
+                        .foreground_color => try writer.print("\x1B[38", .{}),
+                        .background_color => try writer.print("\x1B[48", .{}),
+                        else => unreachable,
+                    }
+                    switch (col) {
+                        .bit3 => |v| try writer.print(";{d}m", .{switch (self) {
+                            .foreground_color => @as(u32, v) + 30,
+                            .background_color => @as(u32, v) + 40,
+                            else => unreachable,
+                        }}),
+                        .bit8 => |v| try writer.print(";5;{d}m", .{v}),
+                        .bit24 => |v| try writer.print(";2;{d};{d};{d}m", .{ v[0], v[1], v[2] }),
+                    }
+                },
+                .double_underline, .normal_intensity, .not_supported => {},
+            }
+        }
     };
     pub const Color = union(enum) {
         bit3: u3,

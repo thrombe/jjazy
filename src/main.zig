@@ -391,6 +391,12 @@ pub const App = struct {
     fn event_loop(self: *@This()) !void {
         try self.events.send(.rerender);
 
+        if (comptime builtin.mode == .Debug) {
+            try self.term.tty.writeAll(codes.kitty.disable_input_protocol);
+            try self.term.tty.writeAll(codes.focus.disable);
+            try self.term.tty.writeAll(codes.mouse.disable_any_event ++ codes.mouse.disable_sgr_mouse_mode);
+        }
+
         while (self.events.wait_recv()) |event| switch (event) {
             .quit => return,
             .err => |err| return err,

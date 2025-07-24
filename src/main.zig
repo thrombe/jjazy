@@ -128,6 +128,101 @@ const Surface = struct {
     }
 };
 
+pub const TextInput = struct {
+    cursor: u32 = 0,
+    text: std.ArrayList(u8),
+
+    fn init(alloc: std.mem.Allocator) @This() {
+        return .{ .text = .init(alloc) };
+    }
+
+    fn deinit(self: *@This()) void {
+        self.text.deinit();
+    }
+
+    fn reset(self: *@This()) void {
+        self.cursor = 0;
+        self.text.clearRetainingCapacity();
+    }
+
+    fn left(self: *@This()) void {
+        self.cursor -|= 1;
+    }
+
+    fn right(self: *@This()) void {
+        self.cursor += 1;
+        if (self.cursor > self.text.items.len) {
+            self.cursor = cast(u32, self.text.items.len);
+        }
+    }
+
+    fn left_word(self: *@This()) void {
+        self.left();
+        while (true) {
+            if (' ' == self.peek_back() orelse return) {
+                return;
+            } else {
+                self.left();
+            }
+        }
+    }
+
+    fn right_word(self: *@This()) void {
+        self.right();
+        while (true) {
+            if (' ' == self.peek() orelse return) {
+                return;
+            } else {
+                self.right();
+            }
+        }
+    }
+
+    fn write(self: *@This(), byte: u8) !void {
+        try self.text.insert(self.cursor, byte);
+        self.cursor += 1;
+    }
+
+    fn peek(self: *@This()) ?u8 {
+        if (self.text.items.len > self.cursor) {
+            return self.text.items[self.cursor];
+        } else {
+            return null;
+        }
+    }
+
+    fn peek_back(self: *@This()) ?u8 {
+        if (self.text.items.len >= self.cursor and self.cursor > 0) {
+            return self.text.items[self.cursor - 1];
+        } else {
+            return null;
+        }
+    }
+
+    fn back(self: *@This()) ?u8 {
+        if (self.text.items.len >= self.cursor and self.cursor > 0) {
+            defer self.cursor -= 1;
+            return self.text.orderedRemove(self.cursor - 1);
+        } else {
+            return null;
+        }
+    }
+
+    fn draw(self: *const @This(), surf: *Surface) !void {
+        try surf.draw_buf(self.text.items[0..self.cursor]);
+        try surf.draw_buf(codes.style.invert);
+        if (self.text.items.len > self.cursor) {
+            try surf.draw_buf(self.text.items[self.cursor..][0..1]);
+        } else {
+            try surf.draw_buf(" ");
+        }
+        try surf.draw_buf(codes.style.reset);
+        if (self.text.items.len > self.cursor + 1) {
+            try surf.draw_buf(self.text.items[self.cursor + 1 ..]);
+        }
+    }
+};
+
 pub const App = struct {
     term: term_mod.Term,
 
@@ -148,7 +243,7 @@ pub const App = struct {
     changes: jj_mod.ChangeIterator,
     diffcache: DiffCache,
     focused_change: jj_mod.Change = .{},
-    command_text: std.ArrayList(u8),
+    command_text: TextInput,
 
     focus: enum {
         status,
@@ -383,7 +478,7 @@ pub const App = struct {
                         if (key.key == ':' and key.action.just_pressed() and key.mod.eq(.{ .shift = true })) {
                             self.focus = .command;
                             try self.events.send(.rerender);
-                            self.command_text.clearRetainingCapacity();
+                            self.command_text.reset();
                             continue;
                         }
                     },
@@ -407,21 +502,38 @@ pub const App = struct {
                 if (self.focus == .command) switch (input) {
                     .key => |key| {
                         if (key.action.pressed() and (key.mod.eq(.{ .shift = true }) or key.mod.eq(.{}))) {
-                            try self.command_text.append(cast(u8, key.key));
+                            try self.command_text.write(cast(u8, key.key));
                             try self.events.send(.rerender);
                         }
                     },
                     .functional => |key| {
+                        if (key.key == .left and key.action.pressed() and key.mod.eq(.{})) {
+                            self.command_text.left();
+                            try self.events.send(.rerender);
+                        }
+                        if (key.key == .right and key.action.pressed() and key.mod.eq(.{})) {
+                            self.command_text.right();
+                            try self.events.send(.rerender);
+                        }
+                        if (key.key == .left and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
+                            self.command_text.left_word();
+                            try self.events.send(.rerender);
+                        }
+                        if (key.key == .right and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
+                            self.command_text.right_word();
+                            try self.events.send(.rerender);
+                        }
                         if (key.key == .backspace and key.action.pressed() and key.mod.eq(.{})) {
-                            _ = self.command_text.pop();
+                            _ = self.command_text.back();
                             try self.events.send(.rerender);
                         }
                         if (key.key == .backspace and key.action.pressed() and key.mod.eq(.{ .alt = true })) {
-                            _ = self.command_text.pop();
-                            while (self.command_text.pop()) |_| {
-                                if (self.command_text.getLastOrNull() == ' ') {
+                            _ = self.command_text.back();
+                            while (true) {
+                                if (' ' == self.command_text.peek_back() orelse break) {
                                     break;
                                 }
+                                _ = self.command_text.back();
                             }
                             try self.events.send(.rerender);
                         }
@@ -537,10 +649,8 @@ pub const App = struct {
                 try command.clear();
                 try command.draw_border(term_mod.border.rounded);
                 try command.draw_border_heading(" Command ");
-                try command.draw_buf(self.command_text.items);
-                try command.draw_buf(codes.style.invert);
-                try command.draw_buf(" ");
-                try command.draw_buf(codes.style.reset);
+
+                try self.command_text.draw(&command);
             }
         }
         try self.term.flush_writes();

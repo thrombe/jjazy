@@ -243,6 +243,7 @@ pub const App = struct {
 
     x_split: f32 = 0.55,
     y: i32 = 0,
+    skip_y: i32 = 0,
     status: []const u8,
     changes: jj_mod.ChangeIterator,
     diffcache: DiffCache,
@@ -620,6 +621,9 @@ pub const App = struct {
         defer _ = self.arena.reset(.retain_capacity);
         self.y = @max(0, self.y);
         self.x_split = @min(@max(0.0, self.x_split), 1.0);
+        if (self.skip_y > self.y) {
+            self.skip_y = self.y;
+        }
 
         try self.term.update_size();
         {
@@ -631,16 +635,31 @@ pub const App = struct {
             try bar.draw_buf(try std.fmt.allocPrint(self.arena.allocator(), " huh does this work?  ", .{}));
 
             var diffs = try status.split_x(cast(i32, cast(f32, status.size().x) * self.x_split), .border);
-            var skip = self.y;
+
+            var gutter = try status.split_x(3, .none);
+            std.mem.swap(@TypeOf(status), &status, &gutter);
+
+            var i: i32 = 0;
             self.changes.reset(self.status);
             while (try self.changes.next()) |change| {
-                if (skip > 0) {
-                    skip -= 1;
+                defer i += 1;
+                if (self.skip_y > i) {
                     continue;
                 }
+
+                if (i == self.y) {
+                    try gutter.draw_buf("->");
+                }
+                try gutter.new_line();
+                try gutter.new_line();
+
                 try status.draw_buf(change.buf);
                 try status.new_line();
                 if (status.is_full()) break;
+            }
+            if (self.y >= i) {
+                self.skip_y += 1;
+                try self.events.send(.rerender);
             }
 
             if (self.diffcache.getPtr(self.focused_change.hash)) |cdiff| if (cdiff.diff) |diff| {

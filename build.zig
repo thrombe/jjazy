@@ -16,10 +16,13 @@ pub fn build(b: *std.Build) void {
     const exe = b.addExecutable(.{
         .name = "jjazy",
         .root_module = exe_mod,
-        .use_llvm = switch (optimize) {
-            .Debug => false,
-            else => null,
-        },
+
+        // debugger does not understand whatever zig generates
+        // very well yet :/
+        // .use_llvm = switch (optimize) {
+        //     .Debug => false,
+        //     else => null,
+        // },
     });
 
     b.installArtifact(exe);

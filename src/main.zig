@@ -630,6 +630,21 @@ pub const App = struct {
                         }
                     },
                     .functional => |key| {
+                        if (key.key == .enter and key.action.pressed() and key.mod.eq(.{})) {
+                            defer _ = self.arena.reset(.retain_capacity);
+                            const temp = self.arena.allocator();
+                            var args = std.ArrayList([]const u8).init(temp);
+
+                            // TODO: support parsing and passing "string" and 'string' with \" \' and spaces properly
+                            var arg_it = std.mem.splitAny(u8, self.command_text.text.items, &std.ascii.whitespace);
+                            while (arg_it.next()) |arg| {
+                                try args.append(arg);
+                            }
+
+                            try self.execute_command_inline(args.items);
+                            self.command_text.reset();
+                            self.focus = .status;
+                        }
                         if (key.key == .left and key.action.pressed() and key.mod.eq(.{})) {
                             self.command_text.left();
                             try self.events.send(.rerender);
@@ -811,14 +826,14 @@ pub const App = struct {
 
     fn execute_command_inline(self: *@This(), args: []const []const u8) !void {
         try self.restore_terminal_for_command();
-        self.execute_command(args) catch |e| switch (e) {
+        self._execute_command(args) catch |e| switch (e) {
             error.SomeErrorMan => {},
             else => return e,
         };
         try self.uncook_terminal();
     }
 
-    fn execute_command(self: *@This(), args: []const []const u8) !void {
+    fn _execute_command(self: *@This(), args: []const []const u8) !void {
         var child = std.process.Child.init(args, self.alloc);
         try child.spawn();
         const err = try child.wait();

@@ -28,30 +28,13 @@
       flakePackage = flake: package: flake.packages."${system}"."${package}";
       flakeDefaultPackage = flake: flakePackage flake "default";
 
-      # - [zig-overlay/sources.json](https://github.com/mitchellh/zig-overlay/blob/main/sources.json)
-      zig-env = inputs.zig2nix.zig-env.${system};
-      zigv = pkgs.callPackage "${inputs.zig2nix}/zig.nix" rec {
-        zigSystem = (zig-env {}).lib.zigDoubleFromString system;
-        zigHook = (zig-env {}).zig-hook;
-        # - [get info from](https://machengine.org/zig/index.json)
-        version = "0.14.0";
-        release = {
-          "version" = version;
-          "x86_64-linux" = {
-            "shasum" = "sha256-Rz7CaAYTPPTRkYyvGkEPhAOhPZeXJqkEW0IbaFAxqYI=";
-            "size" = "";
-            "zigTarball" = "https://pkg.machengine.org/zig/zig-linux-x86_64-${version}.tar.xz";
-            "tarball" = "https://ziglang.org/builds/zig-linux-x86_64-${version}.tar.xz";
-          };
-        };
-      };
       overlays = [
         (self: super: rec {
-          zig = zigv.bin;
-          zls = (flakePackage inputs.zls "zls").overrideAttrs (old: {
-            nativeBuildInputs = [ zig ];
-            buildInputs = [ zig ];
-          });
+          # zig = inputs.zig2nix.outputs.packages.${system}.zig-latest;
+          # zls = (flakePackage inputs.zls "zls").overrideAttrs (old: {
+          #   nativeBuildInputs = [ zig ];
+          #   buildInputs = [ zig ];
+          # });
         })
       ];
 
@@ -86,6 +69,8 @@
 
           zls
           gdb
+
+          jujutsu
         ])
         ++ []
         ++ (custom-commands pkgs);

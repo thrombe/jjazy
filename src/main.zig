@@ -557,6 +557,14 @@ pub const App = struct {
                         if (key.key == 'e' and key.action.pressed() and key.mod.eq(.{})) {
                             try self.jj.requests.send(.{ .edit = self.log.focused_change });
                         }
+                        if (key.key == 's' and key.action.pressed() and key.mod.eq(.{})) {
+                            try self.execute_command_inline(&[_][]const u8{
+                                "jj",
+                                "split",
+                                "-r",
+                                self.log.focused_change.id[0..],
+                            });
+                        }
                         if (key.key == 'D' and key.action.pressed() and key.mod.eq(.{ .shift = true })) {
                             try self.execute_command_inline(&[_][]const u8{
                                 "jj",

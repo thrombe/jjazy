@@ -200,6 +200,7 @@ pub const TermStyledGraphemeIterator = struct {
                 .hide => try writer.print("\x1B[8m", .{}),
                 .strike => try writer.print("\x1B[9m", .{}),
                 .font_default => try writer.print("\x1B[10m", .{}),
+                .normal_intensity => try writer.print("\x1B[22m", .{}),
                 .alt_font => |alt| try writer.print("\x1B[{d}m", .{alt + 1}),
                 .default_foreground_color => try writer.print("\x1B[39m", .{}),
                 .default_background_color => try writer.print("\x1B[49m", .{}),
@@ -224,7 +225,7 @@ pub const TermStyledGraphemeIterator = struct {
                         else => unreachable,
                     }
                 },
-                .double_underline, .normal_intensity, .not_supported => {},
+                .double_underline, .not_supported => {},
             }
         }
     };
@@ -338,6 +339,7 @@ pub const TermStyledGraphemeIterator = struct {
                                 9 => style.consume(.strike),
                                 10 => style.consume(.font_default),
                                 11...19 => style.consume(.{ .alt_font = cast(u3, n.? - 11) }),
+                                22 => style.consume(.normal_intensity),
 
                                 39 => style.consume(.default_foreground_color),
                                 49 => style.consume(.default_background_color),
@@ -348,7 +350,7 @@ pub const TermStyledGraphemeIterator = struct {
                                 38 => style.consume(.{ .foreground_color = Color.from_params(m, r, g, b) orelse return error.BadColorParams }),
                                 48 => style.consume(.{ .background_color = Color.from_params(m, r, g, b) orelse return error.BadColorParams }),
 
-                                20...29, 50...107 => style.consume(.not_supported),
+                                20...21, 23...29, 50...107 => style.consume(.not_supported),
                                 else => {},
                             }
 

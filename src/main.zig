@@ -627,7 +627,9 @@ pub const App = struct {
     }
 
     fn render(self: *@This()) !void {
+        const temp = self.arena.allocator();
         defer _ = self.arena.reset(.retain_capacity);
+
         self.y = @max(0, self.y);
         self.x_split = @min(@max(0.0, self.x_split), 1.0);
         if (self.skip_y > self.y) {
@@ -645,6 +647,7 @@ pub const App = struct {
             try bar.apply_style(.{ .foreground_color = .from_theme(.default_background) });
             try bar.apply_style(.bold);
             try bar.draw_buf(" NORMAL ");
+            try bar.apply_style(.normal_intensity);
             var j: u8 = 0;
             while (!bar.is_full()) {
                 if (j < 16) {
@@ -652,7 +655,7 @@ pub const App = struct {
                 } else if (j == 16) {
                     try bar.apply_style(.{ .background_color = .from_theme(.default_background) });
                 }
-                try bar.draw_buf(" ");
+                try bar.draw_buf(try std.fmt.allocPrint(temp, "{d:0>2}", .{j}));
                 j += 1;
             }
             try bar.apply_style(.reset);
@@ -728,34 +731,3 @@ pub fn main() !void {
 
     try app.event_loop();
 }
-
-// pub fn main1() !void {
-//     var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
-//     defer _ = gpa.deinit();
-//     const alloc = gpa.allocator();
-
-//     while (true) {
-//         var buf = std.mem.zeroes([1]u8);
-
-//         if (buf[0] == 'q') {
-//             return;
-//         } else if (buf[0] == '\x1B') {
-//             term.raw.?.cc[@intCast(@intFromEnum(std.posix.V.TIME))] = 1;
-//             term.raw.?.cc[@intCast(@intFromEnum(std.posix.V.MIN))] = 0;
-//             try std.posix.tcsetattr(term.tty.handle, .NOW, term.raw.?);
-
-//             var esc_buf: [8]u8 = undefined;
-//             const esc_read = try term.tty.read(&esc_buf);
-
-//             term.raw.?.cc[@intCast(@intFromEnum(std.posix.V.TIME))] = 0;
-//             term.raw.?.cc[@intCast(@intFromEnum(std.posix.V.MIN))] = 1;
-//             try std.posix.tcsetattr(term.tty.handle, .NOW, term.raw.?);
-
-//             if (std.mem.eql(u8, esc_buf[0..esc_read], "[A")) {
-//                 term.i -|= 1;
-//             } else if (std.mem.eql(u8, esc_buf[0..esc_read], "[B")) {
-//                 term.i = @min(term.i + 1, 3);
-//             }
-//         }
-//     }
-// }

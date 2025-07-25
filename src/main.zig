@@ -242,8 +242,10 @@ const LogSlate = struct {
     status: []const u8,
     changes: jj_mod.ChangeIterator,
     focused_change: jj_mod.Change = .{},
+    alloc: std.mem.Allocator,
 
     fn deinit(self: *@This()) void {
+        self.alloc.free(self.status);
         self.changes.deinit();
     }
 
@@ -390,6 +392,7 @@ pub const App = struct {
                 .diffcache = .init(alloc),
             },
             .log = .{
+                .alloc = alloc,
                 .status = &.{},
                 .changes = .init(alloc, &[_]u8{}),
             },
@@ -704,22 +707,30 @@ pub const App = struct {
     fn render_status_bar(self: *@This(), surface: *Surface) !void {
         const temp = self.arena.allocator();
 
-        try surface.apply_style(.{ .background_color = .from_theme(.default_foreground) });
-        try surface.apply_style(.{ .foreground_color = .from_theme(.default_background) });
-        try surface.apply_style(.bold);
-        try surface.draw_buf(" NORMAL ");
-        try surface.apply_style(.normal_intensity);
-        var j: u8 = 0;
-        while (!surface.is_full()) {
-            if (j < 16) {
-                try surface.apply_style(.{ .background_color = .{ .bit8 = j } });
-            } else if (j == 16) {
-                try surface.apply_style(.{ .background_color = .from_theme(.default_background) });
+        {
+            var colors = try surface.split_x(-32, .none);
+
+            try colors.apply_style(.{ .foreground_color = .from_theme(.default_background) });
+            var j: u8 = 0;
+            while (!colors.is_full()) {
+                if (j < 16) {
+                    try colors.apply_style(.{ .background_color = .{ .bit8 = j } });
+                } else if (j == 16) {
+                    try colors.apply_style(.{ .background_color = .from_theme(.default_background) });
+                }
+                try colors.draw_buf(try std.fmt.allocPrint(temp, "{d:0>2}", .{j}));
+                j += 1;
             }
-            try surface.draw_buf(try std.fmt.allocPrint(temp, "{d:0>2}", .{j}));
-            j += 1;
+            try colors.apply_style(.reset);
         }
-        try surface.apply_style(.reset);
+
+        {
+            try surface.apply_style(.{ .background_color = .from_theme(.default_foreground) });
+            try surface.apply_style(.{ .foreground_color = .from_theme(.default_background) });
+            try surface.apply_style(.bold);
+            try surface.draw_buf(" NORMAL ");
+            try surface.apply_style(.reset);
+        }
     }
 
     fn render_command_input(self: *@This()) !void {

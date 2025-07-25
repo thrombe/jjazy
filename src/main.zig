@@ -236,6 +236,90 @@ pub const TextInput = struct {
     }
 };
 
+const LogSlate = struct {
+    y: i32 = 0,
+    skip_y: i32 = 0,
+    status: []const u8,
+    changes: jj_mod.ChangeIterator,
+    focused_change: jj_mod.Change = .{},
+
+    fn deinit(self: *@This()) void {
+        self.changes.deinit();
+    }
+
+    fn render(self: *@This(), surface: *Surface, events: *utils_mod.Channel(App.Event)) !void {
+        self.y = @max(0, self.y);
+        if (self.skip_y > self.y) {
+            self.skip_y = self.y;
+        }
+
+        var gutter = try surface.split_x(3, .none);
+        std.mem.swap(Surface, surface, &gutter);
+
+        var i: i32 = 0;
+        self.changes.reset(self.status);
+        while (try self.changes.next()) |change| {
+            defer i += 1;
+            if (self.skip_y > i) {
+                continue;
+            }
+
+            if (i == self.y) {
+                try gutter.draw_buf("->");
+            }
+            try gutter.new_line();
+            try gutter.new_line();
+
+            try surface.draw_buf(change.buf);
+            try surface.new_line();
+            if (surface.is_full()) break;
+        }
+        if (self.y >= i) {
+            self.skip_y += 1;
+            try events.send(.rerender);
+        }
+    }
+};
+
+const DiffSlate = struct {
+    alloc: std.mem.Allocator,
+    diffcache: DiffCache,
+
+    const Hash = jj_mod.Change.Hash;
+    const CachedDiff = struct {
+        y: i32 = 0,
+        diff: ?[]const u8 = null,
+    };
+    const DiffCache = std.HashMap(Hash, CachedDiff, struct {
+        pub fn hash(self: @This(), s: Hash) u64 {
+            _ = self;
+            return std.hash_map.StringContext.hash(.{}, s[0..]);
+        }
+        pub fn eql(self: @This(), a: Hash, b: Hash) bool {
+            _ = self;
+            return std.hash_map.StringContext.eql(.{}, a[0..], b[0..]);
+        }
+    }, std.hash_map.default_max_load_percentage);
+
+    fn deinit(self: *@This()) void {
+        var it = self.diffcache.iterator();
+        while (it.next()) |e| if (e.value_ptr.diff) |diff| {
+            self.alloc.free(diff);
+        };
+        self.diffcache.deinit();
+    }
+
+    fn render(self: *@This(), surface: *Surface, focused: jj_mod.Change) !void {
+        if (self.diffcache.getPtr(focused.hash)) |cdiff| if (cdiff.diff) |diff| {
+            cdiff.y = @max(0, cdiff.y);
+            surface.y_scroll = cdiff.y;
+            try surface.draw_buf(diff);
+        } else {
+            try surface.draw_buf(" loading ... ");
+        };
+    }
+};
+
 pub const App = struct {
     term: term_mod.Term,
 
@@ -251,13 +335,10 @@ pub const App = struct {
     arena: std.heap.ArenaAllocator,
 
     x_split: f32 = 0.55,
-    y: i32 = 0,
-    skip_y: i32 = 0,
-    status: []const u8,
-    changes: jj_mod.ChangeIterator,
-    diffcache: DiffCache,
-    focused_change: jj_mod.Change = .{},
     command_text: TextInput,
+
+    diff: DiffSlate,
+    log: LogSlate,
 
     focus: enum {
         status,
@@ -273,21 +354,6 @@ pub const App = struct {
         jj: jj_mod.JujutsuServer.Response,
         err: anyerror,
     };
-
-    const CachedDiff = struct {
-        y: i32 = 0,
-        diff: ?[]const u8 = null,
-    };
-    const DiffCache = std.HashMap([8]u8, CachedDiff, struct {
-        pub fn hash(self: @This(), s: [8]u8) u64 {
-            _ = self;
-            return std.hash_map.StringContext.hash(.{}, s[0..]);
-        }
-        pub fn eql(self: @This(), a: [8]u8, b: [8]u8) bool {
-            _ = self;
-            return std.hash_map.StringContext.eql(.{}, a[0..], b[0..]);
-        }
-    }, std.hash_map.default_max_load_percentage);
 
     var app: *@This() = undefined;
 
@@ -319,9 +385,14 @@ pub const App = struct {
             .input_iterator = .{ .input = try .init(alloc) },
             .events = events,
             .jj = jj,
-            .status = &.{},
-            .changes = .init(alloc, &[_]u8{}),
-            .diffcache = .init(alloc),
+            .diff = .{
+                .alloc = alloc,
+                .diffcache = .init(alloc),
+            },
+            .log = .{
+                .status = &.{},
+                .changes = .init(alloc, &[_]u8{}),
+            },
             .command_text = .init(alloc),
             .input_thread = undefined,
         };
@@ -332,7 +403,7 @@ pub const App = struct {
             input_thread.join();
         }
 
-        try self.diffcache.put(self.focused_change.hash, .{ .diff = &.{} });
+        try self.diff.diffcache.put(self.log.focused_change.hash, .{ .diff = &.{} });
 
         self.input_thread = input_thread;
         app = self;
@@ -342,14 +413,8 @@ pub const App = struct {
     fn deinit(self: *@This()) void {
         const alloc = self.alloc;
         defer alloc.destroy(self);
-        defer self.changes.deinit();
-        defer {
-            var it = self.diffcache.iterator();
-            while (it.next()) |e| if (e.value_ptr.diff) |diff| {
-                self.alloc.free(diff);
-            };
-            self.diffcache.deinit();
-        }
+        defer self.log.deinit();
+        defer self.diff.deinit();
         defer self.command_text.deinit();
         defer self.arena.deinit();
         defer self.term.deinit();
@@ -463,25 +528,25 @@ pub const App = struct {
                             try self.events.send(.quit);
                         }
                         if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{})) {
-                            self.y += 1;
+                            self.log.y += 1;
                             try self.events.send(.rerender);
 
                             try self.request_jj();
                         }
                         if (key.key == 'k' and key.action.pressed() and key.mod.eq(.{})) {
-                            self.y -= 1;
+                            self.log.y -= 1;
                             try self.events.send(.rerender);
 
                             try self.request_jj();
                         }
                         if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
-                            if (self.diffcache.getPtr(self.focused_change.hash)) |diff| {
+                            if (self.diff.diffcache.getPtr(self.log.focused_change.hash)) |diff| {
                                 diff.y += 10;
                             }
                             try self.events.send(.rerender);
                         }
                         if (key.key == 'k' and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
-                            if (self.diffcache.getPtr(self.focused_change.hash)) |diff| {
+                            if (self.diff.diffcache.getPtr(self.log.focused_change.hash)) |diff| {
                                 diff.y -= 10;
                             }
                             try self.events.send(.rerender);
@@ -504,13 +569,13 @@ pub const App = struct {
                     },
                     .mouse => |key| {
                         if (key.key == .scroll_down and key.action.pressed() and key.mod.eq(.{})) {
-                            self.y += 1;
+                            self.log.y += 1;
                             try self.events.send(.rerender);
 
                             try self.request_jj();
                         }
                         if (key.key == .scroll_up and key.action.pressed() and key.mod.eq(.{})) {
-                            self.y -= 1;
+                            self.log.y -= 1;
                             try self.events.send(.rerender);
 
                             try self.request_jj();
@@ -563,16 +628,16 @@ pub const App = struct {
             },
             .jj => |res| switch (res.req) {
                 .status => {
-                    self.alloc.free(self.status);
+                    self.alloc.free(self.log.status);
                     switch (res.res) {
                         .ok => |buf| {
-                            self.status = buf;
-                            self.changes.reset(buf);
+                            self.log.status = buf;
+                            self.log.changes.reset(buf);
 
                             try self.request_jj();
                         },
                         .err => |buf| {
-                            self.status = buf;
+                            self.log.status = buf;
                         },
                     }
                     try self.events.send(.rerender);
@@ -580,7 +645,7 @@ pub const App = struct {
                 .diff => |req| {
                     switch (res.res) {
                         .ok, .err => |buf| {
-                            self.diffcache.getPtr(req.hash).?.diff = buf;
+                            self.diff.diffcache.getPtr(req.hash).?.diff = buf;
                         },
                     }
                     try self.events.send(.rerender);
@@ -600,41 +665,69 @@ pub const App = struct {
     }
 
     fn request_jj(self: *@This()) !void {
-        self.changes.reset(self.status);
+        self.log.changes.reset(self.log.status);
         var i: i32 = 0;
-        while (try self.changes.next()) |change| {
+        while (try self.log.changes.next()) |change| {
             // const n: i32 = 3;
             const n: i32 = 0;
-            if (self.y == i) {
-                self.focused_change = change.change;
-            } else if (@abs(self.y - i) < n) {
-                if (self.diffcache.get(change.change.hash) == null) {
-                    try self.diffcache.put(change.change.hash, .{});
+            if (self.log.y == i) {
+                self.log.focused_change = change.change;
+            } else if (@abs(self.log.y - i) < n) {
+                if (self.diff.diffcache.get(change.change.hash) == null) {
+                    try self.diff.diffcache.put(change.change.hash, .{});
                     try self.jj.requests.send(.{ .diff = change.change });
                 }
-            } else if (self.y + n < i) {
+            } else if (self.log.y + n < i) {
                 break;
             }
             i += 1;
         }
 
-        if (self.diffcache.get(self.focused_change.hash)) |_| {
+        if (self.diff.diffcache.get(self.log.focused_change.hash)) |_| {
             try self.events.send(.rerender);
         } else {
-            try self.diffcache.put(self.focused_change.hash, .{});
-            try self.jj.requests.send(.{ .diff = self.focused_change });
+            try self.diff.diffcache.put(self.log.focused_change.hash, .{});
+            try self.jj.requests.send(.{ .diff = self.log.focused_change });
         }
     }
 
-    fn render(self: *@This()) !void {
+    fn render_status_bar(self: *@This(), surface: *Surface) !void {
         const temp = self.arena.allocator();
+
+        try surface.apply_style(.{ .background_color = .from_theme(.default_foreground) });
+        try surface.apply_style(.{ .foreground_color = .from_theme(.default_background) });
+        try surface.apply_style(.bold);
+        try surface.draw_buf(" NORMAL ");
+        try surface.apply_style(.normal_intensity);
+        var j: u8 = 0;
+        while (!surface.is_full()) {
+            if (j < 16) {
+                try surface.apply_style(.{ .background_color = .{ .bit8 = j } });
+            } else if (j == 16) {
+                try surface.apply_style(.{ .background_color = .from_theme(.default_background) });
+            }
+            try surface.draw_buf(try std.fmt.allocPrint(temp, "{d:0>2}", .{j}));
+            j += 1;
+        }
+        try surface.apply_style(.reset);
+    }
+
+    fn render_command_input(self: *@This()) !void {
+        const screen = self.term.screen;
+        const popup_size = Vec2{ .x = 60, .y = 20 };
+        const origin = screen.origin.add(screen.size.mul(0.5)).sub(popup_size.mul(0.5));
+        var command = Surface.init(&self.term, .{ .origin = origin, .size = popup_size });
+        try command.clear();
+        try command.draw_border(term_mod.border.rounded);
+        try command.draw_border_heading(" Command ");
+
+        try self.command_text.draw(&command);
+    }
+
+    fn render(self: *@This()) !void {
         defer _ = self.arena.reset(.retain_capacity);
 
-        self.y = @max(0, self.y);
         self.x_split = @min(@max(0.0, self.x_split), 1.0);
-        if (self.skip_y > self.y) {
-            self.skip_y = self.y;
-        }
 
         try self.term.update_size();
         {
@@ -643,69 +736,15 @@ pub const App = struct {
             // try status.draw_border(border.rounded);
 
             var bar = try status.split_y(-1, .none);
-            try bar.apply_style(.{ .background_color = .from_theme(.default_foreground) });
-            try bar.apply_style(.{ .foreground_color = .from_theme(.default_background) });
-            try bar.apply_style(.bold);
-            try bar.draw_buf(" NORMAL ");
-            try bar.apply_style(.normal_intensity);
-            var j: u8 = 0;
-            while (!bar.is_full()) {
-                if (j < 16) {
-                    try bar.apply_style(.{ .background_color = .{ .bit8 = j } });
-                } else if (j == 16) {
-                    try bar.apply_style(.{ .background_color = .from_theme(.default_background) });
-                }
-                try bar.draw_buf(try std.fmt.allocPrint(temp, "{d:0>2}", .{j}));
-                j += 1;
-            }
-            try bar.apply_style(.reset);
+            try self.render_status_bar(&bar);
 
             var diffs = try status.split_x(cast(i32, cast(f32, status.size().x) * self.x_split), .border);
 
-            var gutter = try status.split_x(3, .none);
-            std.mem.swap(@TypeOf(status), &status, &gutter);
-
-            var i: i32 = 0;
-            self.changes.reset(self.status);
-            while (try self.changes.next()) |change| {
-                defer i += 1;
-                if (self.skip_y > i) {
-                    continue;
-                }
-
-                if (i == self.y) {
-                    try gutter.draw_buf("->");
-                }
-                try gutter.new_line();
-                try gutter.new_line();
-
-                try status.draw_buf(change.buf);
-                try status.new_line();
-                if (status.is_full()) break;
-            }
-            if (self.y >= i) {
-                self.skip_y += 1;
-                try self.events.send(.rerender);
-            }
-
-            if (self.diffcache.getPtr(self.focused_change.hash)) |cdiff| if (cdiff.diff) |diff| {
-                cdiff.y = @max(0, cdiff.y);
-                diffs.y_scroll = cdiff.y;
-                try diffs.draw_buf(diff);
-            } else {
-                try diffs.draw_buf(" loading ... ");
-            };
+            try self.log.render(&status, &self.events);
+            try self.diff.render(&diffs, self.log.focused_change);
 
             if (self.focus == .command) {
-                const screen = self.term.screen;
-                const popup_size = Vec2{ .x = 60, .y = 20 };
-                const origin = screen.origin.add(screen.size.mul(0.5)).sub(popup_size.mul(0.5));
-                var command = Surface.init(&self.term, .{ .origin = origin, .size = popup_size });
-                try command.clear();
-                try command.draw_border(term_mod.border.rounded);
-                try command.draw_border_heading(" Command ");
-
-                try self.command_text.draw(&command);
+                try self.render_command_input();
             }
         }
         try self.term.flush_writes();

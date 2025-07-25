@@ -260,8 +260,10 @@ pub const ChangeIterator = struct {
 };
 
 pub const Change = struct {
-    id: [8]u8 = [1]u8{'z'} ** 8,
-    hash: [8]u8 = [1]u8{0} ** 8,
+    id: Hash = [1]u8{'z'} ** 8,
+    hash: Hash = [1]u8{0} ** 8,
+
+    pub const Hash = [8]u8;
 
     pub fn is_root(self: *@This()) bool {
         return std.mem.allEqual(u8, self.hash, 0);

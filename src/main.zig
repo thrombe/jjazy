@@ -326,7 +326,7 @@ const DiffSlate = struct {
 pub const App = struct {
     term: term_mod.Term,
 
-    quit: utils_mod.Fuse = .{},
+    quit_input_loop: utils_mod.Fuse = .{},
 
     input_thread: std.Thread,
     input_iterator: term_mod.TermInputIterator,
@@ -404,7 +404,7 @@ pub const App = struct {
 
         const input_thread = try std.Thread.spawn(.{}, @This()._input_loop, .{self});
         errdefer {
-            _ = self.quit.fuse();
+            _ = self.quit_input_loop.fuse();
             input_thread.join();
         }
 
@@ -436,7 +436,7 @@ pub const App = struct {
         }
         defer self.jj.deinit();
         defer self.input_thread.join();
-        _ = self.quit.fuse();
+        _ = self.quit_input_loop.fuse();
     }
 
     pub fn winch(_: c_int) callconv(.C) void {
@@ -466,10 +466,24 @@ pub const App = struct {
                 }
             }
 
-            if (self.quit.check()) {
+            if (self.quit_input_loop.check()) {
                 break;
             }
         }
+    }
+
+    fn restore_terminal_for_command(self: *@This()) !void {
+        try self.term.cook_restore();
+        _ = self.quit_input_loop.fuse();
+        defer _ = self.quit_input_loop.unfuse();
+        self.input_thread.join();
+    }
+
+    fn uncook_terminal(self: *@This()) !void {
+        self.input_thread = try std.Thread.spawn(.{}, @This()._input_loop, .{self});
+        try self.term.uncook(@This());
+        try self.events.send(.rerender);
+        try self.jj.requests.send(.status);
     }
 
     fn event_loop(self: *@This()) !void {
@@ -542,6 +556,14 @@ pub const App = struct {
                         }
                         if (key.key == 'e' and key.action.pressed() and key.mod.eq(.{})) {
                             try self.jj.requests.send(.{ .edit = self.log.focused_change });
+                        }
+                        if (key.key == 'D' and key.action.pressed() and key.mod.eq(.{ .shift = true })) {
+                            try self.execute_command_inline(&[_][]const u8{
+                                "jj",
+                                "describe",
+                                "-r",
+                                self.log.focused_change.id[0..],
+                            });
                         }
                         if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{})) {
                             self.log.y += 1;
@@ -785,6 +807,36 @@ pub const App = struct {
             }
         }
         try self.term.flush_writes();
+    }
+
+    fn execute_command_inline(self: *@This(), args: []const []const u8) !void {
+        try self.restore_terminal_for_command();
+        self.execute_command(args) catch |e| switch (e) {
+            error.SomeErrorMan => {},
+            else => return e,
+        };
+        try self.uncook_terminal();
+    }
+
+    fn execute_command(self: *@This(), args: []const []const u8) !void {
+        var child = std.process.Child.init(args, self.alloc);
+        try child.spawn();
+        const err = try child.wait();
+        switch (err) {
+            .Exited => |e| {
+                if (e != 0) {
+                    std.log.err("exited with code: {}", .{e});
+                }
+                return error.SomeErrorMan;
+            },
+            // .Signal => |code| {},
+            // .Stopped => |code| {},
+            // .Unknown => |code| {},
+            else => |e| {
+                std.log.err("exited with code: {}", .{e});
+                return error.SomeErrorMan;
+            },
+        }
     }
 };
 

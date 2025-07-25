@@ -52,6 +52,11 @@ const Surface = struct {
         return !self.region.contains_x(self.region.origin.x + self.x);
     }
 
+    fn is_full(self: *@This()) bool {
+        const x_full = self.region.size.y - 1 == self.y and self.is_x_out();
+        return x_full or self.is_y_out();
+    }
+
     fn new_line(self: *@This()) !void {
         try self.draw_buf("\n\n");
     }
@@ -79,7 +84,7 @@ const Surface = struct {
     }
 
     fn draw_buf(self: *@This(), buf: []const u8) !void {
-        if (self.is_y_out()) return;
+        if (self.is_full()) return;
 
         self.y = @max(0, self.y);
         self.y_scroll = @max(0, self.y_scroll);
@@ -641,7 +646,7 @@ pub const App = struct {
             try bar.apply_style(.bold);
             try bar.draw_buf(" NORMAL ");
             var j: u8 = 0;
-            while (!bar.is_x_out()) {
+            while (!bar.is_full()) {
                 if (j < 16) {
                     try bar.apply_style(.{ .background_color = .{ .bit8 = j } });
                 } else if (j == 16) {
@@ -673,7 +678,7 @@ pub const App = struct {
 
                 try status.draw_buf(change.buf);
                 try status.new_line();
-                if (status.is_y_out()) break;
+                if (status.is_full()) break;
             }
             if (self.y >= i) {
                 self.skip_y += 1;

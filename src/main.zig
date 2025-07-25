@@ -520,8 +520,13 @@ pub const App = struct {
                         // std.log.debug("got mouse input event: {any}", .{key});
                     },
                     .focus => |e| {
-                        _ = e;
+                        // _ = e;
                         // std.log.debug("got focus event: {any}", .{e});
+
+                        switch (e) {
+                            .out => {},
+                            .in => try self.jj.requests.send(.status),
+                        }
                     },
                     .unsupported => {},
                 }

@@ -79,8 +79,8 @@ pub const JujutsuServer = struct {
                         "--color",
                         "always",
                         "log",
-                        "--template",
-                        "builtin_log_compact ++ json(self)",
+                        // "--template",
+                        // "builtin_log_compact ++ json(self)",
                     }) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
@@ -282,7 +282,7 @@ pub const ChangeIterator = struct {
             // description line
             _ = self.state.next();
             // json line
-            _ = self.state.next();
+            // _ = self.state.next();
 
             return .{ .change = change, .buf = self.state.buf[start..self.state.index] };
         }

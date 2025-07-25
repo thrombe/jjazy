@@ -492,7 +492,7 @@ pub const App = struct {
         if (comptime builtin.mode == .Debug) {
             try self.term.tty.writeAll(codes.kitty.disable_input_protocol);
             try self.term.tty.writeAll(codes.focus.disable);
-            try self.term.tty.writeAll(codes.mouse.disable_any_event ++ codes.mouse.disable_sgr_mouse_mode);
+            try self.term.tty.writeAll(codes.mouse.disable_any_event ++ codes.mouse.disable_sgr_mouse_mode ++ codes.mouse.disable_shift_escape);
         }
 
         while (self.events.wait_recv()) |event| switch (event) {
@@ -510,13 +510,13 @@ pub const App = struct {
                             if (key.action.just_pressed() and key.mod.eq(.{ .ctrl = true })) switch (key.key) {
                                 '1' => try self.term.tty.writeAll(codes.kitty.disable_input_protocol),
                                 '2' => try self.term.tty.writeAll(codes.focus.disable),
-                                '3' => try self.term.tty.writeAll(codes.mouse.disable_any_event ++ codes.mouse.disable_sgr_mouse_mode),
+                                '3' => try self.term.tty.writeAll(codes.mouse.disable_any_event ++ codes.mouse.disable_sgr_mouse_mode ++ codes.mouse.disable_shift_escape),
                                 else => {},
                             };
                             if (key.action.just_pressed() and key.mod.eq(.{})) switch (key.key) {
                                 '1' => try self.term.tty.writeAll(codes.kitty.enable_input_protocol),
                                 '2' => try self.term.tty.writeAll(codes.focus.enable),
-                                '3' => try self.term.tty.writeAll(codes.mouse.enable_any_event ++ codes.mouse.enable_sgr_mouse_mode),
+                                '3' => try self.term.tty.writeAll(codes.mouse.enable_any_event ++ codes.mouse.enable_sgr_mouse_mode ++ codes.mouse.enable_shift_escape),
                                 else => {},
                             };
                         }
@@ -752,6 +752,7 @@ pub const App = struct {
             try self.events.send(.rerender);
         } else {
             try self.diff.diffcache.put(self.log.focused_change.hash, .{});
+            // somehow debounce diff requests
             try self.jj.requests.send(.{ .diff = self.log.focused_change });
         }
     }

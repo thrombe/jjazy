@@ -10,6 +10,7 @@ const lay_mod = @import("lay.zig");
 const Vec2 = lay_mod.Vec2;
 const Region = lay_mod.Region;
 
+// - [Terminal API (VT)](https://ghostty.org/docs/vt)
 pub const codes = struct {
     pub const clear = "\x1B[2J";
     pub const sync_set = "\x1B[?2026h";
@@ -35,6 +36,10 @@ pub const codes = struct {
         pub const disable_any_event = "\x1B[?1003l";
         pub const enable_sgr_mouse_mode = "\x1B[?1006h";
         pub const disable_sgr_mouse_mode = "\x1B[?1006l";
+
+        // - [Shift-Escape Behavior (XTSHIFTESCAPE) - CSI](https://ghostty.org/docs/vt/csi/xtshiftescape)
+        pub const enable_shift_escape = "\x1B[>1s";
+        pub const disable_shift_escape = "\x1B[>0s";
     };
     pub const focus = struct {
         pub const enable = "\x1B[?1004h";
@@ -877,6 +882,7 @@ pub const Term = struct {
             codes.kitty.enable_input_protocol ++
             codes.mouse.enable_any_event ++
             codes.mouse.enable_sgr_mouse_mode ++
+            codes.mouse.enable_shift_escape ++
             codes.focus.enable ++
             codes.clear ++
             "");
@@ -887,6 +893,7 @@ pub const Term = struct {
         try self.tty.writeAll("" ++
             codes.mouse.disable_any_event ++
             codes.mouse.disable_sgr_mouse_mode ++
+            codes.mouse.disable_shift_escape ++
             codes.kitty.disable_input_protocol ++
             codes.focus.disable ++
             codes.clear ++

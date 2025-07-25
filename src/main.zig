@@ -348,6 +348,7 @@ pub const App = struct {
         diff,
         command,
     } = .status,
+    render_count: u64 = 0,
 
     pub const Event = union(enum) {
         sigwinch,
@@ -736,6 +737,14 @@ pub const App = struct {
             try surface.apply_style(.bold);
             try surface.draw_buf(" NORMAL ");
             try surface.apply_style(.reset);
+
+            try surface.draw_buf(" ");
+
+            try surface.apply_style(.{ .background_color = .from_theme(.default_foreground) });
+            try surface.apply_style(.{ .foreground_color = .from_theme(.default_background) });
+            try surface.apply_style(.bold);
+            try surface.draw_buf(try std.fmt.allocPrint(temp, " frame: {d} ", .{self.render_count}));
+            try surface.apply_style(.reset);
         }
     }
 
@@ -753,6 +762,7 @@ pub const App = struct {
 
     fn render(self: *@This()) !void {
         defer _ = self.arena.reset(.retain_capacity);
+        defer self.render_count += 1;
 
         self.x_split = @min(@max(0.0, self.x_split), 1.0);
 

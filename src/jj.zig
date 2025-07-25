@@ -67,6 +67,9 @@ pub const JujutsuServer = struct {
     }
 
     fn start(self: *@This()) !void {
+        // - [Templating language - Jujutsu docs](https://jj-vcs.github.io/jj/latest/templates/)
+        //   - [default templates](https://github.com/jj-vcs/jj/blob/main/cli/src/config/templates.toml)
+
         while (self.requests.wait_recv()) |req| {
             if (self.quit.check()) return;
             switch (req) {
@@ -75,6 +78,9 @@ pub const JujutsuServer = struct {
                         "jj",
                         "--color",
                         "always",
+                        "log",
+                        "--template",
+                        "builtin_log_compact ++ json(self)",
                     }) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
@@ -274,6 +280,8 @@ pub const ChangeIterator = struct {
             @memcpy(change.hash[0..], hash);
 
             // description line
+            _ = self.state.next();
+            // json line
             _ = self.state.next();
 
             return .{ .change = change, .buf = self.state.buf[start..self.state.index] };

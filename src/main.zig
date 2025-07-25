@@ -271,6 +271,7 @@ const LogSlate = struct {
             }
             try gutter.new_line();
             try gutter.new_line();
+            try gutter.new_line();
 
             try surface.draw_buf(change.buf);
             try surface.new_line();

@@ -527,6 +527,12 @@ pub const App = struct {
                         if (key.key == 'q') {
                             try self.events.send(.quit);
                         }
+                        if (key.key == 'n' and key.action.pressed() and key.mod.eq(.{})) {
+                            try self.jj.requests.send(.{ .new = self.log.focused_change });
+                        }
+                        if (key.key == 'e' and key.action.pressed() and key.mod.eq(.{})) {
+                            try self.jj.requests.send(.{ .edit = self.log.focused_change });
+                        }
                         if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{})) {
                             self.log.y += 1;
                             try self.events.send(.rerender);
@@ -640,6 +646,7 @@ pub const App = struct {
                             self.log.status = buf;
                         },
                     }
+
                     try self.events.send(.rerender);
                 },
                 .diff => |req| {
@@ -649,6 +656,9 @@ pub const App = struct {
                         },
                     }
                     try self.events.send(.rerender);
+                },
+                .edit, .new => switch (res.res) {
+                    .ok, .err => |buf| self.alloc.free(buf),
                 },
             },
         };

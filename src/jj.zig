@@ -19,6 +19,8 @@ pub const JujutsuServer = struct {
     pub const Request = union(enum) {
         status,
         diff: Change,
+        new: Change,
+        edit: Change,
     };
 
     pub const Result = union(enum) {
@@ -69,18 +71,18 @@ pub const JujutsuServer = struct {
             if (self.quit.check()) return;
             switch (req) {
                 .status => {
-                    const res = jjcall(&[_][]const u8{
+                    const res = self.jjcall(&[_][]const u8{
                         "jj",
                         "--color",
                         "always",
-                    }, self.alloc) catch |e| {
+                    }) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
                     };
                     try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = res } } });
                 },
                 .diff => |change| {
-                    const stat = jjcall(&[_][]const u8{
+                    const stat = self.jjcall(&[_][]const u8{
                         "jj",
                         "--color",
                         "always",
@@ -88,12 +90,12 @@ pub const JujutsuServer = struct {
                         "--stat",
                         "-r",
                         change.hash[0..],
-                    }, self.alloc) catch |e| {
+                    }) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
                     };
                     defer self.alloc.free(stat);
-                    const diff = jjcall(&[_][]const u8{
+                    const diff = self.jjcall(&[_][]const u8{
                         "jj",
                         "--color",
                         "always",
@@ -102,7 +104,7 @@ pub const JujutsuServer = struct {
                         "delta",
                         "-r",
                         change.hash[0..],
-                    }, self.alloc) catch |e| {
+                    }) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
                     };
@@ -115,11 +117,38 @@ pub const JujutsuServer = struct {
 
                     try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = try output.toOwnedSlice() } } });
                 },
+                .new => |change| {
+                    // TODO: allow more parents
+                    const res = self.jjcall(&[_][]const u8{
+                        "jj",
+                        "new",
+                        change.id[0..],
+                    }) catch |e| {
+                        utils_mod.dump_error(e);
+                        continue;
+                    };
+                    self.alloc.free(res);
+                    try self.requests.send(.status);
+                },
+                .edit => |change| {
+                    const res = self.jjcall(&[_][]const u8{
+                        "jj",
+                        "edit",
+                        change.id[0..],
+                    }) catch |e| {
+                        utils_mod.dump_error(e);
+                        continue;
+                    };
+                    self.alloc.free(res);
+                    try self.requests.send(.status);
+                },
             }
         }
     }
 
-    fn jjcall(args: []const []const u8, alloc: std.mem.Allocator) ![]u8 {
+    fn jjcall(self: *@This(), args: []const []const u8) ![]u8 {
+        const alloc = self.alloc;
+
         var child = std.process.Child.init(args, alloc);
         child.stdin_behavior = .Pipe;
         child.stdout_behavior = .Pipe;

@@ -696,10 +696,7 @@ pub const App = struct {
 
                             try args.append(self.log.focused_change.id[0..]);
 
-                            self.execute_command(args.items) catch |e| switch (e) {
-                                error.SomeErrorMan => {},
-                                else => return e,
-                            };
+                            try self.execute_non_interactive_command(args.items);
 
                             try self.events.send(.rerender);
                             try self.jj.requests.send(.status);
@@ -936,16 +933,24 @@ pub const App = struct {
         try self.term.flush_writes();
     }
 
+    fn execute_non_interactive_command(self: *@This(), args: []const []const u8) !void {
+        // TODO: redirect stdin, stdout, stderr
+        self._execute_command(args) catch |e| switch (e) {
+            error.SomeErrorMan => {},
+            else => return e,
+        };
+    }
+
     fn execute_interactive_command(self: *@This(), args: []const []const u8) !void {
         try self.restore_terminal_for_command();
-        self.execute_command(args) catch |e| switch (e) {
+        self._execute_command(args) catch |e| switch (e) {
             error.SomeErrorMan => {},
             else => return e,
         };
         try self.uncook_terminal();
     }
 
-    fn execute_command(self: *@This(), args: []const []const u8) !void {
+    fn _execute_command(self: *@This(), args: []const []const u8) !void {
         var child = std.process.Child.init(args, self.alloc);
         try child.spawn();
         const err = try child.wait();

@@ -243,13 +243,15 @@ const LogSlate = struct {
     changes: jj_mod.ChangeIterator,
     focused_change: jj_mod.Change = .{},
     alloc: std.mem.Allocator,
+    selected_changes: std.AutoHashMap(jj_mod.Change, void),
 
     fn deinit(self: *@This()) void {
         self.alloc.free(self.status);
         self.changes.deinit();
+        self.selected_changes.deinit();
     }
 
-    fn render(self: *@This(), surface: *Surface, events: *utils_mod.Channel(App.Event)) !void {
+    fn render(self: *@This(), surface: *Surface, events: *utils_mod.Channel(App.Event), state: App.State) !void {
         self.y = @max(0, self.y);
         if (self.skip_y > self.y) {
             self.skip_y = self.y;
@@ -267,7 +269,17 @@ const LogSlate = struct {
             }
 
             if (i == self.y) {
-                try gutter.draw_buf("->");
+                if (state == .rebase) {
+                    try gutter.draw_buf("#>");
+                    try gutter.new_line();
+                    try surface.new_line();
+                } else {
+                    try gutter.draw_buf("->");
+                }
+            } else {
+                if (self.selected_changes.contains(change.change)) {
+                    try gutter.draw_buf("#");
+                }
             }
             try gutter.new_line();
             try gutter.new_line();
@@ -343,12 +355,20 @@ pub const App = struct {
     diff: DiffSlate,
     log: LogSlate,
 
-    state: enum {
-        status,
-        diff,
-        command,
-    } = .status,
+    state: State = .status,
     render_count: u64 = 0,
+
+    pub const State = union(enum(u8)) {
+        status,
+        command,
+        rebase: Rebase,
+
+        pub const Rebase = enum {
+            onto,
+            after,
+            before,
+        };
+    };
 
     pub const Event = union(enum) {
         sigwinch,
@@ -398,6 +418,7 @@ pub const App = struct {
                 .alloc = alloc,
                 .status = &.{},
                 .changes = .init(alloc, &[_]u8{}),
+                .selected_changes = .init(alloc),
             },
             .command_text = .init(alloc),
             .input_thread = undefined,
@@ -496,7 +517,7 @@ pub const App = struct {
             try self.term.tty.writeAll(codes.mouse.disable_any_event ++ codes.mouse.disable_sgr_mouse_mode ++ codes.mouse.disable_shift_escape);
         }
 
-        while (self.events.wait_recv()) |event| switch (event) {
+        event_blk: while (self.events.wait_recv()) |event| switch (event) {
             .quit => return,
             .err => |err| return err,
             .rerender => try self.render(),
@@ -524,13 +545,8 @@ pub const App = struct {
                         }
                     },
                     .functional => |key| {
-                        // _ = key;
+                        _ = key;
                         // std.log.debug("got input event: {any}", .{key});
-
-                        if (key.key == .escape and key.action.just_pressed() and key.mod.eq(.{})) {
-                            self.state = .status;
-                            try self.events.send(.rerender);
-                        }
                     },
                     .mouse => |key| {
                         _ = key;
@@ -558,6 +574,12 @@ pub const App = struct {
                         }
                         if (key.key == 'e' and key.action.pressed() and key.mod.eq(.{})) {
                             try self.jj.requests.send(.{ .edit = self.log.focused_change });
+                        }
+                        if (key.key == 'r' and key.action.pressed() and key.mod.eq(.{})) {
+                            self.state = .{ .rebase = .onto };
+                            try self.log.selected_changes.put(self.log.focused_change, {});
+                            try self.events.send(.rerender);
+                            continue :event_blk;
                         }
                         if (key.key == 's' and key.action.pressed() and key.mod.eq(.{})) {
                             try self.execute_command_inline(&[_][]const u8{
@@ -628,6 +650,84 @@ pub const App = struct {
                     else => {},
                 };
 
+                if (self.state == .rebase) switch (input) {
+                    .key => |key| {
+                        if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{})) {
+                            self.log.y += 1;
+                            try self.events.send(.rerender);
+                            try self.events.send(.diff_update);
+                        }
+                        if (key.key == 'k' and key.action.pressed() and key.mod.eq(.{})) {
+                            self.log.y -= 1;
+                            try self.events.send(.rerender);
+                            try self.events.send(.diff_update);
+                        }
+                        if (key.key == ' ' and key.action.pressed() and key.mod.eq(.{})) {
+                            if (self.log.selected_changes.fetchRemove(self.log.focused_change) == null) {
+                                try self.log.selected_changes.put(self.log.focused_change, {});
+                            }
+                            try self.events.send(.rerender);
+                        }
+                    },
+                    .functional => |key| {
+                        if (key.key == .enter and key.action.pressed() and key.mod.eq(.{})) {
+                            defer _ = self.arena.reset(.retain_capacity);
+                            const temp = self.arena.allocator();
+
+                            var args = std.ArrayList([]const u8).init(temp);
+                            try args.append("jj");
+                            try args.append("rebase");
+
+                            var it = self.log.selected_changes.iterator();
+                            while (it.next()) |e| {
+                                try args.append("-r");
+                                try args.append(e.key_ptr.id[0..]);
+
+                                if (std.meta.eql(e.key_ptr.*, self.log.focused_change)) {
+                                    self.log.selected_changes.clearRetainingCapacity();
+                                    self.state = .status;
+                                    try self.events.send(.rerender);
+                                    continue :event_blk;
+                                }
+                            }
+
+                            switch (self.state.rebase) {
+                                .onto => try args.append("-d"),
+                                .after => try args.append("-A"),
+                                .before => try args.append("-B"),
+                            }
+
+                            try args.append(self.log.focused_change.id[0..]);
+
+                            try self.execute_command_inline(args.items);
+
+                            self.log.selected_changes.clearRetainingCapacity();
+                            self.state = .status;
+                            try self.events.send(.rerender);
+                            continue :event_blk;
+                        }
+                        if (key.key == .escape and key.action.pressed() and key.mod.eq(.{})) {
+                            self.log.selected_changes.clearRetainingCapacity();
+                            self.state = .status;
+                            try self.events.send(.rerender);
+                            continue :event_blk;
+                        }
+                    },
+                    .mouse => |key| {
+                        if (key.key == .scroll_down and key.action.pressed() and key.mod.eq(.{})) {
+                            self.log.y += 1;
+                            try self.events.send(.rerender);
+                            try self.events.send(.diff_update);
+                        }
+                        if (key.key == .scroll_up and key.action.pressed() and key.mod.eq(.{})) {
+                            self.log.y -= 1;
+                            try self.events.send(.rerender);
+                            try self.events.send(.diff_update);
+                        }
+                    },
+                    else => {},
+                };
+
                 if (self.state == .command) switch (input) {
                     .key => |key| {
                         if (key.action.pressed() and (key.mod.eq(.{ .shift = true }) or key.mod.eq(.{}))) {
@@ -680,6 +780,11 @@ pub const App = struct {
                                 _ = self.command_text.back();
                             }
                             try self.events.send(.rerender);
+                        }
+                        if (key.key == .escape and key.action.just_pressed() and key.mod.eq(.{})) {
+                            self.state = .status;
+                            try self.events.send(.rerender);
+                            continue :event_blk;
                         }
                     },
                     else => {},
@@ -820,7 +925,7 @@ pub const App = struct {
 
             var diffs = try status.split_x(cast(i32, cast(f32, status.size().x) * self.x_split), .border);
 
-            try self.log.render(&status, &self.events);
+            try self.log.render(&status, &self.events, self.state);
             try self.diff.render(&diffs, self.log.focused_change);
 
             if (self.state == .command) {

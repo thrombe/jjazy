@@ -360,13 +360,7 @@ pub const App = struct {
     pub const State = union(enum(u8)) {
         status,
         command,
-        rebase: Rebase,
-
-        pub const Rebase = enum {
-            onto,
-            after,
-            before,
-        };
+        rebase,
     };
 
     pub const Event = union(enum) {
@@ -575,7 +569,7 @@ pub const App = struct {
                             try self.jj.requests.send(.{ .edit = self.log.focused_change });
                         }
                         if (key.key == 'r' and key.action.pressed() and key.mod.eq(.{})) {
-                            self.state = .{ .rebase = .onto };
+                            self.state = .rebase;
                             try self.log.selected_changes.put(self.log.focused_change, {});
                             try self.events.send(.rerender);
                             continue :event_blk;
@@ -667,11 +661,13 @@ pub const App = struct {
                             }
                             try self.events.send(.rerender);
                         }
-                    },
-                    .functional => |key| {
-                        if (key.key == .enter and key.action.pressed() and key.mod.eq(.{})) {
+                        if (std.mem.indexOfScalar(u8, "abo", cast(u8, key.key)) != null and key.action.pressed() and key.mod.eq(.{})) {
                             defer _ = self.arena.reset(.retain_capacity);
                             const temp = self.arena.allocator();
+                            defer {
+                                self.log.selected_changes.clearRetainingCapacity();
+                                self.state = .status;
+                            }
 
                             var args = std.ArrayList([]const u8).init(temp);
                             try args.append("jj");
@@ -683,28 +679,30 @@ pub const App = struct {
                                 try args.append(e.key_ptr.id[0..]);
 
                                 if (std.meta.eql(e.key_ptr.*, self.log.focused_change)) {
-                                    self.log.selected_changes.clearRetainingCapacity();
-                                    self.state = .status;
                                     try self.events.send(.rerender);
                                     continue :event_blk;
                                 }
                             }
 
-                            switch (self.state.rebase) {
-                                .onto => try args.append("-d"),
-                                .after => try args.append("-A"),
-                                .before => try args.append("-B"),
+                            switch (key.key) {
+                                'o' => try args.append("-d"),
+                                'a' => try args.append("-A"),
+                                'b' => try args.append("-B"),
+                                else => {
+                                    try self.events.send(.rerender);
+                                    continue :event_blk;
+                                },
                             }
 
                             try args.append(self.log.focused_change.id[0..]);
 
                             try self.execute_command_inline(args.items);
 
-                            self.log.selected_changes.clearRetainingCapacity();
-                            self.state = .status;
                             try self.events.send(.rerender);
                             continue :event_blk;
                         }
+                    },
+                    .functional => |key| {
                         if (key.key == .escape and key.action.pressed() and key.mod.eq(.{})) {
                             self.log.selected_changes.clearRetainingCapacity();
                             self.state = .status;

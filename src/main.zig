@@ -353,6 +353,7 @@ pub const App = struct {
     pub const Event = union(enum) {
         sigwinch,
         rerender,
+        diff_update,
         quit,
         input: term_mod.TermInputIterator.Input,
         jj: jj_mod.JujutsuServer.Response,
@@ -500,6 +501,7 @@ pub const App = struct {
             .err => |err| return err,
             .rerender => try self.render(),
             .sigwinch => try self.events.send(.rerender),
+            .diff_update => try self.request_jj(),
             .input => |input| {
                 switch (input) {
                     .key => |key| {
@@ -576,14 +578,12 @@ pub const App = struct {
                         if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{})) {
                             self.log.y += 1;
                             try self.events.send(.rerender);
-
-                            try self.request_jj();
+                            try self.events.send(.diff_update);
                         }
                         if (key.key == 'k' and key.action.pressed() and key.mod.eq(.{})) {
                             self.log.y -= 1;
                             try self.events.send(.rerender);
-
-                            try self.request_jj();
+                            try self.events.send(.diff_update);
                         }
                         if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
                             if (self.diff.diffcache.getPtr(self.log.focused_change.hash)) |diff| {
@@ -617,14 +617,12 @@ pub const App = struct {
                         if (key.key == .scroll_down and key.action.pressed() and key.mod.eq(.{})) {
                             self.log.y += 1;
                             try self.events.send(.rerender);
-
-                            try self.request_jj();
+                            try self.events.send(.diff_update);
                         }
                         if (key.key == .scroll_up and key.action.pressed() and key.mod.eq(.{})) {
                             self.log.y -= 1;
                             try self.events.send(.rerender);
-
-                            try self.request_jj();
+                            try self.events.send(.diff_update);
                         }
                     },
                     else => {},
@@ -694,8 +692,7 @@ pub const App = struct {
                         .ok => |buf| {
                             self.log.status = buf;
                             self.log.changes.reset(buf);
-
-                            try self.request_jj();
+                            try self.events.send(.diff_update);
                         },
                         .err => |buf| {
                             self.log.status = buf;

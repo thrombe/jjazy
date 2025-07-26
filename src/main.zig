@@ -343,7 +343,7 @@ pub const App = struct {
     diff: DiffSlate,
     log: LogSlate,
 
-    focus: enum {
+    state: enum {
         status,
         diff,
         command,
@@ -526,7 +526,7 @@ pub const App = struct {
                         // std.log.debug("got input event: {any}", .{key});
 
                         if (key.key == .escape and key.action.just_pressed() and key.mod.eq(.{})) {
-                            self.focus = .status;
+                            self.state = .status;
                             try self.events.send(.rerender);
                         }
                     },
@@ -546,7 +546,7 @@ pub const App = struct {
                     .unsupported => {},
                 }
 
-                if (self.focus == .status) switch (input) {
+                if (self.state == .status) switch (input) {
                     .key => |key| {
                         if (key.key == 'q') {
                             try self.events.send(.quit);
@@ -607,7 +607,7 @@ pub const App = struct {
                         }
 
                         if (key.key == ':' and key.action.just_pressed() and key.mod.eq(.{ .shift = true })) {
-                            self.focus = .command;
+                            self.state = .command;
                             try self.events.send(.rerender);
                             self.command_text.reset();
                             continue;
@@ -630,7 +630,7 @@ pub const App = struct {
                     else => {},
                 };
 
-                if (self.focus == .command) switch (input) {
+                if (self.state == .command) switch (input) {
                     .key => |key| {
                         if (key.action.pressed() and (key.mod.eq(.{ .shift = true }) or key.mod.eq(.{}))) {
                             try self.command_text.write(cast(u8, key.key));
@@ -651,7 +651,7 @@ pub const App = struct {
 
                             try self.execute_command_inline(args.items);
                             self.command_text.reset();
-                            self.focus = .status;
+                            self.state = .status;
                         }
                         if (key.key == .left and key.action.pressed() and key.mod.eq(.{})) {
                             self.command_text.left();
@@ -826,7 +826,7 @@ pub const App = struct {
             try self.log.render(&status, &self.events);
             try self.diff.render(&diffs, self.log.focused_change);
 
-            if (self.focus == .command) {
+            if (self.state == .command) {
                 try self.render_command_input();
             }
         }

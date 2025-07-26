@@ -575,7 +575,7 @@ pub const App = struct {
                             continue :event_blk;
                         }
                         if (key.key == 's' and key.action.pressed() and key.mod.eq(.{})) {
-                            try self.execute_command_inline(&[_][]const u8{
+                            try self.execute_interactive_command(&[_][]const u8{
                                 "jj",
                                 "split",
                                 "-r",
@@ -583,7 +583,7 @@ pub const App = struct {
                             });
                         }
                         if (key.key == 'D' and key.action.pressed() and key.mod.eq(.{ .shift = true })) {
-                            try self.execute_command_inline(&[_][]const u8{
+                            try self.execute_interactive_command(&[_][]const u8{
                                 "jj",
                                 "describe",
                                 "-r",
@@ -696,9 +696,13 @@ pub const App = struct {
 
                             try args.append(self.log.focused_change.id[0..]);
 
-                            try self.execute_command_inline(args.items);
+                            self.execute_command(args.items) catch |e| switch (e) {
+                                error.SomeErrorMan => {},
+                                else => return e,
+                            };
 
                             try self.events.send(.rerender);
+                            try self.jj.requests.send(.status);
                             continue :event_blk;
                         }
                     },
@@ -744,7 +748,7 @@ pub const App = struct {
                                 try args.append(arg);
                             }
 
-                            try self.execute_command_inline(args.items);
+                            try self.execute_interactive_command(args.items);
                             self.command_text.reset();
                             self.state = .status;
                         }
@@ -932,16 +936,16 @@ pub const App = struct {
         try self.term.flush_writes();
     }
 
-    fn execute_command_inline(self: *@This(), args: []const []const u8) !void {
+    fn execute_interactive_command(self: *@This(), args: []const []const u8) !void {
         try self.restore_terminal_for_command();
-        self._execute_command(args) catch |e| switch (e) {
+        self.execute_command(args) catch |e| switch (e) {
             error.SomeErrorMan => {},
             else => return e,
         };
         try self.uncook_terminal();
     }
 
-    fn _execute_command(self: *@This(), args: []const []const u8) !void {
+    fn execute_command(self: *@This(), args: []const []const u8) !void {
         var child = std.process.Child.init(args, self.alloc);
         try child.spawn();
         const err = try child.wait();

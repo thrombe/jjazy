@@ -69,9 +69,9 @@ const Surface = struct {
         try self.draw_buf("\n\n");
     }
 
-    fn draw_border(self: *@This(), borders: anytype) !void {
+    fn draw_border(self: *@This(), borders: anytype, edges: anytype) !void {
         self.border = true;
-        try self.screen.draw_border(self.id, self.region, borders);
+        try self.screen.draw_border(self.id, self.region, borders, edges);
     }
 
     fn apply_style(self: *@This(), style: term_mod.TermStyledGraphemeIterator.Style) !void {
@@ -118,7 +118,15 @@ const Surface = struct {
         const regions = self.region.border_sub(.splat(@intFromBool(self.border))).split_x(x, split != .none);
 
         if (split == .border) {
-            try self.screen.draw_split(self.id, self.region, regions.split, null, self.border);
+            try self.screen.draw_split(
+                self.id,
+                self.region,
+                regions.split,
+                null,
+                self.border,
+                term_mod.border.thin.edges,
+                term_mod.border.thin.cross,
+            );
         }
 
         const other = @This(){
@@ -140,7 +148,15 @@ const Surface = struct {
         const regions = self.region.border_sub(.splat(@intFromBool(self.border))).split_y(y, split != .none);
 
         if (split == .border) {
-            try self.screen.draw_split(self.id, self.region, null, regions.split, self.border);
+            try self.screen.draw_split(
+                self.id,
+                self.region,
+                null,
+                regions.split,
+                self.border,
+                term_mod.border.thin.edges,
+                term_mod.border.thin.cross,
+            );
         }
 
         const other = @This(){
@@ -521,7 +537,7 @@ const BookmarkSlate = struct {
         try surface.clear();
 
         try surface.apply_style(.bold);
-        try surface.draw_border(term_mod.border.rounded);
+        try surface.draw_border(term_mod.border.thin.corners.rounded, term_mod.border.thin.edges);
         try surface.draw_border_heading(" Bookmarks ");
         try surface.apply_style(.reset);
 
@@ -570,7 +586,7 @@ const HelpSlate = struct {
         try surface.apply_style(.bold);
 
         try surface.clear();
-        try surface.draw_border(term_mod.border.rounded);
+        try surface.draw_border(term_mod.border.thin.corners.rounded, term_mod.border.thin.edges);
         try surface.draw_border_heading(" Help ");
 
         try surface.apply_style(.reset);
@@ -625,7 +641,7 @@ const Toaster = struct {
 
             try toast.apply_style(.{ .foreground_color = .from_theme(if (e.err != null) .errors else .dim_text) });
             try toast.clear();
-            try toast.draw_border(term_mod.border.square);
+            try toast.draw_border(term_mod.border.thin.corners.square, term_mod.border.thin.edges);
             try toast.draw_buf(e.msg);
             try toast.apply_style(.reset);
         }
@@ -1891,7 +1907,7 @@ pub const App = struct {
         {
             var status = try Surface.init(&self.screen, .{});
             try status.clear();
-            // try status.draw_border(border.rounded);
+            // try status.draw_border(term_mod.border.thin.corners.rounded, term_mod.border.thin.edges);
 
             var bar = try status.split_y(-1, .none);
             try self.render_status_bar(&bar);
@@ -1924,7 +1940,7 @@ pub const App = struct {
                 const region = max_popup_region.clamp(.{ .origin = origin, .size = popup_size });
                 var input_box = try Surface.init(&self.screen, .{ .origin = region.origin, .size = region.size });
                 try input_box.clear();
-                try input_box.draw_border(term_mod.border.rounded);
+                try input_box.draw_border(term_mod.border.thin.corners.rounded, term_mod.border.thin.edges);
 
                 if (self.state == .command) {
                     try input_box.draw_border_heading(" Command ");

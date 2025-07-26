@@ -71,29 +71,90 @@ pub const codes = struct {
     };
 };
 
+pub const arrow = struct {
+    pub const up = "↑";
+    pub const down = "↓";
+    pub const left = "←";
+    pub const right = "→";
+};
+pub const key = struct {
+    pub const backspace = "⌫";
+    pub const tab = "⌫";
+    pub const space = "␣";
+    pub const shift = "⇧";
+};
 pub const border = struct {
-    pub const edge = struct {
-        pub const vertical = "│";
-        pub const horizontal = "─";
+    pub const double = struct {
+        pub const corners = struct {
+            pub const top_left = "╔";
+            pub const top_right = "╗";
+            pub const bottom_left = "╚";
+            pub const bottom_right = "╝";
+        };
+        pub const edges = struct {
+            pub const vertical = "║";
+            pub const horizontal = "═";
+        };
+        pub const cross = struct {
+            pub const nse = "╠";
+            pub const wse = "╦";
+            pub const nws = "╣";
+            pub const wne = "╩";
+            pub const nwse = "╬";
+        };
     };
-    pub const rounded = struct {
-        pub const top_left = "╭";
-        pub const top_right = "╮";
-        pub const bottom_left = "╰";
-        pub const bottom_right = "╯";
+    pub const thin = struct {
+        pub const corners = struct {
+            pub const rounded = struct {
+                pub const top_left = "╭";
+                pub const top_right = "╮";
+                pub const bottom_left = "╰";
+                pub const bottom_right = "╯";
+            };
+            pub const square = struct {
+                pub const top_left = "┌";
+                pub const top_right = "┐";
+                pub const bottom_left = "└";
+                pub const bottom_right = "┘";
+            };
+        };
+        pub const edges = struct {
+            pub const top = "▔";
+            pub const bottom = "▁";
+            pub const right = "▕";
+            pub const left = "▏";
+            pub const vertical = "│";
+            pub const horizontal = "─";
+        };
+        pub const cross = struct {
+            pub const nse = "├";
+            pub const wse = "┬";
+            pub const nws = "┤";
+            pub const wne = "┴";
+            pub const nwse = "┼";
+        };
     };
-    pub const square = struct {
-        pub const top_left = "┌";
-        pub const top_right = "┐";
-        pub const bottom_left = "└";
-        pub const bottom_right = "┘";
-    };
-    pub const cross = struct {
-        pub const nse = "├";
-        pub const wse = "┬";
-        pub const nws = "┤";
-        pub const wne = "┴";
-        pub const nwse = "┼";
+    pub const block = struct {
+        pub const corners = struct {
+            pub const inverse = struct {
+                pub const top_right = "▖";
+                pub const top_left = "▗";
+                pub const bottom_right = "▘";
+                pub const bottom_left = "▝";
+            };
+            pub const filled = struct {
+                pub const top_right = "▜";
+                pub const top_left = "▛";
+                pub const bottom_right = "▟";
+                pub const bottom_left = "▙";
+            };
+        };
+        pub const edges = struct {
+            pub const left = "▌";
+            pub const right = "▐";
+            pub const top = "▀";
+            pub const bottom = "▄";
+        };
     };
 };
 
@@ -1062,7 +1123,7 @@ pub const Screen = struct {
         }
     }
 
-    pub fn draw_border(self: *@This(), id: u32, region: Region, corners: anytype) !void {
+    pub fn draw_border(self: *@This(), id: u32, region: Region, corners: anytype, edges: anytype) !void {
         const out = self.term.screen.clamp(region);
         const end = region.end();
         const range_y = out.range_y();
@@ -1073,27 +1134,27 @@ pub const Screen = struct {
             return;
         } else if (out.size.x == 1) {
             for (@intCast(range_y.begin)..@intCast(range_y.end)) |y| {
-                try self.draw_at(id, .{ .y = @intCast(y), .x = out.origin.x }, border.edge.vertical);
+                try self.draw_at(id, .{ .y = @intCast(y), .x = out.origin.x }, edges.vertical);
             }
             return;
         } else if (out.size.y == 1) {
             try self.cursor_move(id, out.origin);
-            try self.writer(id).writeBytesNTimes(border.edge.horizontal, @intCast(out.size.x));
+            try self.writer(id).writeBytesNTimes(edges.horizontal, @intCast(out.size.x));
             return;
         }
 
         if (self.term.screen.contains_y(region.origin.y)) {
             try self.cursor_move(id, out.origin);
-            try self.writer(id).writeBytesNTimes(border.edge.horizontal, @intCast(out.size.x));
+            try self.writer(id).writeBytesNTimes(edges.horizontal, @intCast(out.size.x));
         }
         if (self.term.screen.contains_y(end.y)) {
             try self.cursor_move(id, .{ .x = out.origin.x, .y = end.y });
-            try self.writer(id).writeBytesNTimes(border.edge.horizontal, @intCast(out.size.x));
+            try self.writer(id).writeBytesNTimes(edges.horizontal, @intCast(out.size.x));
         }
 
         for (@intCast(range_y.begin)..@intCast(range_y.end)) |y| {
-            try self.draw_at(id, .{ .y = @intCast(y), .x = region.origin.x }, border.edge.vertical);
-            try self.draw_at(id, .{ .y = @intCast(y), .x = end.x }, border.edge.vertical);
+            try self.draw_at(id, .{ .y = @intCast(y), .x = region.origin.x }, edges.vertical);
+            try self.draw_at(id, .{ .y = @intCast(y), .x = end.x }, edges.vertical);
         }
 
         // write corners last so that it overwrites the edges (this simplifies code)
@@ -1103,7 +1164,7 @@ pub const Screen = struct {
         try self.draw_at(id, .{ .x = end.x, .y = end.y }, corners.bottom_right);
     }
 
-    pub fn draw_split(self: *@This(), id: u32, region: Region, _x: ?i32, _y: ?i32, borders: bool) !void {
+    pub fn draw_split(self: *@This(), id: u32, region: Region, _x: ?i32, _y: ?i32, borders: bool, edges: anytype, cross: anytype) !void {
         const border_out = self.term.screen.clamp(region);
         const in_region = region.border_sub(.splat(@intFromBool(borders)));
         const out = self.term.screen.clamp(in_region);
@@ -1113,23 +1174,23 @@ pub const Screen = struct {
         if (_y) |y| {
             if (self.term.screen.contains_y(y) and in_region.contains_y(y)) {
                 try self.cursor_move(id, .{ .x = out.origin.x, .y = y });
-                try self.writer(id).writeBytesNTimes(border.edge.horizontal, @intCast(out.size.x));
+                try self.writer(id).writeBytesNTimes(edges.horizontal, @intCast(out.size.x));
             }
             if (borders and in_region.contains_y(y)) {
-                if (in_region.contains_x(out.origin.x)) try self.draw_at(id, .{ .y = y, .x = border_out.origin.x }, border.cross.nse);
-                if (in_region.contains_x(end.x)) try self.draw_at(id, .{ .y = y, .x = border_out.end().x }, border.cross.nws);
+                if (in_region.contains_x(out.origin.x)) try self.draw_at(id, .{ .y = y, .x = border_out.origin.x }, cross.nse);
+                if (in_region.contains_x(end.x)) try self.draw_at(id, .{ .y = y, .x = border_out.end().x }, cross.nws);
             }
         }
         if (_x) |x| {
             for (@intCast(range_y.begin)..@intCast(range_y.end)) |y| {
-                try self.draw_at(id, .{ .x = x, .y = @intCast(y) }, border.edge.vertical);
+                try self.draw_at(id, .{ .x = x, .y = @intCast(y) }, edges.vertical);
             }
             if (borders and in_region.contains_x(x)) {
-                if (in_region.contains_y(out.origin.y)) try self.draw_at(id, .{ .x = x, .y = border_out.origin.y }, border.cross.wse);
-                if (in_region.contains_y(end.y)) try self.draw_at(id, .{ .x = x, .y = border_out.end().y }, border.cross.wne);
+                if (in_region.contains_y(out.origin.y)) try self.draw_at(id, .{ .x = x, .y = border_out.origin.y }, cross.wse);
+                if (in_region.contains_y(end.y)) try self.draw_at(id, .{ .x = x, .y = border_out.end().y }, cross.wne);
             }
         }
-        if (_x) |x| if (_y) |y| if (in_region.contains_vec(.{ .x = x, .y = y })) try self.draw_at(id, .{ .x = x, .y = y }, border.cross.nwse);
+        if (_x) |x| if (_y) |y| if (in_region.contains_vec(.{ .x = x, .y = y })) try self.draw_at(id, .{ .x = x, .y = y }, cross.nwse);
     }
 
     pub fn draw_buf(

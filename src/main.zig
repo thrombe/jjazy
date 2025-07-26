@@ -269,10 +269,9 @@ const LogSlate = struct {
             }
 
             if (i == self.y) {
-                if (state == .rebase) {
+                _ = state;
+                if (self.selected_changes.contains(change.change)) {
                     try gutter.draw_buf("#>");
-                    try gutter.new_line();
-                    try surface.new_line();
                 } else {
                     try gutter.draw_buf("->");
                 }

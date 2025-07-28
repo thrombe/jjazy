@@ -1091,14 +1091,14 @@ pub const Screen = struct {
         }
 
         for (@intCast(range_y.begin)..@intCast(range_y.end)) |y| {
-            try self.draw_at(id, .{ .y = @intCast(y), .x = out.origin.x }, border.edge.vertical);
+            try self.draw_at(id, .{ .y = @intCast(y), .x = region.origin.x }, border.edge.vertical);
             try self.draw_at(id, .{ .y = @intCast(y), .x = end.x }, border.edge.vertical);
         }
 
         // write corners last so that it overwrites the edges (this simplifies code)
-        try self.draw_at(id, .{ .x = out.origin.x, .y = out.origin.y }, corners.top_left);
-        try self.draw_at(id, .{ .x = end.x, .y = out.origin.y }, corners.top_right);
-        try self.draw_at(id, .{ .x = out.origin.x, .y = end.y }, corners.bottom_left);
+        try self.draw_at(id, .{ .x = region.origin.x, .y = region.origin.y }, corners.top_left);
+        try self.draw_at(id, .{ .x = end.x, .y = region.origin.y }, corners.top_right);
+        try self.draw_at(id, .{ .x = region.origin.x, .y = end.y }, corners.bottom_left);
         try self.draw_at(id, .{ .x = end.x, .y = end.y }, corners.bottom_right);
     }
 

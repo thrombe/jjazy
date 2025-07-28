@@ -447,7 +447,10 @@ pub const App = struct {
         var screen = term_mod.Screen.init(alloc, term);
         errdefer screen.deinit();
 
-        try screen.term.uncook(@This());
+        screen.term.register_signal_handlers(@This());
+        errdefer screen.term.unregister_signal_handlers();
+
+        try screen.term.uncook();
         errdefer screen.term.cook_restore() catch |e| utils_mod.dump_error(e);
 
         var events = try utils_mod.Channel(Event).init(alloc);
@@ -500,6 +503,7 @@ pub const App = struct {
         defer self.command_text.deinit();
         defer self.arena.deinit();
         defer self.screen.deinit();
+        defer self.screen.term.unregister_signal_handlers();
         defer self.screen.term.cook_restore() catch |e| utils_mod.dump_error(e);
         defer self.input_iterator.input.deinit();
         defer {
@@ -550,6 +554,7 @@ pub const App = struct {
     }
 
     fn restore_terminal_for_command(self: *@This()) !void {
+        self.screen.term.unregister_signal_handlers();
         try self.screen.term.cook_restore();
         _ = self.quit_input_loop.fuse();
         defer _ = self.quit_input_loop.unfuse();
@@ -558,7 +563,8 @@ pub const App = struct {
 
     fn uncook_terminal(self: *@This()) !void {
         self.input_thread = try std.Thread.spawn(.{}, @This()._input_loop, .{self});
-        try self.screen.term.uncook(@This());
+        self.screen.term.register_signal_handlers(@This());
+        try self.screen.term.uncook();
         try self.events.send(.rerender);
         try self.jj.requests.send(.status);
     }

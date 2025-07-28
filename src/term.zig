@@ -867,7 +867,7 @@ pub const Term = struct {
         self.tty.close();
     }
 
-    pub fn uncook(self: *@This(), handler: anytype) !void {
+    pub fn uncook(self: *@This()) !void {
         try self.enter_raw_mode();
         try self.tty.writeAll("" ++
             codes.cursor.hide ++
@@ -879,7 +879,6 @@ pub const Term = struct {
             codes.focus.enable ++
             codes.clear ++
             "");
-        self.register_signal_handlers(handler);
     }
 
     pub fn cook_restore(self: *@This()) !void {
@@ -897,7 +896,6 @@ pub const Term = struct {
         try std.posix.tcsetattr(self.tty.handle, .FLUSH, self.cooked_termios.?);
         self.raw = null;
         self.cooked_termios = null;
-        self.unregister_signal_handlers();
     }
 
     pub fn update_size(self: *@This()) !void {
@@ -956,7 +954,7 @@ pub const Term = struct {
         self.raw = raw;
     }
 
-    fn register_signal_handlers(_: *@This(), handler: anytype) void {
+    pub fn register_signal_handlers(_: *@This(), handler: anytype) void {
         std.posix.sigaction(std.posix.SIG.WINCH, &std.posix.Sigaction{
             .handler = .{ .handler = handler.winch },
             .mask = std.posix.empty_sigset,
@@ -964,7 +962,7 @@ pub const Term = struct {
         }, null);
     }
 
-    fn unregister_signal_handlers(_: *@This()) void {
+    pub fn unregister_signal_handlers(_: *@This()) void {
         std.posix.sigaction(std.posix.SIG.WINCH, &std.os.linux.Sigaction{
             .handler = .{ .handler = std.posix.SIG.DFL },
             .mask = std.posix.empty_sigset,

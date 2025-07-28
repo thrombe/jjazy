@@ -974,15 +974,15 @@ pub const App = struct {
 
 pub const std_options = std.Options{
     .log_level = .debug,
-    .logFn = utils_mod.Log.log,
+    .logFn = utils_mod.FileLogger.log,
 };
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
     const alloc = gpa.allocator();
 
-    try utils_mod.Log.logger.init(alloc, .{ .allow_fail = true });
-    defer utils_mod.Log.logger.deinit();
+    try utils_mod.FileLogger.logger.init(alloc, .{ .allow_fail = true });
+    defer utils_mod.FileLogger.logger.deinit();
 
     defer _ = gpa.deinit();
 

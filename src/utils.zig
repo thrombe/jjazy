@@ -30,7 +30,7 @@ pub inline fn cast(typ: type, val: anytype) typ {
     @compileError("can't cast from '" ++ @typeName(@TypeOf(val)) ++ "' to '" ++ @typeName(typ) ++ "'");
 }
 
-pub const Log = struct {
+pub const FileLogger = struct {
     path: []const u8 = "./zig-out/log.log",
     file: ?std.fs.File = null,
     alloc: ?std.mem.Allocator = null,
@@ -120,7 +120,7 @@ pub inline fn dump_error(err: anyerror) void {
                 std.log.err("Unable to dump stack trace: Unable to open debug info: {s}\n", .{@errorName(e)});
                 return;
             };
-            std.debug.writeStackTrace(trace.*, Log.writer, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch |e| {
+            std.debug.writeStackTrace(trace.*, FileLogger.writer, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch |e| {
                 std.log.err("Unable to dump stack trace: {s}\n", .{@errorName(e)});
                 return;
             };

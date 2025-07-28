@@ -572,335 +572,336 @@ pub const App = struct {
             try self.screen.term.tty.writeAll(codes.mouse.disable_any_event ++ codes.mouse.disable_sgr_mouse_mode ++ codes.mouse.disable_shift_escape);
         }
 
-        event_blk: while (self.events.wait_recv()) |event| switch (event) {
-            .quit => return,
-            .err => |err| return err,
-            .rerender => try self.render(),
-            .sigwinch => try self.events.send(.rerender),
-            .diff_update => try self.request_jj(),
-            .input => |input| {
-                switch (input) {
-                    .key => |key| {
-                        // _ = key;
-                        // std.log.debug("got input event: {any}", .{key});
+        event_blk: while (self.events.wait_recv()) |event| {
+            defer _ = self.arena.reset(.retain_capacity);
+            const temp = self.arena.allocator();
 
-                        if (comptime builtin.mode == .Debug) {
-                            if (key.action.just_pressed() and key.mod.eq(.{ .ctrl = true })) switch (key.key) {
-                                '1' => try self.screen.term.tty.writeAll(codes.kitty.disable_input_protocol),
-                                '2' => try self.screen.term.tty.writeAll(codes.focus.disable),
-                                '3' => try self.screen.term.tty.writeAll("" ++
-                                    codes.mouse.disable_any_event ++
-                                    codes.mouse.disable_sgr_mouse_mode ++
-                                    codes.mouse.disable_shift_escape ++
-                                    ""),
-                                else => {},
-                            };
-                            if (key.action.just_pressed() and key.mod.eq(.{})) switch (key.key) {
-                                '1' => try self.screen.term.tty.writeAll(codes.kitty.enable_input_protocol),
-                                '2' => try self.screen.term.tty.writeAll(codes.focus.enable),
-                                '3' => try self.screen.term.tty.writeAll("" ++
-                                    codes.mouse.enable_any_event ++
-                                    codes.mouse.enable_sgr_mouse_mode ++
-                                    codes.mouse.enable_shift_escape ++
-                                    ""),
-                                else => {},
-                            };
-                        }
-                    },
-                    .functional => |key| {
-                        _ = key;
-                        // std.log.debug("got input event: {any}", .{key});
-                    },
-                    .mouse => |key| {
-                        _ = key;
-                        // std.log.debug("got mouse input event: {any}", .{key});
-                    },
-                    .focus => |e| {
-                        // _ = e;
-                        // std.log.debug("got focus event: {any}", .{e});
+            switch (event) {
+                .quit => return,
+                .err => |err| return err,
+                .rerender => try self.render(),
+                .sigwinch => try self.events.send(.rerender),
+                .diff_update => try self.request_jj(),
+                .input => |input| {
+                    switch (input) {
+                        .key => |key| {
+                            // _ = key;
+                            // std.log.debug("got input event: {any}", .{key});
 
-                        switch (e) {
-                            .out => {},
-                            .in => try self.jj.requests.send(.status),
-                        }
-                    },
-                    .unsupported => {},
-                }
-
-                if (self.state == .status) switch (input) {
-                    .key => |key| {
-                        if (key.key == 'q') {
-                            try self.events.send(.quit);
-                        }
-                        if (key.key == 'n' and key.action.pressed() and key.mod.eq(.{})) {
-                            try self.jj.requests.send(.{ .new = self.log.focused_change });
-                        }
-                        if (key.key == 'e' and key.action.pressed() and key.mod.eq(.{})) {
-                            try self.jj.requests.send(.{ .edit = self.log.focused_change });
-                        }
-                        if (key.key == 'r' and key.action.pressed() and key.mod.eq(.{})) {
-                            self.state = .{ .rebase = .onto };
-                            try self.log.selected_changes.put(self.log.focused_change, {});
-                            try self.events.send(.rerender);
-                            continue :event_blk;
-                        }
-                        if (key.key == 's' and key.action.pressed() and key.mod.eq(.{})) {
-                            try self.execute_interactive_command(&[_][]const u8{
-                                "jj",
-                                "split",
-                                "-r",
-                                self.log.focused_change.id[0..],
-                            });
-                        }
-                        if (key.key == 'D' and key.action.pressed() and key.mod.eq(.{ .shift = true })) {
-                            try self.execute_interactive_command(&[_][]const u8{
-                                "jj",
-                                "describe",
-                                "-r",
-                                self.log.focused_change.id[0..],
-                            });
-                        }
-                        if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{})) {
-                            self.log.y += 1;
-                            try self.events.send(.rerender);
-                            try self.events.send(.diff_update);
-                        }
-                        if (key.key == 'k' and key.action.pressed() and key.mod.eq(.{})) {
-                            self.log.y -= 1;
-                            try self.events.send(.rerender);
-                            try self.events.send(.diff_update);
-                        }
-                        if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
-                            if (self.diff.diffcache.getPtr(self.log.focused_change.hash)) |diff| {
-                                diff.y += 10;
+                            if (comptime builtin.mode == .Debug) {
+                                if (key.action.just_pressed() and key.mod.eq(.{ .ctrl = true })) switch (key.key) {
+                                    '1' => try self.screen.term.tty.writeAll(codes.kitty.disable_input_protocol),
+                                    '2' => try self.screen.term.tty.writeAll(codes.focus.disable),
+                                    '3' => try self.screen.term.tty.writeAll("" ++
+                                        codes.mouse.disable_any_event ++
+                                        codes.mouse.disable_sgr_mouse_mode ++
+                                        codes.mouse.disable_shift_escape ++
+                                        ""),
+                                    else => {},
+                                };
+                                if (key.action.just_pressed() and key.mod.eq(.{})) switch (key.key) {
+                                    '1' => try self.screen.term.tty.writeAll(codes.kitty.enable_input_protocol),
+                                    '2' => try self.screen.term.tty.writeAll(codes.focus.enable),
+                                    '3' => try self.screen.term.tty.writeAll("" ++
+                                        codes.mouse.enable_any_event ++
+                                        codes.mouse.enable_sgr_mouse_mode ++
+                                        codes.mouse.enable_shift_escape ++
+                                        ""),
+                                    else => {},
+                                };
                             }
-                            try self.events.send(.rerender);
-                        }
-                        if (key.key == 'k' and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
-                            if (self.diff.diffcache.getPtr(self.log.focused_change.hash)) |diff| {
-                                diff.y -= 10;
+                        },
+                        .functional => |key| {
+                            _ = key;
+                            // std.log.debug("got input event: {any}", .{key});
+                        },
+                        .mouse => |key| {
+                            _ = key;
+                            // std.log.debug("got mouse input event: {any}", .{key});
+                        },
+                        .focus => |e| {
+                            // _ = e;
+                            // std.log.debug("got focus event: {any}", .{e});
+
+                            switch (e) {
+                                .out => {},
+                                .in => try self.jj.requests.send(.status),
                             }
-                            try self.events.send(.rerender);
-                        }
-                        if (key.key == 'h' and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
-                            self.x_split -= 0.05;
-                            try self.events.send(.rerender);
-                        }
-                        if (key.key == 'l' and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
-                            self.x_split += 0.05;
-                            try self.events.send(.rerender);
-                        }
+                        },
+                        .unsupported => {},
+                    }
 
-                        if (key.key == ':' and key.action.just_pressed() and key.mod.eq(.{ .shift = true })) {
-                            self.state = .command;
-                            try self.events.send(.rerender);
-                            self.command_text.reset();
-                            continue;
-                        }
-                    },
-                    .mouse => |key| {
-                        if (key.key == .scroll_down and key.action.pressed() and key.mod.eq(.{})) {
-                            self.log.y += 1;
-                            try self.events.send(.rerender);
-                            try self.events.send(.diff_update);
-                        }
-                        if (key.key == .scroll_up and key.action.pressed() and key.mod.eq(.{})) {
-                            self.log.y -= 1;
-                            try self.events.send(.rerender);
-                            try self.events.send(.diff_update);
-                        }
-                    },
-                    else => {},
-                };
-
-                if (self.state == .rebase) switch (input) {
-                    .key => |key| {
-                        if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{})) {
-                            self.log.y += 1;
-                            try self.events.send(.rerender);
-                            try self.events.send(.diff_update);
-                        }
-                        if (key.key == 'k' and key.action.pressed() and key.mod.eq(.{})) {
-                            self.log.y -= 1;
-                            try self.events.send(.rerender);
-                            try self.events.send(.diff_update);
-                        }
-                        if (key.key == ' ' and key.action.pressed() and key.mod.eq(.{})) {
-                            if (self.log.selected_changes.fetchRemove(self.log.focused_change) == null) {
+                    if (self.state == .status) switch (input) {
+                        .key => |key| {
+                            if (key.key == 'q') {
+                                try self.events.send(.quit);
+                            }
+                            if (key.key == 'n' and key.action.pressed() and key.mod.eq(.{})) {
+                                try self.jj.requests.send(.{ .new = self.log.focused_change });
+                            }
+                            if (key.key == 'e' and key.action.pressed() and key.mod.eq(.{})) {
+                                try self.jj.requests.send(.{ .edit = self.log.focused_change });
+                            }
+                            if (key.key == 'r' and key.action.pressed() and key.mod.eq(.{})) {
+                                self.state = .{ .rebase = .onto };
                                 try self.log.selected_changes.put(self.log.focused_change, {});
+                                try self.events.send(.rerender);
+                                continue :event_blk;
                             }
-                            try self.events.send(.rerender);
-                        }
-                        if (std.mem.indexOfScalar(u8, "abo", cast(u8, key.key)) != null and
-                            key.action.pressed() and
-                            key.mod.eq(.{}) and
-                            self.state == .rebase)
-                        {
-                            switch (key.key) {
-                                'o' => self.state = .{ .rebase = .onto },
-                                'a' => self.state = .{ .rebase = .after },
-                                'b' => self.state = .{ .rebase = .before },
-                                else => {
-                                    self.log.selected_changes.clearRetainingCapacity();
-                                    self.state = .status;
-                                },
+                            if (key.key == 's' and key.action.pressed() and key.mod.eq(.{})) {
+                                try self.execute_interactive_command(&[_][]const u8{
+                                    "jj",
+                                    "split",
+                                    "-r",
+                                    self.log.focused_change.id[0..],
+                                });
+                            }
+                            if (key.key == 'D' and key.action.pressed() and key.mod.eq(.{ .shift = true })) {
+                                try self.execute_interactive_command(&[_][]const u8{
+                                    "jj",
+                                    "describe",
+                                    "-r",
+                                    self.log.focused_change.id[0..],
+                                });
+                            }
+                            if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{})) {
+                                self.log.y += 1;
+                                try self.events.send(.rerender);
+                                try self.events.send(.diff_update);
+                            }
+                            if (key.key == 'k' and key.action.pressed() and key.mod.eq(.{})) {
+                                self.log.y -= 1;
+                                try self.events.send(.rerender);
+                                try self.events.send(.diff_update);
+                            }
+                            if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
+                                if (self.diff.diffcache.getPtr(self.log.focused_change.hash)) |diff| {
+                                    diff.y += 10;
+                                }
+                                try self.events.send(.rerender);
+                            }
+                            if (key.key == 'k' and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
+                                if (self.diff.diffcache.getPtr(self.log.focused_change.hash)) |diff| {
+                                    diff.y -= 10;
+                                }
+                                try self.events.send(.rerender);
+                            }
+                            if (key.key == 'h' and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
+                                self.x_split -= 0.05;
+                                try self.events.send(.rerender);
+                            }
+                            if (key.key == 'l' and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
+                                self.x_split += 0.05;
+                                try self.events.send(.rerender);
                             }
 
-                            try self.events.send(.rerender);
-                            continue :event_blk;
-                        }
-                    },
-                    .functional => |key| {
-                        if (key.key == .escape and key.action.pressed() and key.mod.eq(.{})) {
-                            self.log.selected_changes.clearRetainingCapacity();
-                            self.state = .status;
-                            try self.events.send(.rerender);
-                            continue :event_blk;
-                        }
-                        if (key.key == .enter and key.action.pressed() and key.mod.eq(.{})) {
-                            defer _ = self.arena.reset(.retain_capacity);
-                            const temp = self.arena.allocator();
-                            defer {
+                            if (key.key == ':' and key.action.just_pressed() and key.mod.eq(.{ .shift = true })) {
+                                self.state = .command;
+                                try self.events.send(.rerender);
+                                self.command_text.reset();
+                                continue;
+                            }
+                        },
+                        .mouse => |key| {
+                            if (key.key == .scroll_down and key.action.pressed() and key.mod.eq(.{})) {
+                                self.log.y += 1;
+                                try self.events.send(.rerender);
+                                try self.events.send(.diff_update);
+                            }
+                            if (key.key == .scroll_up and key.action.pressed() and key.mod.eq(.{})) {
+                                self.log.y -= 1;
+                                try self.events.send(.rerender);
+                                try self.events.send(.diff_update);
+                            }
+                        },
+                        else => {},
+                    };
+
+                    if (self.state == .rebase) switch (input) {
+                        .key => |key| {
+                            if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{})) {
+                                self.log.y += 1;
+                                try self.events.send(.rerender);
+                                try self.events.send(.diff_update);
+                            }
+                            if (key.key == 'k' and key.action.pressed() and key.mod.eq(.{})) {
+                                self.log.y -= 1;
+                                try self.events.send(.rerender);
+                                try self.events.send(.diff_update);
+                            }
+                            if (key.key == ' ' and key.action.pressed() and key.mod.eq(.{})) {
+                                if (self.log.selected_changes.fetchRemove(self.log.focused_change) == null) {
+                                    try self.log.selected_changes.put(self.log.focused_change, {});
+                                }
+                                try self.events.send(.rerender);
+                            }
+                            if (std.mem.indexOfScalar(u8, "abo", cast(u8, key.key)) != null and
+                                key.action.pressed() and
+                                key.mod.eq(.{}) and
+                                self.state == .rebase)
+                            {
+                                switch (key.key) {
+                                    'o' => self.state = .{ .rebase = .onto },
+                                    'a' => self.state = .{ .rebase = .after },
+                                    'b' => self.state = .{ .rebase = .before },
+                                    else => {
+                                        self.log.selected_changes.clearRetainingCapacity();
+                                        self.state = .status;
+                                    },
+                                }
+
+                                try self.events.send(.rerender);
+                                continue :event_blk;
+                            }
+                        },
+                        .functional => |key| {
+                            if (key.key == .escape and key.action.pressed() and key.mod.eq(.{})) {
                                 self.log.selected_changes.clearRetainingCapacity();
                                 self.state = .status;
+                                try self.events.send(.rerender);
+                                continue :event_blk;
                             }
-
-                            var args = std.ArrayList([]const u8).init(temp);
-                            try args.append("jj");
-                            try args.append("rebase");
-
-                            var it = self.log.selected_changes.iterator();
-                            while (it.next()) |e| {
-                                try args.append("-r");
-                                try args.append(e.key_ptr.id[0..]);
-
-                                if (std.meta.eql(e.key_ptr.*, self.log.focused_change)) {
-                                    try self.events.send(.rerender);
-                                    continue :event_blk;
+                            if (key.key == .enter and key.action.pressed() and key.mod.eq(.{})) {
+                                defer {
+                                    self.log.selected_changes.clearRetainingCapacity();
+                                    self.state = .status;
                                 }
-                            }
 
-                            switch (self.state.rebase) {
-                                .onto => try args.append("-d"),
-                                .after => try args.append("-A"),
-                                .before => try args.append("-B"),
-                            }
+                                var args = std.ArrayList([]const u8).init(temp);
+                                try args.append("jj");
+                                try args.append("rebase");
 
-                            try args.append(self.log.focused_change.id[0..]);
+                                var it = self.log.selected_changes.iterator();
+                                while (it.next()) |e| {
+                                    try args.append("-r");
+                                    try args.append(e.key_ptr.id[0..]);
 
-                            try self.execute_non_interactive_command(args.items);
-
-                            try self.events.send(.rerender);
-                            try self.jj.requests.send(.status);
-                            continue :event_blk;
-                        }
-                    },
-                    .mouse => |key| {
-                        if (key.key == .scroll_down and key.action.pressed() and key.mod.eq(.{})) {
-                            self.log.y += 1;
-                            try self.events.send(.rerender);
-                            try self.events.send(.diff_update);
-                        }
-                        if (key.key == .scroll_up and key.action.pressed() and key.mod.eq(.{})) {
-                            self.log.y -= 1;
-                            try self.events.send(.rerender);
-                            try self.events.send(.diff_update);
-                        }
-                    },
-                    else => {},
-                };
-
-                if (self.state == .command) switch (input) {
-                    .key => |key| {
-                        if (key.action.pressed() and (key.mod.eq(.{ .shift = true }) or key.mod.eq(.{}))) {
-                            try self.command_text.write(cast(u8, key.key));
-                            try self.events.send(.rerender);
-                        }
-                    },
-                    .functional => |key| {
-                        if (key.key == .enter and key.action.pressed() and key.mod.eq(.{})) {
-                            defer _ = self.arena.reset(.retain_capacity);
-                            const temp = self.arena.allocator();
-                            var args = std.ArrayList([]const u8).init(temp);
-
-                            // TODO: support parsing and passing "string" and 'string' with \" \' and spaces properly
-                            var arg_it = std.mem.splitAny(u8, self.command_text.text.items, &std.ascii.whitespace);
-                            while (arg_it.next()) |arg| {
-                                try args.append(arg);
-                            }
-
-                            try self.execute_interactive_command(args.items);
-                            self.command_text.reset();
-                            self.state = .status;
-                        }
-                        if (key.key == .left and key.action.pressed() and key.mod.eq(.{})) {
-                            self.command_text.left();
-                            try self.events.send(.rerender);
-                        }
-                        if (key.key == .right and key.action.pressed() and key.mod.eq(.{})) {
-                            self.command_text.right();
-                            try self.events.send(.rerender);
-                        }
-                        if (key.key == .left and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
-                            self.command_text.left_word();
-                            try self.events.send(.rerender);
-                        }
-                        if (key.key == .right and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
-                            self.command_text.right_word();
-                            try self.events.send(.rerender);
-                        }
-                        if (key.key == .backspace and key.action.pressed() and key.mod.eq(.{})) {
-                            _ = self.command_text.back();
-                            try self.events.send(.rerender);
-                        }
-                        if (key.key == .backspace and key.action.pressed() and key.mod.eq(.{ .alt = true })) {
-                            _ = self.command_text.back();
-                            while (true) {
-                                if (' ' == self.command_text.peek_back() orelse break) {
-                                    break;
+                                    if (std.meta.eql(e.key_ptr.*, self.log.focused_change)) {
+                                        try self.events.send(.rerender);
+                                        continue :event_blk;
+                                    }
                                 }
+
+                                switch (self.state.rebase) {
+                                    .onto => try args.append("-d"),
+                                    .after => try args.append("-A"),
+                                    .before => try args.append("-B"),
+                                }
+
+                                try args.append(self.log.focused_change.id[0..]);
+
+                                try self.execute_non_interactive_command(args.items);
+
+                                try self.events.send(.rerender);
+                                try self.jj.requests.send(.status);
+                                continue :event_blk;
+                            }
+                        },
+                        .mouse => |key| {
+                            if (key.key == .scroll_down and key.action.pressed() and key.mod.eq(.{})) {
+                                self.log.y += 1;
+                                try self.events.send(.rerender);
+                                try self.events.send(.diff_update);
+                            }
+                            if (key.key == .scroll_up and key.action.pressed() and key.mod.eq(.{})) {
+                                self.log.y -= 1;
+                                try self.events.send(.rerender);
+                                try self.events.send(.diff_update);
+                            }
+                        },
+                        else => {},
+                    };
+
+                    if (self.state == .command) switch (input) {
+                        .key => |key| {
+                            if (key.action.pressed() and (key.mod.eq(.{ .shift = true }) or key.mod.eq(.{}))) {
+                                try self.command_text.write(cast(u8, key.key));
+                                try self.events.send(.rerender);
+                            }
+                        },
+                        .functional => |key| {
+                            if (key.key == .enter and key.action.pressed() and key.mod.eq(.{})) {
+                                var args = std.ArrayList([]const u8).init(temp);
+
+                                // TODO: support parsing and passing "string" and 'string' with \" \' and spaces properly
+                                var arg_it = std.mem.splitAny(u8, self.command_text.text.items, &std.ascii.whitespace);
+                                while (arg_it.next()) |arg| {
+                                    try args.append(arg);
+                                }
+
+                                try self.execute_interactive_command(args.items);
+                                self.command_text.reset();
+                                self.state = .status;
+                            }
+                            if (key.key == .left and key.action.pressed() and key.mod.eq(.{})) {
+                                self.command_text.left();
+                                try self.events.send(.rerender);
+                            }
+                            if (key.key == .right and key.action.pressed() and key.mod.eq(.{})) {
+                                self.command_text.right();
+                                try self.events.send(.rerender);
+                            }
+                            if (key.key == .left and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
+                                self.command_text.left_word();
+                                try self.events.send(.rerender);
+                            }
+                            if (key.key == .right and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
+                                self.command_text.right_word();
+                                try self.events.send(.rerender);
+                            }
+                            if (key.key == .backspace and key.action.pressed() and key.mod.eq(.{})) {
                                 _ = self.command_text.back();
+                                try self.events.send(.rerender);
                             }
-                            try self.events.send(.rerender);
-                        }
-                        if (key.key == .escape and key.action.just_pressed() and key.mod.eq(.{})) {
-                            self.state = .status;
-                            try self.events.send(.rerender);
-                            continue :event_blk;
-                        }
-                    },
-                    else => {},
-                };
-            },
-            .jj => |res| switch (res.req) {
-                .status => {
-                    self.alloc.free(self.log.status);
-                    switch (res.res) {
-                        .ok => |buf| {
-                            self.log.status = buf;
-                            self.log.changes.reset(buf);
-                            try self.events.send(.diff_update);
+                            if (key.key == .backspace and key.action.pressed() and key.mod.eq(.{ .alt = true })) {
+                                _ = self.command_text.back();
+                                while (true) {
+                                    if (' ' == self.command_text.peek_back() orelse break) {
+                                        break;
+                                    }
+                                    _ = self.command_text.back();
+                                }
+                                try self.events.send(.rerender);
+                            }
+                            if (key.key == .escape and key.action.just_pressed() and key.mod.eq(.{})) {
+                                self.state = .status;
+                                try self.events.send(.rerender);
+                                continue :event_blk;
+                            }
                         },
-                        .err => |buf| {
-                            self.log.status = buf;
-                        },
-                    }
+                        else => {},
+                    };
+                },
+                .jj => |res| switch (res.req) {
+                    .status => {
+                        self.alloc.free(self.log.status);
+                        switch (res.res) {
+                            .ok => |buf| {
+                                self.log.status = buf;
+                                self.log.changes.reset(buf);
+                                try self.events.send(.diff_update);
+                            },
+                            .err => |buf| {
+                                self.log.status = buf;
+                            },
+                        }
 
-                    try self.events.send(.rerender);
+                        try self.events.send(.rerender);
+                    },
+                    .diff => |req| {
+                        switch (res.res) {
+                            .ok, .err => |buf| {
+                                self.diff.diffcache.getPtr(req.hash).?.diff = buf;
+                            },
+                        }
+                        try self.events.send(.rerender);
+                    },
+                    .edit, .new => switch (res.res) {
+                        .ok, .err => |buf| self.alloc.free(buf),
+                    },
                 },
-                .diff => |req| {
-                    switch (res.res) {
-                        .ok, .err => |buf| {
-                            self.diff.diffcache.getPtr(req.hash).?.diff = buf;
-                        },
-                    }
-                    try self.events.send(.rerender);
-                },
-                .edit, .new => switch (res.res) {
-                    .ok, .err => |buf| self.alloc.free(buf),
-                },
-            },
-        };
+            }
+        }
     }
 
     fn save_diff(self: *@This(), change: *const jj_mod.Change, diff: []const u8) !void {
@@ -991,7 +992,6 @@ pub const App = struct {
     }
 
     fn render(self: *@This()) !void {
-        defer _ = self.arena.reset(.retain_capacity);
         defer self.render_count += 1;
 
         self.x_split = @min(@max(0.0, self.x_split), 1.0);

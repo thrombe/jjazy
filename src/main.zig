@@ -1052,11 +1052,73 @@ pub const App = struct {
     }
 
     fn execute_non_interactive_command(self: *@This(), args: []const []const u8) !void {
-        // TODO: redirect stdin, stdout, stderr
-        self._execute_command(args) catch |e| switch (e) {
+        self._execute_non_interactive_command(args) catch |e| switch (e) {
             error.SomeErrorMan => {},
             else => return e,
         };
+    }
+
+    fn _execute_non_interactive_command(self: *@This(), args: []const []const u8) !void {
+        const alloc = self.alloc;
+
+        var child = std.process.Child.init(args, alloc);
+        child.stdin_behavior = .Pipe;
+        child.stdout_behavior = .Pipe;
+        child.stderr_behavior = .Pipe;
+
+        try child.spawn();
+
+        const stdin = child.stdin orelse return error.NoStdin;
+        child.stdin = null;
+        const stdout = child.stdout orelse return error.NoStdout;
+        child.stdout = null;
+        const stderr = child.stderr orelse return error.NoStderr;
+        child.stderr = null;
+        defer stdout.close();
+        defer stderr.close();
+        stdin.close();
+
+        // similar to child.collectOutput
+        const max_output_bytes = 1000 * 1000;
+        var poller = std.io.poll(alloc, enum { stdout, stderr }, .{
+            .stdout = stdout,
+            .stderr = stderr,
+        });
+        defer poller.deinit();
+
+        while (try poller.poll()) {
+            if (poller.fifo(.stdout).count > max_output_bytes)
+                return error.StdoutStreamTooLong;
+            if (poller.fifo(.stderr).count > max_output_bytes)
+                return error.StderrStreamTooLong;
+        }
+
+        const err = try child.wait();
+        switch (err) {
+            .Exited => |e| {
+                if (e != 0) {
+                    std.log.err("exited with code: {}", .{e});
+                }
+                return error.SomeErrorMan;
+            },
+            // .Signal => |code| {},
+            // .Stopped => |code| {},
+            // .Unknown => |code| {},
+            else => |e| {
+                std.log.err("exited with code: {}", .{e});
+                return error.SomeErrorMan;
+            },
+        }
+
+        const err_fifo = poller.fifo(.stderr);
+        if (err_fifo.count > 0) {
+            std.log.err("{s}", .{err_fifo.buf[err_fifo.head..][0..err_fifo.count]});
+        }
+
+        const out_fifo = poller.fifo(.stdout);
+        if (out_fifo.count > 0) {
+            std.log.debug("{s}", .{out_fifo.buf[out_fifo.head..][0..out_fifo.count]});
+        }
     }
 
     fn execute_interactive_command(self: *@This(), args: []const []const u8) !void {

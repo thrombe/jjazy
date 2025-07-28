@@ -581,11 +581,11 @@ pub const App = struct {
             // try self.screen.term.fancy_features_that_break_gdb(.disable, .{});
         }
 
-        event_blk: while (self.events.wait_recv()) |event| {
+        while (self.events.wait_recv()) |event| {
             defer _ = self.arena.reset(.retain_capacity);
             const temp = self.arena.allocator();
 
-            switch (event) {
+            event_blk: switch (event) {
                 .quit => return,
                 .err => |err| return err,
                 .rerender => try self.render(),
@@ -646,7 +646,7 @@ pub const App = struct {
                             {
                                 try self.screen.term.fancy_features_that_break_gdb(.disable, .{});
                                 @breakpoint();
-                                continue :event_blk;
+                                break :event_blk;
                             };
                         },
                         .mouse => |key| {
@@ -680,7 +680,7 @@ pub const App = struct {
                                 self.state = .{ .rebase = .onto };
                                 try self.log.selected_changes.put(self.log.focused_change, {});
                                 try self.events.send(.rerender);
-                                continue :event_blk;
+                                break :event_blk;
                             }
                             if (key.key == 's' and key.action.pressed() and key.mod.eq(.{})) {
                                 try self.execute_interactive_command(&[_][]const u8{
@@ -733,7 +733,7 @@ pub const App = struct {
                                 self.state = .command;
                                 try self.events.send(.rerender);
                                 self.command_text.reset();
-                                continue;
+                                break :event_blk;
                             }
                         },
                         .mouse => |key| {
@@ -785,7 +785,7 @@ pub const App = struct {
                                 }
 
                                 try self.events.send(.rerender);
-                                continue :event_blk;
+                                break :event_blk;
                             }
                         },
                         .functional => |key| {
@@ -793,7 +793,7 @@ pub const App = struct {
                                 self.log.selected_changes.clearRetainingCapacity();
                                 self.state = .status;
                                 try self.events.send(.rerender);
-                                continue :event_blk;
+                                break :event_blk;
                             }
                             if (key.key == .enter and key.action.pressed() and key.mod.eq(.{})) {
                                 defer {
@@ -812,7 +812,7 @@ pub const App = struct {
 
                                     if (std.meta.eql(e.key_ptr.*, self.log.focused_change)) {
                                         try self.events.send(.rerender);
-                                        continue :event_blk;
+                                        break :event_blk;
                                     }
                                 }
 
@@ -828,7 +828,7 @@ pub const App = struct {
 
                                 try self.events.send(.rerender);
                                 try self.jj.requests.send(.status);
-                                continue :event_blk;
+                                break :event_blk;
                             }
                         },
                         .mouse => |key| {
@@ -900,7 +900,7 @@ pub const App = struct {
                             if (key.key == .escape and key.action.just_pressed() and key.mod.eq(.{})) {
                                 self.state = .status;
                                 try self.events.send(.rerender);
-                                continue :event_blk;
+                                break :event_blk;
                             }
                         },
                         else => {},
@@ -1169,5 +1169,5 @@ pub fn main() !void {
     const app = try App.init(alloc);
     defer app.deinit();
 
-    try app.event_loop();
+    app.event_loop() catch |e| utils_mod.dump_error(e);
 }

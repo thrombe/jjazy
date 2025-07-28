@@ -34,6 +34,7 @@ pub const Log = struct {
     path: []const u8 = "./zig-out/log.log",
     file: ?std.fs.File = null,
     alloc: ?std.mem.Allocator = null,
+    enabled: bool = true,
 
     pub const Writer = std.io.Writer(*const @This(), anyerror, @This().write);
 
@@ -77,8 +78,11 @@ pub const Log = struct {
         comptime format: []const u8,
         args: anytype,
     ) void {
+        if (!self.enabled) {
+            return;
+        }
         if (self.file == null) {
-            std.debug.print("File is cloded\n", .{});
+            std.debug.print("File is closed\n", .{});
             std.debug.print(format, args);
             return;
         }

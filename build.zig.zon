@@ -3,11 +3,6 @@
     .version = "0.0.0",
     .fingerprint = 0xf4277665346c850d,
     .minimum_zig_version = "0.14.0",
-    .dependencies = .{
-        .vaxis = .{
-            .url = "git+https://github.com/rockorager/libvaxis.git#cc9154d5f4afa3fdfd289157f195ec67804ef437",
-            .hash = "vaxis-0.5.1-BWNV_MYNCQDO92x2PTpsfv6GwDHmjL98rf6iL3pbMLj4",
-        },
-    },
+    .dependencies = .{},
     .paths = .{""},
 }

@@ -927,8 +927,19 @@ pub const App = struct {
                         }
                         try self.events.send(.rerender);
                     },
-                    .edit, .new => switch (res.res) {
-                        .ok, .err => |buf| self.alloc.free(buf),
+                    .edit => switch (res.res) {
+                        .ok, .err => |buf| {
+                            self.alloc.free(buf);
+                            try self.jj.requests.send(.status);
+                        },
+                    },
+                    .new => switch (res.res) {
+                        .err => |buf| self.alloc.free(buf),
+                        .ok => |buf| {
+                            self.alloc.free(buf);
+                            try self.jj.requests.send(.status);
+                            self.log.y = 0;
+                        },
                     },
                 },
             }

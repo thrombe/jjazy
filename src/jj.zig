@@ -133,8 +133,8 @@ pub const JujutsuServer = struct {
                         utils_mod.dump_error(e);
                         continue;
                     };
-                    self.alloc.free(res);
-                    try self.requests.send(.status);
+
+                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = res } } });
                 },
                 .edit => |change| {
                     const res = self.jjcall(&[_][]const u8{
@@ -145,8 +145,8 @@ pub const JujutsuServer = struct {
                         utils_mod.dump_error(e);
                         continue;
                     };
-                    self.alloc.free(res);
-                    try self.requests.send(.status);
+
+                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = res } } });
                 },
             }
         }

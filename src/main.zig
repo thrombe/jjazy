@@ -588,13 +588,21 @@ pub const App = struct {
                             if (key.action.just_pressed() and key.mod.eq(.{ .ctrl = true })) switch (key.key) {
                                 '1' => try self.screen.term.tty.writeAll(codes.kitty.disable_input_protocol),
                                 '2' => try self.screen.term.tty.writeAll(codes.focus.disable),
-                                '3' => try self.screen.term.tty.writeAll(codes.mouse.disable_any_event ++ codes.mouse.disable_sgr_mouse_mode ++ codes.mouse.disable_shift_escape),
+                                '3' => try self.screen.term.tty.writeAll("" ++
+                                    codes.mouse.disable_any_event ++
+                                    codes.mouse.disable_sgr_mouse_mode ++
+                                    codes.mouse.disable_shift_escape ++
+                                    ""),
                                 else => {},
                             };
                             if (key.action.just_pressed() and key.mod.eq(.{})) switch (key.key) {
                                 '1' => try self.screen.term.tty.writeAll(codes.kitty.enable_input_protocol),
                                 '2' => try self.screen.term.tty.writeAll(codes.focus.enable),
-                                '3' => try self.screen.term.tty.writeAll(codes.mouse.enable_any_event ++ codes.mouse.enable_sgr_mouse_mode ++ codes.mouse.enable_shift_escape),
+                                '3' => try self.screen.term.tty.writeAll("" ++
+                                    codes.mouse.enable_any_event ++
+                                    codes.mouse.enable_sgr_mouse_mode ++
+                                    codes.mouse.enable_shift_escape ++
+                                    ""),
                                 else => {},
                             };
                         }
@@ -735,7 +743,6 @@ pub const App = struct {
                                 else => {
                                     self.log.selected_changes.clearRetainingCapacity();
                                     self.state = .status;
-                                    try self.events.send(.rerender);
                                 },
                             }
 

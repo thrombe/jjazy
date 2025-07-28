@@ -1025,7 +1025,8 @@ pub const App = struct {
         const screen = self.screen.term.screen;
         const popup_size = Vec2{ .x = 60, .y = 20 };
         const origin = screen.origin.add(screen.size.mul(0.5)).sub(popup_size.mul(0.5));
-        var command = try Surface.init(&self.screen, .{ .origin = origin, .size = popup_size });
+        const region = self.screen.term.screen.clamp(.{ .origin = origin, .size = popup_size });
+        var command = try Surface.init(&self.screen, .{ .origin = region.origin, .size = region.size });
         try command.clear();
         try command.draw_border(term_mod.border.rounded);
         try command.draw_border_heading(" Command ");

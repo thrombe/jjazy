@@ -41,8 +41,16 @@ pub const Log = struct {
     pub var logger = @This(){};
     pub var writer = Writer{ .context = &logger };
 
-    pub fn init(self: *@This(), alloc: std.mem.Allocator) !void {
-        const file = try std.fs.cwd().createFile(self.path, .{});
+    pub fn init(self: *@This(), alloc: std.mem.Allocator, v: struct {
+        allow_fail: bool = false,
+    }) !void {
+        const file = std.fs.cwd().createFile(self.path, .{}) catch |e| {
+            if (v.allow_fail) {
+                self.enabled = false;
+                return;
+            }
+            return e;
+        };
         errdefer file.close();
 
         const stat = try file.stat();

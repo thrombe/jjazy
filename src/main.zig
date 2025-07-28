@@ -981,7 +981,7 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
     const alloc = gpa.allocator();
 
-    try utils_mod.Log.logger.init(alloc);
+    try utils_mod.Log.logger.init(alloc, .{ .allow_fail = true });
     defer utils_mod.Log.logger.deinit();
 
     defer _ = gpa.deinit();

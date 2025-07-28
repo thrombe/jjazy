@@ -19,8 +19,6 @@ pub const JujutsuServer = struct {
     pub const Request = union(enum) {
         status,
         diff: Change,
-        new: Change,
-        edit: Change,
     };
 
     pub const Result = union(enum) {
@@ -122,31 +120,6 @@ pub const JujutsuServer = struct {
                     try output.appendSlice(diff);
 
                     try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = try output.toOwnedSlice() } } });
-                },
-                .new => |change| {
-                    // TODO: allow more parents
-                    const res = self.jjcall(&[_][]const u8{
-                        "jj",
-                        "new",
-                        change.id[0..],
-                    }) catch |e| {
-                        utils_mod.dump_error(e);
-                        continue;
-                    };
-
-                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = res } } });
-                },
-                .edit => |change| {
-                    const res = self.jjcall(&[_][]const u8{
-                        "jj",
-                        "edit",
-                        change.id[0..],
-                    }) catch |e| {
-                        utils_mod.dump_error(e);
-                        continue;
-                    };
-
-                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = res } } });
                 },
             }
         }

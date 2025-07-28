@@ -258,7 +258,8 @@ const LogSlate = struct {
     changes: jj_mod.ChangeIterator,
     focused_change: jj_mod.Change = .{},
     alloc: std.mem.Allocator,
-    selected_changes: std.AutoHashMap(jj_mod.Change, void),
+    // arrayhashmap to preserve insertion order
+    selected_changes: std.AutoArrayHashMap(jj_mod.Change, void),
 
     fn deinit(self: *@This()) void {
         self.alloc.free(self.status);
@@ -780,7 +781,7 @@ pub const App = struct {
                     if (tropes.space_select) switch (input) {
                         .key => |key| {
                             if (key.key == ' ' and key.action.pressed() and key.mod.eq(.{})) {
-                                if (self.log.selected_changes.fetchRemove(self.log.focused_change) == null) {
+                                if (self.log.selected_changes.fetchOrderedRemove(self.log.focused_change) == null) {
                                     try self.log.selected_changes.put(self.log.focused_change, {});
                                 }
                             }
@@ -795,10 +796,16 @@ pub const App = struct {
                                     try self.events.send(.quit);
                                 }
                                 if (key.key == 'n' and key.action.pressed() and key.mod.eq(.{})) {
-                                    try self.jj.requests.send(.{ .new = self.log.focused_change });
+                                    self.state = .new;
+                                    break :event_blk;
                                 }
                                 if (key.key == 'e' and key.action.pressed() and key.mod.eq(.{})) {
-                                    try self.jj.requests.send(.{ .edit = self.log.focused_change });
+                                    try self.execute_non_interactive_command(&[_][]const u8{
+                                        "jj",
+                                        "edit",
+                                        self.log.focused_change.id[0..],
+                                    });
+                                    try self.jj.requests.send(.status);
                                 }
                                 if (key.key == 'r' and key.action.pressed() and key.mod.eq(.{})) {
                                     self.state = .{ .rebase = .onto };
@@ -844,8 +851,7 @@ pub const App = struct {
                             .key => |key| {
                                 if (std.mem.indexOfScalar(u8, "abo", cast(u8, key.key)) != null and
                                     key.action.pressed() and
-                                    key.mod.eq(.{}) and
-                                    self.state == .rebase)
+                                    key.mod.eq(.{}))
                                 {
                                     switch (key.key) {
                                         'o' => self.state = .{ .rebase = .onto },
@@ -905,6 +911,7 @@ pub const App = struct {
                                     }
 
                                     // TODO:
+                                    break :event_blk;
                                 }
                             },
                             else => {},
@@ -918,6 +925,7 @@ pub const App = struct {
                                     }
 
                                     // TODO:
+                                    break :event_blk;
                                 }
                             },
                             else => {},
@@ -930,7 +938,26 @@ pub const App = struct {
                                         self.state = .status;
                                     }
 
-                                    // TODO:
+                                    var args = std.ArrayList([]const u8).init(temp);
+                                    try args.append("jj");
+                                    try args.append("new");
+
+                                    var it = self.log.selected_changes.iterator();
+                                    while (it.next()) |e| {
+                                        try args.append(e.key_ptr.id[0..]);
+
+                                        if (std.meta.eql(e.key_ptr.*, self.log.focused_change)) {
+                                            break :event_blk;
+                                        }
+                                    }
+
+                                    try args.append(self.log.focused_change.id[0..]);
+
+                                    try self.execute_non_interactive_command(args.items);
+
+                                    try self.jj.requests.send(.status);
+                                    self.log.y = 0;
+                                    break :event_blk;
                                 }
                             },
                             else => {},
@@ -1008,20 +1035,6 @@ pub const App = struct {
                             },
                         }
                         try self.events.send(.rerender);
-                    },
-                    .edit => switch (res.res) {
-                        .ok, .err => |buf| {
-                            self.alloc.free(buf);
-                            try self.jj.requests.send(.status);
-                        },
-                    },
-                    .new => switch (res.res) {
-                        .err => |buf| self.alloc.free(buf),
-                        .ok => |buf| {
-                            self.alloc.free(buf);
-                            try self.jj.requests.send(.status);
-                            self.log.y = 0;
-                        },
                     },
                 },
             }

@@ -573,9 +573,7 @@ pub const App = struct {
         try self.events.send(.rerender);
 
         if (comptime builtin.mode == .Debug) {
-            try self.screen.term.tty.writeAll(codes.kitty.disable_input_protocol);
-            try self.screen.term.tty.writeAll(codes.focus.disable);
-            try self.screen.term.tty.writeAll(codes.mouse.disable_any_event ++ codes.mouse.disable_sgr_mouse_mode ++ codes.mouse.disable_shift_escape);
+            // try self.screen.term.fancy_features_that_break_gdb(.disable, .{});
         }
 
         event_blk: while (self.events.wait_recv()) |event| {
@@ -596,30 +594,55 @@ pub const App = struct {
 
                             if (comptime builtin.mode == .Debug) {
                                 if (key.action.just_pressed() and key.mod.eq(.{ .ctrl = true })) switch (key.key) {
-                                    '1' => try self.screen.term.tty.writeAll(codes.kitty.disable_input_protocol),
-                                    '2' => try self.screen.term.tty.writeAll(codes.focus.disable),
-                                    '3' => try self.screen.term.tty.writeAll("" ++
-                                        codes.mouse.disable_any_event ++
-                                        codes.mouse.disable_sgr_mouse_mode ++
-                                        codes.mouse.disable_shift_escape ++
-                                        ""),
+                                    '1' => try self.screen.term.fancy_features_that_break_gdb(.disable, .{
+                                        .input = true,
+                                        .focus = false,
+                                        .mouse = false,
+                                    }),
+                                    '2' => try self.screen.term.fancy_features_that_break_gdb(.disable, .{
+                                        .input = false,
+                                        .focus = true,
+                                        .mouse = false,
+                                    }),
+                                    '3' => try self.screen.term.fancy_features_that_break_gdb(.disable, .{
+                                        .input = false,
+                                        .focus = false,
+                                        .mouse = true,
+                                    }),
                                     else => {},
                                 };
                                 if (key.action.just_pressed() and key.mod.eq(.{})) switch (key.key) {
-                                    '1' => try self.screen.term.tty.writeAll(codes.kitty.enable_input_protocol),
-                                    '2' => try self.screen.term.tty.writeAll(codes.focus.enable),
-                                    '3' => try self.screen.term.tty.writeAll("" ++
-                                        codes.mouse.enable_any_event ++
-                                        codes.mouse.enable_sgr_mouse_mode ++
-                                        codes.mouse.enable_shift_escape ++
-                                        ""),
+                                    '1' => try self.screen.term.fancy_features_that_break_gdb(.enable, .{
+                                        .input = true,
+                                        .focus = false,
+                                        .mouse = false,
+                                    }),
+                                    '2' => try self.screen.term.fancy_features_that_break_gdb(.enable, .{
+                                        .input = false,
+                                        .focus = true,
+                                        .mouse = false,
+                                    }),
+                                    '3' => try self.screen.term.fancy_features_that_break_gdb(.enable, .{
+                                        .input = false,
+                                        .focus = false,
+                                        .mouse = true,
+                                    }),
                                     else => {},
                                 };
                             }
                         },
                         .functional => |key| {
-                            _ = key;
+                            // _ = key;
                             // std.log.debug("got input event: {any}", .{key});
+
+                            if (comptime builtin.mode == .Debug) if (key.key == .escape and
+                                key.action.just_pressed() and
+                                key.mod.eq(.{ .ctrl = true }))
+                            {
+                                try self.screen.term.fancy_features_that_break_gdb(.disable, .{});
+                                @breakpoint();
+                                continue :event_blk;
+                            };
                         },
                         .mouse => |key| {
                             _ = key;

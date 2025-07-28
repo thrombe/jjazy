@@ -898,6 +898,33 @@ pub const Term = struct {
         self.cooked_termios = null;
     }
 
+    pub fn fancy_features_that_break_gdb(self: *@This(), set: enum { enable, disable }, v: struct {
+        input: bool = true,
+        focus: bool = true,
+        mouse: bool = true,
+    }) !void {
+        switch (set) {
+            .enable => {
+                if (v.input) try self.tty.writeAll(codes.kitty.enable_input_protocol);
+                if (v.focus) try self.tty.writeAll(codes.focus.enable);
+                if (v.mouse) try self.tty.writeAll("" ++
+                    codes.mouse.enable_any_event ++
+                    codes.mouse.enable_sgr_mouse_mode ++
+                    codes.mouse.enable_shift_escape ++
+                    "");
+            },
+            .disable => {
+                if (v.input) try self.tty.writeAll(codes.kitty.disable_input_protocol);
+                if (v.focus) try self.tty.writeAll(codes.focus.disable);
+                if (v.mouse) try self.tty.writeAll("" ++
+                    codes.mouse.disable_any_event ++
+                    codes.mouse.disable_sgr_mouse_mode ++
+                    codes.mouse.disable_shift_escape ++
+                    "");
+            },
+        }
+    }
+
     pub fn update_size(self: *@This()) !void {
         var win_size = std.mem.zeroes(std.posix.winsize);
         const err = std.os.linux.ioctl(self.tty.handle, std.posix.T.IOCGWINSZ, @intFromPtr(&win_size));

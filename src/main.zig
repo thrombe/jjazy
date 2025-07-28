@@ -83,6 +83,11 @@ const Surface = struct {
         }), 0, 0, 0);
     }
 
+    fn draw_bufln(self: *@This(), buf: []const u8) !void {
+        try self.draw_buf(buf);
+        try self.new_line();
+    }
+
     fn draw_buf(self: *@This(), buf: []const u8) !void {
         if (self.is_full()) return;
 
@@ -270,45 +275,51 @@ const LogSlate = struct {
 
             const is_selected = self.selected_changes.contains(change.change);
             if (i == self.y) {
-                switch (state) {
-                    .onto => {
-                        if (is_selected) {
-                            try gutter.draw_buf("#>");
-                        } else {
-                            try gutter.draw_buf("->");
-                        }
-                        try gutter.new_line();
-                        try gutter.new_line();
+                if (state == .rebase) {
+                    try gutter.apply_style(.{ .background_color = .from_theme(.success) });
 
-                        try surface.draw_buf(change.buf);
-                        try surface.new_line();
-                    },
-                    .after => {
-                        try gutter.draw_buf("->");
-                        try gutter.new_line();
-                        try surface.new_line();
+                    switch (state.rebase) {
+                        .onto => {
+                            if (is_selected) {
+                                try gutter.draw_bufln("#>");
+                            } else {
+                                try gutter.draw_bufln("->");
+                            }
+                            try gutter.draw_bufln("  ");
 
-                        if (is_selected) {
-                            try gutter.draw_buf("#");
-                        }
-                        try gutter.new_line();
-                        try gutter.new_line();
-                        try surface.draw_buf(change.buf);
-                        try surface.new_line();
-                    },
-                    .before => {
-                        if (is_selected) {
-                            try gutter.draw_buf("#");
-                        }
-                        try gutter.new_line();
-                        try gutter.new_line();
-                        try surface.draw_buf(change.buf);
-                        try surface.new_line();
+                            try surface.draw_bufln(change.buf);
+                        },
+                        .after => {
+                            try gutter.draw_bufln("->");
+                            try surface.new_line();
 
-                        try gutter.draw_buf("->");
-                        try gutter.new_line();
-                        try surface.new_line();
-                    },
+                            if (is_selected) {
+                                try gutter.draw_bufln("# ");
+                            } else {
+                                try gutter.draw_bufln("  ");
+                            }
+                            try gutter.draw_bufln("  ");
+
+                            try surface.draw_bufln(change.buf);
+                        },
+                        .before => {
+                            if (is_selected) {
+                                try gutter.draw_bufln("# ");
+                            } else {
+                                try gutter.draw_bufln("  ");
+                            }
+                            try gutter.draw_bufln("  ");
+                            try surface.draw_bufln(change.buf);
+
+                            try gutter.draw_bufln("->");
+                            try surface.new_line();
+                        },
+                    }
+
+                    try gutter.apply_style(.reset);
+                } else {
+                    try gutter.draw_bufln("->");
+                    try surface.draw_bufln(change.buf);
                 }
             } else {
                 if (is_selected) {
@@ -317,8 +328,7 @@ const LogSlate = struct {
                 try gutter.new_line();
                 try gutter.new_line();
 
-                try surface.draw_buf(change.buf);
-                try surface.new_line();
+                try surface.draw_bufln(change.buf);
             }
 
             if (surface.is_full()) break;
@@ -704,8 +714,32 @@ pub const App = struct {
                         }
                         if (std.mem.indexOfScalar(u8, "abo", cast(u8, key.key)) != null and
                             key.action.pressed() and
-                            key.mod.eq(.{}))
+                            key.mod.eq(.{}) and
+                            self.state == .rebase)
                         {
+                            switch (key.key) {
+                                'o' => self.state = .{ .rebase = .onto },
+                                'a' => self.state = .{ .rebase = .after },
+                                'b' => self.state = .{ .rebase = .before },
+                                else => {
+                                    self.log.selected_changes.clearRetainingCapacity();
+                                    self.state = .status;
+                                    try self.events.send(.rerender);
+                                },
+                            }
+
+                            try self.events.send(.rerender);
+                            continue :event_blk;
+                        }
+                    },
+                    .functional => |key| {
+                        if (key.key == .escape and key.action.pressed() and key.mod.eq(.{})) {
+                            self.log.selected_changes.clearRetainingCapacity();
+                            self.state = .status;
+                            try self.events.send(.rerender);
+                            continue :event_blk;
+                        }
+                        if (key.key == .enter and key.action.pressed() and key.mod.eq(.{})) {
                             defer _ = self.arena.reset(.retain_capacity);
                             const temp = self.arena.allocator();
                             defer {
@@ -728,14 +762,10 @@ pub const App = struct {
                                 }
                             }
 
-                            switch (key.key) {
-                                'o' => try args.append("-d"),
-                                'a' => try args.append("-A"),
-                                'b' => try args.append("-B"),
-                                else => {
-                                    try self.events.send(.rerender);
-                                    continue :event_blk;
-                                },
+                            switch (self.state.rebase) {
+                                .onto => try args.append("-d"),
+                                .after => try args.append("-A"),
+                                .before => try args.append("-B"),
                             }
 
                             try args.append(self.log.focused_change.id[0..]);
@@ -744,14 +774,6 @@ pub const App = struct {
 
                             try self.events.send(.rerender);
                             try self.jj.requests.send(.status);
-                            continue :event_blk;
-                        }
-                    },
-                    .functional => |key| {
-                        if (key.key == .escape and key.action.pressed() and key.mod.eq(.{})) {
-                            self.log.selected_changes.clearRetainingCapacity();
-                            self.state = .status;
-                            try self.events.send(.rerender);
                             continue :event_blk;
                         }
                     },

@@ -268,24 +268,59 @@ const LogSlate = struct {
                 continue;
             }
 
+            const is_selected = self.selected_changes.contains(change.change);
             if (i == self.y) {
-                _ = state;
-                if (self.selected_changes.contains(change.change)) {
-                    try gutter.draw_buf("#>");
-                } else {
-                    try gutter.draw_buf("->");
+                switch (state) {
+                    .onto => {
+                        if (is_selected) {
+                            try gutter.draw_buf("#>");
+                        } else {
+                            try gutter.draw_buf("->");
+                        }
+                        try gutter.new_line();
+                        try gutter.new_line();
+
+                        try surface.draw_buf(change.buf);
+                        try surface.new_line();
+                    },
+                    .after => {
+                        try gutter.draw_buf("->");
+                        try gutter.new_line();
+                        try surface.new_line();
+
+                        if (is_selected) {
+                            try gutter.draw_buf("#");
+                        }
+                        try gutter.new_line();
+                        try gutter.new_line();
+                        try surface.draw_buf(change.buf);
+                        try surface.new_line();
+                    },
+                    .before => {
+                        if (is_selected) {
+                            try gutter.draw_buf("#");
+                        }
+                        try gutter.new_line();
+                        try gutter.new_line();
+                        try surface.draw_buf(change.buf);
+                        try surface.new_line();
+
+                        try gutter.draw_buf("->");
+                        try gutter.new_line();
+                        try surface.new_line();
+                    },
                 }
             } else {
-                if (self.selected_changes.contains(change.change)) {
+                if (is_selected) {
                     try gutter.draw_buf("#");
                 }
-            }
-            try gutter.new_line();
-            try gutter.new_line();
-            try gutter.new_line();
+                try gutter.new_line();
+                try gutter.new_line();
 
-            try surface.draw_buf(change.buf);
-            try surface.new_line();
+                try surface.draw_buf(change.buf);
+                try surface.new_line();
+            }
+
             if (surface.is_full()) break;
         }
         if (self.y >= i) {
@@ -360,7 +395,13 @@ pub const App = struct {
     pub const State = union(enum(u8)) {
         status,
         command,
-        rebase,
+        rebase: Rebase,
+    };
+
+    pub const Rebase = enum(u8) {
+        onto,
+        after,
+        before,
     };
 
     pub const Event = union(enum) {
@@ -569,7 +610,7 @@ pub const App = struct {
                             try self.jj.requests.send(.{ .edit = self.log.focused_change });
                         }
                         if (key.key == 'r' and key.action.pressed() and key.mod.eq(.{})) {
-                            self.state = .rebase;
+                            self.state = .{ .rebase = .onto };
                             try self.log.selected_changes.put(self.log.focused_change, {});
                             try self.events.send(.rerender);
                             continue :event_blk;
@@ -661,7 +702,10 @@ pub const App = struct {
                             }
                             try self.events.send(.rerender);
                         }
-                        if (std.mem.indexOfScalar(u8, "abo", cast(u8, key.key)) != null and key.action.pressed() and key.mod.eq(.{})) {
+                        if (std.mem.indexOfScalar(u8, "abo", cast(u8, key.key)) != null and
+                            key.action.pressed() and
+                            key.mod.eq(.{}))
+                        {
                             defer _ = self.arena.reset(.retain_capacity);
                             const temp = self.arena.allocator();
                             defer {

@@ -13,11 +13,15 @@ const codes = term_mod.codes;
 const jj_mod = @import("jj.zig");
 
 const Surface = struct {
-    border: bool = false,
+    region: lay_mod.Region,
+
     y: i32 = 0,
     x: i32 = 0,
+
     y_scroll: i32 = 0,
-    region: lay_mod.Region,
+    border: bool = false,
+
+    id: u32,
     screen: *term_mod.Screen,
 
     const Split = enum {
@@ -26,8 +30,9 @@ const Surface = struct {
         border,
     };
 
-    fn init(screen: *term_mod.Screen, v: struct { origin: ?Vec2 = null, size: ?Vec2 = null }) @This() {
+    fn init(screen: *term_mod.Screen, v: struct { origin: ?Vec2 = null, size: ?Vec2 = null }) !@This() {
         return .{
+            .id = try screen.get_surface_id(),
             .screen = screen,
             .region = .{
                 .origin = v.origin orelse screen.term.screen.origin,
@@ -41,7 +46,7 @@ const Surface = struct {
     }
 
     fn clear(self: *@This()) !void {
-        try self.screen.clear_region(self.region);
+        try self.screen.clear_region(self.id, self.region);
     }
 
     fn is_y_out(self: *@This()) bool {
@@ -63,15 +68,15 @@ const Surface = struct {
 
     fn draw_border(self: *@This(), borders: anytype) !void {
         self.border = true;
-        try self.screen.draw_border(self.region, borders);
+        try self.screen.draw_border(self.id, self.region, borders);
     }
 
     fn apply_style(self: *@This(), style: term_mod.TermStyledGraphemeIterator.Style) !void {
-        try style.write_to(self.screen.writer());
+        try style.write_to(self.screen.writer(self.id));
     }
 
     fn draw_border_heading(self: *@This(), heading: []const u8) !void {
-        _ = try self.screen.draw_buf(heading, self.region.clamp(.{
+        _ = try self.screen.draw_buf(self.id, heading, self.region.clamp(.{
             .origin = .{
                 .x = self.region.origin.x + 1,
                 .y = self.region.origin.y,
@@ -94,6 +99,7 @@ const Surface = struct {
         self.y = @max(0, self.y);
         self.y_scroll = @max(0, self.y_scroll);
         const res = try self.screen.draw_buf(
+            self.id,
             buf,
             self.region.border_sub(.splat(@intFromBool(self.border))),
             self.y,
@@ -109,15 +115,17 @@ const Surface = struct {
         const regions = self.region.border_sub(.splat(@intFromBool(self.border))).split_x(x, split != .none);
 
         if (split == .border) {
-            try self.screen.draw_split(self.region, regions.split, null, self.border);
+            try self.screen.draw_split(self.id, self.region, regions.split, null, self.border);
         }
 
         const other = @This(){
+            .id = try self.screen.get_surface_id(),
             .screen = self.screen,
             .region = regions.right,
         };
 
         self.* = @This(){
+            .id = self.id,
             .screen = self.screen,
             .region = regions.left,
         };
@@ -129,15 +137,17 @@ const Surface = struct {
         const regions = self.region.border_sub(.splat(@intFromBool(self.border))).split_y(y, split != .none);
 
         if (split == .border) {
-            try self.screen.draw_split(self.region, null, regions.split, self.border);
+            try self.screen.draw_split(self.id, self.region, null, regions.split, self.border);
         }
 
         const other = @This(){
+            .id = try self.screen.get_surface_id(),
             .screen = self.screen,
             .region = regions.bottom,
         };
 
         self.* = @This(){
+            .id = self.id,
             .screen = self.screen,
             .region = regions.top,
         };
@@ -965,7 +975,7 @@ pub const App = struct {
         const screen = self.screen.term.screen;
         const popup_size = Vec2{ .x = 60, .y = 20 };
         const origin = screen.origin.add(screen.size.mul(0.5)).sub(popup_size.mul(0.5));
-        var command = Surface.init(&self.screen, .{ .origin = origin, .size = popup_size });
+        var command = try Surface.init(&self.screen, .{ .origin = origin, .size = popup_size });
         try command.clear();
         try command.draw_border(term_mod.border.rounded);
         try command.draw_border_heading(" Command ");
@@ -981,7 +991,7 @@ pub const App = struct {
 
         try self.screen.term.update_size();
         {
-            var status = Surface.init(&self.screen, .{});
+            var status = try Surface.init(&self.screen, .{});
             try status.clear();
             // try status.draw_border(border.rounded);
 

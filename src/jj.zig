@@ -290,6 +290,10 @@ pub const ChangeIterator = struct {
         return null;
     }
 
+    pub fn ended(self: *@This()) bool {
+        return self.state.ended();
+    }
+
     pub const ChangeEntry = struct {
         buf: []const u8,
         change: Change,

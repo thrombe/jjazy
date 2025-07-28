@@ -136,8 +136,8 @@ pub const LineIterator = struct {
         return .{ .buf = buf };
     }
 
-    pub fn next(self: *LineIterator) ?[]const u8 {
-        if (self.index >= self.buf.len) return null;
+    pub fn next(self: *@This()) ?[]const u8 {
+        if (self.ended()) return null;
 
         const start = self.index;
         const end = std.mem.indexOfAnyPos(u8, self.buf, self.index, "\r\n") orelse {
@@ -149,6 +149,10 @@ pub const LineIterator = struct {
         self.consume_nl();
         self.consume_cr();
         return self.buf[start..end];
+    }
+
+    pub fn ended(self: *@This()) bool {
+        return self.index >= self.buf.len;
     }
 
     // consumes \n

@@ -343,7 +343,12 @@ const LogSlate = struct {
 
             if (surface.is_full()) break;
         }
-        if (self.y >= i) {
+
+        if (self.changes.ended() and self.y >= i and i > 0) {
+            self.y = i - 1;
+        }
+
+        if (self.y >= i and !self.changes.ended()) {
             self.skip_y += 1;
             try events.send(.rerender);
         }

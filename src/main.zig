@@ -18,7 +18,7 @@ const Surface = struct {
     x: i32 = 0,
     y_scroll: i32 = 0,
     region: lay_mod.Region,
-    term: *term_mod.Term,
+    screen: *term_mod.Screen,
 
     const Split = enum {
         none,
@@ -26,12 +26,12 @@ const Surface = struct {
         border,
     };
 
-    fn init(term: *term_mod.Term, v: struct { origin: ?Vec2 = null, size: ?Vec2 = null }) @This() {
+    fn init(screen: *term_mod.Screen, v: struct { origin: ?Vec2 = null, size: ?Vec2 = null }) @This() {
         return .{
-            .term = term,
+            .screen = screen,
             .region = .{
-                .origin = v.origin orelse term.screen.origin,
-                .size = v.size orelse term.screen.size,
+                .origin = v.origin orelse screen.term.screen.origin,
+                .size = v.size orelse screen.term.screen.size,
             },
         };
     }
@@ -41,7 +41,7 @@ const Surface = struct {
     }
 
     fn clear(self: *@This()) !void {
-        try self.term.clear_region(self.region);
+        try self.screen.clear_region(self.region);
     }
 
     fn is_y_out(self: *@This()) bool {
@@ -63,15 +63,15 @@ const Surface = struct {
 
     fn draw_border(self: *@This(), borders: anytype) !void {
         self.border = true;
-        try self.term.draw_border(self.region, borders);
+        try self.screen.draw_border(self.region, borders);
     }
 
     fn apply_style(self: *@This(), style: term_mod.TermStyledGraphemeIterator.Style) !void {
-        try style.write_to(self.term.writer());
+        try style.write_to(self.screen.writer());
     }
 
     fn draw_border_heading(self: *@This(), heading: []const u8) !void {
-        _ = try self.term.draw_buf(heading, self.region.clamp(.{
+        _ = try self.screen.draw_buf(heading, self.region.clamp(.{
             .origin = .{
                 .x = self.region.origin.x + 1,
                 .y = self.region.origin.y,
@@ -93,7 +93,7 @@ const Surface = struct {
 
         self.y = @max(0, self.y);
         self.y_scroll = @max(0, self.y_scroll);
-        const res = try self.term.draw_buf(
+        const res = try self.screen.draw_buf(
             buf,
             self.region.border_sub(.splat(@intFromBool(self.border))),
             self.y,
@@ -109,16 +109,16 @@ const Surface = struct {
         const regions = self.region.border_sub(.splat(@intFromBool(self.border))).split_x(x, split != .none);
 
         if (split == .border) {
-            try self.term.draw_split(self.region, regions.split, null, self.border);
+            try self.screen.draw_split(self.region, regions.split, null, self.border);
         }
 
         const other = @This(){
-            .term = self.term,
+            .screen = self.screen,
             .region = regions.right,
         };
 
         self.* = @This(){
-            .term = self.term,
+            .screen = self.screen,
             .region = regions.left,
         };
 
@@ -129,16 +129,16 @@ const Surface = struct {
         const regions = self.region.border_sub(.splat(@intFromBool(self.border))).split_y(y, split != .none);
 
         if (split == .border) {
-            try self.term.draw_split(self.region, null, regions.split, self.border);
+            try self.screen.draw_split(self.region, null, regions.split, self.border);
         }
 
         const other = @This(){
-            .term = self.term,
+            .screen = self.screen,
             .region = regions.bottom,
         };
 
         self.* = @This(){
-            .term = self.term,
+            .screen = self.screen,
             .region = regions.top,
         };
 
@@ -380,7 +380,7 @@ const DiffSlate = struct {
 };
 
 pub const App = struct {
-    term: term_mod.Term,
+    screen: term_mod.Screen,
 
     quit_input_loop: utils_mod.Fuse = .{},
 
@@ -433,11 +433,12 @@ pub const App = struct {
         var arena = std.heap.ArenaAllocator.init(alloc);
         errdefer arena.deinit();
 
-        var term = try term_mod.Term.init(alloc);
-        errdefer term.deinit();
+        const term = try term_mod.Term.init();
+        var screen = term_mod.Screen.init(alloc, term);
+        errdefer screen.deinit();
 
-        try term.uncook(@This());
-        errdefer term.cook_restore() catch |e| utils_mod.dump_error(e);
+        try screen.term.uncook(@This());
+        errdefer screen.term.cook_restore() catch |e| utils_mod.dump_error(e);
 
         var events = try utils_mod.Channel(Event).init(alloc);
         errdefer events.deinit();
@@ -450,7 +451,7 @@ pub const App = struct {
         self.* = .{
             .alloc = alloc,
             .arena = arena,
-            .term = term,
+            .screen = screen,
             .input_iterator = .{ .input = try .init(alloc) },
             .events = events,
             .jj = jj,
@@ -488,8 +489,8 @@ pub const App = struct {
         defer self.diff.deinit();
         defer self.command_text.deinit();
         defer self.arena.deinit();
-        defer self.term.deinit();
-        defer self.term.cook_restore() catch |e| utils_mod.dump_error(e);
+        defer self.screen.deinit();
+        defer self.screen.term.cook_restore() catch |e| utils_mod.dump_error(e);
         defer self.input_iterator.input.deinit();
         defer {
             while (self.events.try_recv()) |e| switch (e) {
@@ -515,10 +516,10 @@ pub const App = struct {
 
     fn input_loop(self: *@This()) !void {
         while (true) {
-            var fds = [1]std.posix.pollfd{.{ .fd = self.term.tty.handle, .events = std.posix.POLL.IN, .revents = 0 }};
+            var fds = [1]std.posix.pollfd{.{ .fd = self.screen.term.tty.handle, .events = std.posix.POLL.IN, .revents = 0 }};
             if (try std.posix.poll(&fds, 20) > 0) {
                 var buf = std.mem.zeroes([32]u8);
-                const n = try self.term.tty.read(&buf);
+                const n = try self.screen.term.tty.read(&buf);
                 for (buf[0..n]) |c| try self.input_iterator.input.push_back(c);
 
                 while (self.input_iterator.next() catch |e| switch (e) {
@@ -539,7 +540,7 @@ pub const App = struct {
     }
 
     fn restore_terminal_for_command(self: *@This()) !void {
-        try self.term.cook_restore();
+        try self.screen.term.cook_restore();
         _ = self.quit_input_loop.fuse();
         defer _ = self.quit_input_loop.unfuse();
         self.input_thread.join();
@@ -547,7 +548,7 @@ pub const App = struct {
 
     fn uncook_terminal(self: *@This()) !void {
         self.input_thread = try std.Thread.spawn(.{}, @This()._input_loop, .{self});
-        try self.term.uncook(@This());
+        try self.screen.term.uncook(@This());
         try self.events.send(.rerender);
         try self.jj.requests.send(.status);
     }
@@ -556,9 +557,9 @@ pub const App = struct {
         try self.events.send(.rerender);
 
         if (comptime builtin.mode == .Debug) {
-            try self.term.tty.writeAll(codes.kitty.disable_input_protocol);
-            try self.term.tty.writeAll(codes.focus.disable);
-            try self.term.tty.writeAll(codes.mouse.disable_any_event ++ codes.mouse.disable_sgr_mouse_mode ++ codes.mouse.disable_shift_escape);
+            try self.screen.term.tty.writeAll(codes.kitty.disable_input_protocol);
+            try self.screen.term.tty.writeAll(codes.focus.disable);
+            try self.screen.term.tty.writeAll(codes.mouse.disable_any_event ++ codes.mouse.disable_sgr_mouse_mode ++ codes.mouse.disable_shift_escape);
         }
 
         event_blk: while (self.events.wait_recv()) |event| switch (event) {
@@ -575,15 +576,15 @@ pub const App = struct {
 
                         if (comptime builtin.mode == .Debug) {
                             if (key.action.just_pressed() and key.mod.eq(.{ .ctrl = true })) switch (key.key) {
-                                '1' => try self.term.tty.writeAll(codes.kitty.disable_input_protocol),
-                                '2' => try self.term.tty.writeAll(codes.focus.disable),
-                                '3' => try self.term.tty.writeAll(codes.mouse.disable_any_event ++ codes.mouse.disable_sgr_mouse_mode ++ codes.mouse.disable_shift_escape),
+                                '1' => try self.screen.term.tty.writeAll(codes.kitty.disable_input_protocol),
+                                '2' => try self.screen.term.tty.writeAll(codes.focus.disable),
+                                '3' => try self.screen.term.tty.writeAll(codes.mouse.disable_any_event ++ codes.mouse.disable_sgr_mouse_mode ++ codes.mouse.disable_shift_escape),
                                 else => {},
                             };
                             if (key.action.just_pressed() and key.mod.eq(.{})) switch (key.key) {
-                                '1' => try self.term.tty.writeAll(codes.kitty.enable_input_protocol),
-                                '2' => try self.term.tty.writeAll(codes.focus.enable),
-                                '3' => try self.term.tty.writeAll(codes.mouse.enable_any_event ++ codes.mouse.enable_sgr_mouse_mode ++ codes.mouse.enable_shift_escape),
+                                '1' => try self.screen.term.tty.writeAll(codes.kitty.enable_input_protocol),
+                                '2' => try self.screen.term.tty.writeAll(codes.focus.enable),
+                                '3' => try self.screen.term.tty.writeAll(codes.mouse.enable_any_event ++ codes.mouse.enable_sgr_mouse_mode ++ codes.mouse.enable_shift_escape),
                                 else => {},
                             };
                         }
@@ -961,10 +962,10 @@ pub const App = struct {
     }
 
     fn render_command_input(self: *@This()) !void {
-        const screen = self.term.screen;
+        const screen = self.screen.term.screen;
         const popup_size = Vec2{ .x = 60, .y = 20 };
         const origin = screen.origin.add(screen.size.mul(0.5)).sub(popup_size.mul(0.5));
-        var command = Surface.init(&self.term, .{ .origin = origin, .size = popup_size });
+        var command = Surface.init(&self.screen, .{ .origin = origin, .size = popup_size });
         try command.clear();
         try command.draw_border(term_mod.border.rounded);
         try command.draw_border_heading(" Command ");
@@ -978,9 +979,9 @@ pub const App = struct {
 
         self.x_split = @min(@max(0.0, self.x_split), 1.0);
 
-        try self.term.update_size();
+        try self.screen.term.update_size();
         {
-            var status = Surface.init(&self.term, .{});
+            var status = Surface.init(&self.screen, .{});
             try status.clear();
             // try status.draw_border(border.rounded);
 
@@ -996,7 +997,7 @@ pub const App = struct {
                 try self.render_command_input();
             }
         }
-        try self.term.flush_writes();
+        try self.screen.flush_writes();
     }
 
     fn execute_non_interactive_command(self: *@This(), args: []const []const u8) !void {

@@ -848,21 +848,15 @@ pub const TermInputIterator = struct {
 
 pub const Term = struct {
     tty: std.fs.File,
-
     screen: Region = .{ .size = .{} },
     cooked_termios: ?std.posix.termios = null,
     raw: ?std.posix.termios = null,
 
-    cmdbuf: std.ArrayList(u8),
-
-    pub fn init(alloc: std.mem.Allocator) !@This() {
+    pub fn init() !@This() {
         const tty = try std.fs.cwd().openFile("/dev/tty", .{ .mode = .read_write });
         errdefer tty.close();
 
-        var self = @This(){
-            .tty = tty,
-            .cmdbuf = .init(alloc),
-        };
+        var self = @This(){ .tty = tty };
 
         try self.update_size();
 
@@ -870,7 +864,6 @@ pub const Term = struct {
     }
 
     pub fn deinit(self: *@This()) void {
-        self.cmdbuf.deinit();
         self.tty.close();
     }
 
@@ -907,165 +900,6 @@ pub const Term = struct {
         self.unregister_signal_handlers();
     }
 
-    pub fn writer(self: *@This()) std.ArrayList(u8).Writer {
-        return self.cmdbuf.writer();
-    }
-
-    pub fn flush_writes(self: *@This()) !void {
-        // cmdbuf's last command is sync reset
-        try self.writer().writeAll(codes.sync_reset);
-
-        // flush and clear cmdbuf
-        try self.tty.writeAll(self.cmdbuf.items);
-        self.cmdbuf.clearRetainingCapacity();
-
-        // cmdbuf's first command is sync start
-        try self.writer().writeAll(codes.sync_set ++ codes.clear);
-    }
-
-    pub fn clear_region(self: *@This(), region: Region) !void {
-        const out = self.screen.clamp(region);
-        const range_y = out.range_y();
-        for (@intCast(range_y.begin)..@intCast(range_y.end)) |y| {
-            try self.cursor_move(.{ .y = cast(u16, y), .x = out.origin.x });
-            try self.writer().writeByteNTimes(' ', @intCast(out.size.x));
-        }
-    }
-
-    pub fn draw_at(self: *@This(), pos: Vec2, token: []const u8) !void {
-        if (self.screen.contains_vec(pos)) {
-            try self.cursor_move(pos);
-            try self.writer().writeAll(token);
-        }
-    }
-
-    pub fn draw_border(self: *@This(), region: Region, corners: anytype) !void {
-        const out = self.screen.clamp(region);
-        const end = region.end();
-        const range_y = out.range_y();
-
-        if (out.size.x == 0 or out.size.y == 0) {
-            return;
-        } else if (std.meta.eql(out.size, .splat(1))) {
-            return;
-        } else if (out.size.x == 1) {
-            for (@intCast(range_y.begin)..@intCast(range_y.end)) |y| {
-                try self.draw_at(.{ .y = @intCast(y), .x = out.origin.x }, border.edge.vertical);
-            }
-            return;
-        } else if (out.size.y == 1) {
-            try self.cursor_move(out.origin);
-            try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(out.size.x));
-            return;
-        }
-
-        if (self.screen.contains_y(region.origin.y)) {
-            try self.cursor_move(out.origin);
-            try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(out.size.x));
-        }
-        if (self.screen.contains_y(end.y)) {
-            try self.cursor_move(.{ .x = out.origin.x, .y = end.y });
-            try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(out.size.x));
-        }
-
-        for (@intCast(range_y.begin)..@intCast(range_y.end)) |y| {
-            try self.draw_at(.{ .y = @intCast(y), .x = out.origin.x }, border.edge.vertical);
-            try self.draw_at(.{ .y = @intCast(y), .x = end.x }, border.edge.vertical);
-        }
-
-        // write corners last so that it overwrites the edges (this simplifies code)
-        try self.draw_at(.{ .x = out.origin.x, .y = out.origin.y }, corners.top_left);
-        try self.draw_at(.{ .x = end.x, .y = out.origin.y }, corners.top_right);
-        try self.draw_at(.{ .x = out.origin.x, .y = end.y }, corners.bottom_left);
-        try self.draw_at(.{ .x = end.x, .y = end.y }, corners.bottom_right);
-    }
-
-    pub fn draw_split(self: *@This(), region: Region, _x: ?i32, _y: ?i32, borders: bool) !void {
-        const border_out = self.screen.clamp(region);
-        const in_region = region.border_sub(.splat(@intFromBool(borders)));
-        const out = self.screen.clamp(in_region);
-        const end = out.end();
-        const range_y = out.range_y();
-
-        if (_y) |y| {
-            if (self.screen.contains_y(y) and in_region.contains_y(y)) {
-                try self.cursor_move(.{ .x = out.origin.x, .y = y });
-                try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(out.size.x));
-            }
-            if (borders and in_region.contains_y(y)) {
-                if (in_region.contains_x(out.origin.x)) try self.draw_at(.{ .y = y, .x = border_out.origin.x }, border.cross.nse);
-                if (in_region.contains_x(end.x)) try self.draw_at(.{ .y = y, .x = border_out.end().x }, border.cross.nws);
-            }
-        }
-        if (_x) |x| {
-            for (@intCast(range_y.begin)..@intCast(range_y.end)) |y| {
-                try self.draw_at(.{ .x = x, .y = @intCast(y) }, border.edge.vertical);
-            }
-            if (borders and in_region.contains_x(x)) {
-                if (in_region.contains_y(out.origin.y)) try self.draw_at(.{ .x = x, .y = border_out.origin.y }, border.cross.wse);
-                if (in_region.contains_y(end.y)) try self.draw_at(.{ .x = x, .y = border_out.end().y }, border.cross.wne);
-            }
-        }
-        if (_x) |x| if (_y) |y| if (in_region.contains_vec(.{ .x = x, .y = y })) try self.draw_at(.{ .x = x, .y = y }, border.cross.nwse);
-    }
-
-    pub fn draw_buf(
-        self: *@This(),
-        buf: []const u8,
-        region: Region,
-        y_offset: i32,
-        x_offset: i32,
-        y_skip: u32,
-    ) !struct {
-        x: i32,
-        y: i32,
-        skipped: i32,
-    } {
-        const out = self.screen.clamp(region.clamp(.{
-            .origin = region.origin.add(.{ .y = y_offset }),
-            .size = region.size.sub(.{ .y = y_offset }),
-        }));
-        const end = out.end();
-        const range_y = out.range_y();
-
-        var last_y: i32 = y_offset;
-        var last_x: i32 = out.origin.x + x_offset;
-        var skipped: i32 = 0;
-
-        var line_it = utils_mod.LineIterator{ .buf = buf };
-        for (0..y_skip) |_| {
-            skipped += 1;
-            _ = line_it.next();
-        }
-
-        var line = line_it.next();
-        for (@intCast(range_y.begin)..@intCast(range_y.end)) |y| {
-            _ = line orelse break;
-            try self.cursor_move(.{ .y = cast(i32, y), .x = last_x });
-
-            var codepoint_it = try TermStyledGraphemeIterator.init(line.?);
-
-            while (try codepoint_it.next()) |token| {
-                // execute all control chars
-                // but don't print beyond the size
-                if (token.codepoint) |codepoint| {
-                    if (codepoint != .erase_in_line) {
-                        try self.writer().writeAll(token.grapheme);
-                    }
-                } else if (last_x <= end.x) {
-                    try self.writer().writeAll(token.grapheme);
-                    last_x += 1;
-                }
-            }
-
-            line = line_it.next() orelse break;
-            last_x = out.origin.x;
-            last_y += 1;
-        }
-
-        return .{ .x = last_x - out.origin.x, .y = last_y, .skipped = skipped };
-    }
-
     pub fn update_size(self: *@This()) !void {
         var win_size = std.mem.zeroes(std.posix.winsize);
         const err = std.os.linux.ioctl(self.tty.handle, std.posix.T.IOCGWINSZ, @intFromPtr(&win_size));
@@ -1073,10 +907,6 @@ pub const Term = struct {
             return std.posix.unexpectedErrno(@as(std.posix.E, @enumFromInt(err)));
         }
         self.screen.size = .{ .y = win_size.row, .x = win_size.col };
-    }
-
-    pub fn cursor_move(self: *@This(), v: Vec2) !void {
-        try self.writer().print(codes.cursor.move, .{ v.y + 1, v.x + 1 });
     }
 
     fn enter_raw_mode(self: *@This()) !void {
@@ -1140,5 +970,182 @@ pub const Term = struct {
             .mask = std.posix.empty_sigset,
             .flags = 0,
         }, null);
+    }
+};
+
+pub const Screen = struct {
+    term: Term,
+    cmdbuf: std.ArrayList(u8),
+
+    pub fn init(alloc: std.mem.Allocator, term: Term) @This() {
+        return .{ .cmdbuf = .init(alloc), .term = term };
+    }
+
+    pub fn deinit(self: *@This()) void {
+        self.term.deinit();
+        self.cmdbuf.deinit();
+    }
+
+    pub fn writer(self: *@This()) std.ArrayList(u8).Writer {
+        return self.cmdbuf.writer();
+    }
+
+    pub fn flush_writes(self: *@This()) !void {
+        // cmdbuf's last command is sync reset
+        try self.writer().writeAll(codes.sync_reset);
+
+        // flush and clear cmdbuf
+        try self.term.tty.writeAll(self.cmdbuf.items);
+        self.cmdbuf.clearRetainingCapacity();
+
+        // cmdbuf's first command is sync start
+        try self.writer().writeAll(codes.sync_set ++ codes.clear);
+    }
+
+    pub fn clear_region(self: *@This(), region: Region) !void {
+        const out = self.term.screen.clamp(region);
+        const range_y = out.range_y();
+        for (@intCast(range_y.begin)..@intCast(range_y.end)) |y| {
+            try self.cursor_move(.{ .y = cast(u16, y), .x = out.origin.x });
+            try self.writer().writeByteNTimes(' ', @intCast(out.size.x));
+        }
+    }
+
+    pub fn draw_at(self: *@This(), pos: Vec2, token: []const u8) !void {
+        if (self.term.screen.contains_vec(pos)) {
+            try self.cursor_move(pos);
+            try self.writer().writeAll(token);
+        }
+    }
+
+    pub fn draw_border(self: *@This(), region: Region, corners: anytype) !void {
+        const out = self.term.screen.clamp(region);
+        const end = region.end();
+        const range_y = out.range_y();
+
+        if (out.size.x == 0 or out.size.y == 0) {
+            return;
+        } else if (std.meta.eql(out.size, .splat(1))) {
+            return;
+        } else if (out.size.x == 1) {
+            for (@intCast(range_y.begin)..@intCast(range_y.end)) |y| {
+                try self.draw_at(.{ .y = @intCast(y), .x = out.origin.x }, border.edge.vertical);
+            }
+            return;
+        } else if (out.size.y == 1) {
+            try self.cursor_move(out.origin);
+            try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(out.size.x));
+            return;
+        }
+
+        if (self.term.screen.contains_y(region.origin.y)) {
+            try self.cursor_move(out.origin);
+            try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(out.size.x));
+        }
+        if (self.term.screen.contains_y(end.y)) {
+            try self.cursor_move(.{ .x = out.origin.x, .y = end.y });
+            try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(out.size.x));
+        }
+
+        for (@intCast(range_y.begin)..@intCast(range_y.end)) |y| {
+            try self.draw_at(.{ .y = @intCast(y), .x = out.origin.x }, border.edge.vertical);
+            try self.draw_at(.{ .y = @intCast(y), .x = end.x }, border.edge.vertical);
+        }
+
+        // write corners last so that it overwrites the edges (this simplifies code)
+        try self.draw_at(.{ .x = out.origin.x, .y = out.origin.y }, corners.top_left);
+        try self.draw_at(.{ .x = end.x, .y = out.origin.y }, corners.top_right);
+        try self.draw_at(.{ .x = out.origin.x, .y = end.y }, corners.bottom_left);
+        try self.draw_at(.{ .x = end.x, .y = end.y }, corners.bottom_right);
+    }
+
+    pub fn draw_split(self: *@This(), region: Region, _x: ?i32, _y: ?i32, borders: bool) !void {
+        const border_out = self.term.screen.clamp(region);
+        const in_region = region.border_sub(.splat(@intFromBool(borders)));
+        const out = self.term.screen.clamp(in_region);
+        const end = out.end();
+        const range_y = out.range_y();
+
+        if (_y) |y| {
+            if (self.term.screen.contains_y(y) and in_region.contains_y(y)) {
+                try self.cursor_move(.{ .x = out.origin.x, .y = y });
+                try self.writer().writeBytesNTimes(border.edge.horizontal, @intCast(out.size.x));
+            }
+            if (borders and in_region.contains_y(y)) {
+                if (in_region.contains_x(out.origin.x)) try self.draw_at(.{ .y = y, .x = border_out.origin.x }, border.cross.nse);
+                if (in_region.contains_x(end.x)) try self.draw_at(.{ .y = y, .x = border_out.end().x }, border.cross.nws);
+            }
+        }
+        if (_x) |x| {
+            for (@intCast(range_y.begin)..@intCast(range_y.end)) |y| {
+                try self.draw_at(.{ .x = x, .y = @intCast(y) }, border.edge.vertical);
+            }
+            if (borders and in_region.contains_x(x)) {
+                if (in_region.contains_y(out.origin.y)) try self.draw_at(.{ .x = x, .y = border_out.origin.y }, border.cross.wse);
+                if (in_region.contains_y(end.y)) try self.draw_at(.{ .x = x, .y = border_out.end().y }, border.cross.wne);
+            }
+        }
+        if (_x) |x| if (_y) |y| if (in_region.contains_vec(.{ .x = x, .y = y })) try self.draw_at(.{ .x = x, .y = y }, border.cross.nwse);
+    }
+
+    pub fn draw_buf(
+        self: *@This(),
+        buf: []const u8,
+        region: Region,
+        y_offset: i32,
+        x_offset: i32,
+        y_skip: u32,
+    ) !struct {
+        x: i32,
+        y: i32,
+        skipped: i32,
+    } {
+        const out = self.term.screen.clamp(region.clamp(.{
+            .origin = region.origin.add(.{ .y = y_offset }),
+            .size = region.size.sub(.{ .y = y_offset }),
+        }));
+        const end = out.end();
+        const range_y = out.range_y();
+
+        var last_y: i32 = y_offset;
+        var last_x: i32 = out.origin.x + x_offset;
+        var skipped: i32 = 0;
+
+        var line_it = utils_mod.LineIterator{ .buf = buf };
+        for (0..y_skip) |_| {
+            skipped += 1;
+            _ = line_it.next();
+        }
+
+        var line = line_it.next();
+        for (@intCast(range_y.begin)..@intCast(range_y.end)) |y| {
+            _ = line orelse break;
+            try self.cursor_move(.{ .y = cast(i32, y), .x = last_x });
+
+            var codepoint_it = try TermStyledGraphemeIterator.init(line.?);
+
+            while (try codepoint_it.next()) |token| {
+                // execute all control chars
+                // but don't print beyond the size
+                if (token.codepoint) |codepoint| {
+                    if (codepoint != .erase_in_line) {
+                        try self.writer().writeAll(token.grapheme);
+                    }
+                } else if (last_x <= end.x) {
+                    try self.writer().writeAll(token.grapheme);
+                    last_x += 1;
+                }
+            }
+
+            line = line_it.next() orelse break;
+            last_x = out.origin.x;
+            last_y += 1;
+        }
+
+        return .{ .x = last_x - out.origin.x, .y = last_y, .skipped = skipped };
+    }
+
+    pub fn cursor_move(self: *@This(), v: Vec2) !void {
+        try self.writer().print(codes.cursor.move, .{ v.y + 1, v.x + 1 });
     }
 };

@@ -76,16 +76,16 @@ const Surface = struct {
     }
 
     fn draw_border_heading(self: *@This(), heading: []const u8) !void {
-        _ = try self.screen.draw_buf(self.id, heading, self.region.clamp(.{
+        _ = try self.screen.draw_buf(self.id, heading, .{
             .origin = .{
-                .x = self.region.origin.x + 1,
+                .x = @min(self.region.end().x, self.region.origin.x + 1),
                 .y = self.region.origin.y,
             },
             .size = .{
-                .x = self.region.size.x - 2,
-                .y = self.region.size.y,
+                .x = @max(0, self.region.size.x - 2),
+                .y = 1,
             },
-        }), 0, 0, 0);
+        }, 0, 0, 0);
     }
 
     fn draw_bufln(self: *@This(), buf: []const u8) !void {

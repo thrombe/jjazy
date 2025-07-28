@@ -416,6 +416,7 @@ pub const App = struct {
 
     state: State = .status,
     render_count: u64 = 0,
+    last_hash: u64 = 0,
 
     pub const State = union(enum(u8)) {
         status,
@@ -584,6 +585,28 @@ pub const App = struct {
         while (self.events.wait_recv()) |event| {
             defer _ = self.arena.reset(.retain_capacity);
             const temp = self.arena.allocator();
+            var hasher = std.hash.Wyhash.init(0);
+            defer {
+                hasher.update(&std.mem.toBytes(self.state));
+                hasher.update(&std.mem.toBytes(self.x_split));
+                hasher.update(&std.mem.toBytes(self.log.y));
+                if (self.diff.diffcache.getPtr(self.log.focused_change.hash)) |diff| {
+                    hasher.update(&std.mem.toBytes(diff.y));
+                }
+                var it = self.log.selected_changes.iterator();
+                while (it.next()) |e| {
+                    hasher.update(&e.key_ptr.id);
+                }
+                hasher.update(&std.mem.toBytes(self.command_text.text.items.len));
+                hasher.update(&std.mem.toBytes(self.command_text.cursor));
+                // hasher.update(self.log.status); // too much text for hashing on every event
+
+                const final_hash = hasher.final();
+                if (final_hash != self.last_hash) {
+                    self.events.send(.rerender) catch |e| utils_mod.dump_error(e);
+                }
+                self.last_hash = final_hash;
+            }
 
             event_blk: switch (event) {
                 .quit => return,
@@ -679,7 +702,6 @@ pub const App = struct {
                             if (key.key == 'r' and key.action.pressed() and key.mod.eq(.{})) {
                                 self.state = .{ .rebase = .onto };
                                 try self.log.selected_changes.put(self.log.focused_change, {});
-                                try self.events.send(.rerender);
                                 break :event_blk;
                             }
                             if (key.key == 's' and key.action.pressed() and key.mod.eq(.{})) {
@@ -700,38 +722,31 @@ pub const App = struct {
                             }
                             if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{})) {
                                 self.log.y += 1;
-                                try self.events.send(.rerender);
                                 try self.events.send(.diff_update);
                             }
                             if (key.key == 'k' and key.action.pressed() and key.mod.eq(.{})) {
                                 self.log.y -= 1;
-                                try self.events.send(.rerender);
                                 try self.events.send(.diff_update);
                             }
                             if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
                                 if (self.diff.diffcache.getPtr(self.log.focused_change.hash)) |diff| {
                                     diff.y += 10;
                                 }
-                                try self.events.send(.rerender);
                             }
                             if (key.key == 'k' and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
                                 if (self.diff.diffcache.getPtr(self.log.focused_change.hash)) |diff| {
                                     diff.y -= 10;
                                 }
-                                try self.events.send(.rerender);
                             }
                             if (key.key == 'h' and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
                                 self.x_split -= 0.05;
-                                try self.events.send(.rerender);
                             }
                             if (key.key == 'l' and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
                                 self.x_split += 0.05;
-                                try self.events.send(.rerender);
                             }
 
                             if (key.key == ':' and key.action.just_pressed() and key.mod.eq(.{ .shift = true })) {
                                 self.state = .command;
-                                try self.events.send(.rerender);
                                 self.command_text.reset();
                                 break :event_blk;
                             }
@@ -739,12 +754,10 @@ pub const App = struct {
                         .mouse => |key| {
                             if (key.key == .scroll_down and key.action.pressed() and key.mod.eq(.{})) {
                                 self.log.y += 1;
-                                try self.events.send(.rerender);
                                 try self.events.send(.diff_update);
                             }
                             if (key.key == .scroll_up and key.action.pressed() and key.mod.eq(.{})) {
                                 self.log.y -= 1;
-                                try self.events.send(.rerender);
                                 try self.events.send(.diff_update);
                             }
                         },
@@ -755,19 +768,16 @@ pub const App = struct {
                         .key => |key| {
                             if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{})) {
                                 self.log.y += 1;
-                                try self.events.send(.rerender);
                                 try self.events.send(.diff_update);
                             }
                             if (key.key == 'k' and key.action.pressed() and key.mod.eq(.{})) {
                                 self.log.y -= 1;
-                                try self.events.send(.rerender);
                                 try self.events.send(.diff_update);
                             }
                             if (key.key == ' ' and key.action.pressed() and key.mod.eq(.{})) {
                                 if (self.log.selected_changes.fetchRemove(self.log.focused_change) == null) {
                                     try self.log.selected_changes.put(self.log.focused_change, {});
                                 }
-                                try self.events.send(.rerender);
                             }
                             if (std.mem.indexOfScalar(u8, "abo", cast(u8, key.key)) != null and
                                 key.action.pressed() and
@@ -792,7 +802,6 @@ pub const App = struct {
                             if (key.key == .escape and key.action.pressed() and key.mod.eq(.{})) {
                                 self.log.selected_changes.clearRetainingCapacity();
                                 self.state = .status;
-                                try self.events.send(.rerender);
                                 break :event_blk;
                             }
                             if (key.key == .enter and key.action.pressed() and key.mod.eq(.{})) {
@@ -811,7 +820,6 @@ pub const App = struct {
                                     try args.append(e.key_ptr.id[0..]);
 
                                     if (std.meta.eql(e.key_ptr.*, self.log.focused_change)) {
-                                        try self.events.send(.rerender);
                                         break :event_blk;
                                     }
                                 }
@@ -826,7 +834,6 @@ pub const App = struct {
 
                                 try self.execute_non_interactive_command(args.items);
 
-                                try self.events.send(.rerender);
                                 try self.jj.requests.send(.status);
                                 break :event_blk;
                             }
@@ -834,12 +841,10 @@ pub const App = struct {
                         .mouse => |key| {
                             if (key.key == .scroll_down and key.action.pressed() and key.mod.eq(.{})) {
                                 self.log.y += 1;
-                                try self.events.send(.rerender);
                                 try self.events.send(.diff_update);
                             }
                             if (key.key == .scroll_up and key.action.pressed() and key.mod.eq(.{})) {
                                 self.log.y -= 1;
-                                try self.events.send(.rerender);
                                 try self.events.send(.diff_update);
                             }
                         },
@@ -850,7 +855,6 @@ pub const App = struct {
                         .key => |key| {
                             if (key.action.pressed() and (key.mod.eq(.{ .shift = true }) or key.mod.eq(.{}))) {
                                 try self.command_text.write(cast(u8, key.key));
-                                try self.events.send(.rerender);
                             }
                         },
                         .functional => |key| {
@@ -869,23 +873,18 @@ pub const App = struct {
                             }
                             if (key.key == .left and key.action.pressed() and key.mod.eq(.{})) {
                                 self.command_text.left();
-                                try self.events.send(.rerender);
                             }
                             if (key.key == .right and key.action.pressed() and key.mod.eq(.{})) {
                                 self.command_text.right();
-                                try self.events.send(.rerender);
                             }
                             if (key.key == .left and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
                                 self.command_text.left_word();
-                                try self.events.send(.rerender);
                             }
                             if (key.key == .right and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
                                 self.command_text.right_word();
-                                try self.events.send(.rerender);
                             }
                             if (key.key == .backspace and key.action.pressed() and key.mod.eq(.{})) {
                                 _ = self.command_text.back();
-                                try self.events.send(.rerender);
                             }
                             if (key.key == .backspace and key.action.pressed() and key.mod.eq(.{ .alt = true })) {
                                 _ = self.command_text.back();
@@ -895,11 +894,9 @@ pub const App = struct {
                                     }
                                     _ = self.command_text.back();
                                 }
-                                try self.events.send(.rerender);
                             }
                             if (key.key == .escape and key.action.just_pressed() and key.mod.eq(.{})) {
                                 self.state = .status;
-                                try self.events.send(.rerender);
                                 break :event_blk;
                             }
                         },

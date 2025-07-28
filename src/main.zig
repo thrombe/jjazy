@@ -420,8 +420,13 @@ pub const App = struct {
 
     pub const State = union(enum(u8)) {
         status,
+        oplog,
+        evlog: jj_mod.Change,
         command,
         rebase: Rebase,
+        new,
+        squash: jj_mod.Change,
+        abandon: jj_mod.Change,
     };
 
     pub const Rebase = enum(u8) {
@@ -704,6 +709,14 @@ pub const App = struct {
                                 try self.log.selected_changes.put(self.log.focused_change, {});
                                 break :event_blk;
                             }
+                            if (key.key == 'S' and key.action.pressed() and key.mod.eq(.{ .shift = true })) {
+                                self.state = .{ .squash = self.log.focused_change };
+                                break :event_blk;
+                            }
+                            if (key.key == 'a' and key.action.pressed() and key.mod.eq(.{})) {
+                                self.state = .{ .abandon = self.log.focused_change };
+                                break :event_blk;
+                            }
                             if (key.key == 's' and key.action.pressed() and key.mod.eq(.{})) {
                                 try self.execute_interactive_command(&[_][]const u8{
                                     "jj",
@@ -846,6 +859,84 @@ pub const App = struct {
                             if (key.key == .scroll_up and key.action.pressed() and key.mod.eq(.{})) {
                                 self.log.y -= 1;
                                 try self.events.send(.diff_update);
+                            }
+                        },
+                        else => {},
+                    };
+
+                    if (self.state == .abandon) switch (input) {
+                        .key => |key| {
+                            if (key.key == ' ' and key.action.pressed() and key.mod.eq(.{})) {
+                                if (self.log.selected_changes.fetchRemove(self.log.focused_change) == null) {
+                                    try self.log.selected_changes.put(self.log.focused_change, {});
+                                }
+                            }
+                        },
+                        .functional => |key| {
+                            if (key.key == .escape and key.action.just_pressed() and key.mod.eq(.{})) {
+                                self.log.selected_changes.clearRetainingCapacity();
+                                self.state = .status;
+                                break :event_blk;
+                            }
+                            if (key.key == .enter and key.action.pressed() and key.mod.eq(.{})) {
+                                defer {
+                                    self.log.selected_changes.clearRetainingCapacity();
+                                    self.state = .status;
+                                }
+
+                                // TODO:
+                            }
+                        },
+                        else => {},
+                    };
+
+                    if (self.state == .squash) switch (input) {
+                        .key => |key| {
+                            if (key.key == ' ' and key.action.pressed() and key.mod.eq(.{})) {
+                                if (self.log.selected_changes.fetchRemove(self.log.focused_change) == null) {
+                                    try self.log.selected_changes.put(self.log.focused_change, {});
+                                }
+                            }
+                        },
+                        .functional => |key| {
+                            if (key.key == .escape and key.action.just_pressed() and key.mod.eq(.{})) {
+                                self.log.selected_changes.clearRetainingCapacity();
+                                self.state = .status;
+                                break :event_blk;
+                            }
+                            if (key.key == .enter and key.action.pressed() and key.mod.eq(.{})) {
+                                defer {
+                                    self.log.selected_changes.clearRetainingCapacity();
+                                    self.state = .status;
+                                }
+
+                                // TODO:
+                            }
+                        },
+                        else => {},
+                    };
+
+                    if (self.state == .new) switch (input) {
+                        .key => |key| {
+                            if (key.key == ' ' and key.action.pressed() and key.mod.eq(.{})) {
+                                if (self.log.selected_changes.fetchRemove(self.log.focused_change) == null) {
+                                    try self.log.selected_changes.put(self.log.focused_change, {});
+                                }
+                            }
+                        },
+                        .functional => |key| {
+                            if (key.key == .escape and key.action.just_pressed() and key.mod.eq(.{})) {
+                                self.log.selected_changes.clearRetainingCapacity();
+                                self.state = .status;
+                                break :event_blk;
+                            }
+                            if (key.key == .enter and key.action.pressed() and key.mod.eq(.{})) {
+                                defer {
+                                    self.log.selected_changes.clearRetainingCapacity();
+                                    self.state = .status;
+                                }
+
+                                // TODO:
                             }
                         },
                         else => {},
@@ -1061,6 +1152,7 @@ pub const App = struct {
     }
 
     fn execute_non_interactive_command(self: *@This(), args: []const []const u8) !void {
+        // TODO: popup error window
         self._execute_non_interactive_command(args) catch |e| switch (e) {
             error.SomeErrorMan => {},
             else => return e,
@@ -1132,8 +1224,11 @@ pub const App = struct {
 
     fn execute_interactive_command(self: *@This(), args: []const []const u8) !void {
         try self.restore_terminal_for_command();
+
+        // TODO: popup error window
         self._execute_command(args) catch |e| switch (e) {
             error.SomeErrorMan => {},
+            error.FileNotFound => {},
             else => return e,
         };
         try self.uncook_terminal();

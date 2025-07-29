@@ -944,7 +944,26 @@ pub const App = struct {
                                         self.state = .status;
                                     }
 
-                                    // TODO:
+                                    var args = std.ArrayList([]const u8).init(temp);
+                                    try args.append("jj");
+                                    try args.append("squash");
+
+                                    var it = self.log.selected_changes.iterator();
+                                    while (it.next()) |e| {
+                                        try args.append("--from");
+                                        try args.append(e.key_ptr.id[0..]);
+
+                                        if (std.meta.eql(e.key_ptr.*, self.log.focused_change)) {
+                                            break :event_blk;
+                                        }
+                                    }
+
+                                    try args.append("--into");
+                                    try args.append(self.log.focused_change.id[0..]);
+
+                                    try self.execute_non_interactive_command(args.items);
+
+                                    try self.jj.requests.send(.status);
                                     break :event_blk;
                                 }
                             },

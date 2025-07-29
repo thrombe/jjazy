@@ -86,7 +86,21 @@ pub const JujutsuServer = struct {
                     };
                     try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = res } } });
                 },
-                .oplog => unreachable,
+                .oplog => {
+                    const res = self.jjcall(&[_][]const u8{
+                        "jj",
+                        "--color",
+                        "always",
+                        "op",
+                        "log",
+                        // "--template",
+                        // "builtin_op_log_compact ++ json(self)",
+                    }) catch |e| {
+                        utils_mod.dump_error(e);
+                        continue;
+                    };
+                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = res } } });
+                },
                 .diff => |change| {
                     const stat = self.jjcall(&[_][]const u8{
                         "jj",

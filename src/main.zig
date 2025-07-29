@@ -647,7 +647,7 @@ pub const App = struct {
                 scroll_log: bool = false,
                 scroll_diff: bool = false,
                 resize_master: bool = false,
-                escape_to_status: bool = false,
+                escape_to_log: bool = false,
                 space_select: bool = false,
                 colored_gutter_cursor: bool = false,
             } = switch (self.state) {
@@ -660,12 +660,12 @@ pub const App = struct {
                     .scroll_log = true,
                     .scroll_diff = true,
                     .resize_master = true,
-                    .escape_to_status = true,
+                    .escape_to_log = true,
                     .space_select = true,
                     .colored_gutter_cursor = true,
                 },
                 .oplog, .command => .{
-                    .escape_to_status = true,
+                    .escape_to_log = true,
                 },
                 .bookmark, .git, .duplicate, .evlog => .{},
             };
@@ -798,7 +798,7 @@ pub const App = struct {
                         },
                         else => {},
                     };
-                    if (tropes.escape_to_status) switch (input) {
+                    if (tropes.escape_to_log) switch (input) {
                         .functional => |key| {
                             if (key.key == .escape and key.action.pressed() and key.mod.eq(.{})) {
                                 self.log.selected_changes.clearRetainingCapacity();

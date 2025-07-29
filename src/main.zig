@@ -267,7 +267,13 @@ const LogSlate = struct {
         self.selected_changes.deinit();
     }
 
-    fn render(self: *@This(), surface: *Surface, events: *utils_mod.Channel(App.Event), state: App.State) !void {
+    fn render(
+        self: *@This(),
+        surface: *Surface,
+        events: *utils_mod.Channel(App.Event),
+        state: App.State,
+        tropes: anytype,
+    ) !void {
         self.y = @max(0, self.y);
         if (self.skip_y > self.y) {
             self.skip_y = self.y;
@@ -286,9 +292,11 @@ const LogSlate = struct {
 
             const is_selected = self.selected_changes.contains(change.change);
             if (i == self.y) {
-                if (state == .rebase) {
+                if (tropes.colored_gutter_cursor) {
                     try gutter.apply_style(.{ .background_color = .from_theme(.success) });
+                }
 
+                if (state == .rebase) {
                     switch (state.rebase) {
                         .onto => {
                             if (is_selected) {
@@ -326,11 +334,18 @@ const LogSlate = struct {
                             try surface.new_line();
                         },
                     }
-
-                    try gutter.apply_style(.reset);
                 } else {
-                    try gutter.draw_bufln("->");
+                    if (is_selected) {
+                        try gutter.draw_bufln("#>");
+                    } else {
+                        try gutter.draw_bufln("->");
+                    }
+                    try gutter.draw_bufln("  ");
                     try surface.draw_bufln(change.buf);
+                }
+
+                if (tropes.colored_gutter_cursor) {
+                    try gutter.apply_style(.reset);
                 }
             } else {
                 if (is_selected) {
@@ -621,6 +636,7 @@ pub const App = struct {
                 resize_master: bool = false,
                 escape_to_status: bool = false,
                 space_select: bool = false,
+                colored_gutter_cursor: bool = false,
             } = switch (self.state) {
                 .status => .{
                     .scroll_log = true,
@@ -633,6 +649,7 @@ pub const App = struct {
                     .resize_master = true,
                     .escape_to_status = true,
                     .space_select = true,
+                    .colored_gutter_cursor = true,
                 },
                 .command => .{
                     .escape_to_status = true,
@@ -643,7 +660,7 @@ pub const App = struct {
             event_blk: switch (event) {
                 .quit => return,
                 .err => |err| return err,
-                .rerender => try self.render(),
+                .rerender => try self.render(tropes),
                 .sigwinch => try self.events.send(.rerender),
                 .diff_update => try self.request_jj(),
                 .input => |input| {
@@ -797,6 +814,7 @@ pub const App = struct {
                                 }
                                 if (key.key == 'n' and key.action.pressed() and key.mod.eq(.{})) {
                                     self.state = .new;
+                                    try self.log.selected_changes.put(self.log.focused_change, {});
                                     break :event_blk;
                                 }
                                 if (key.key == 'e' and key.action.pressed() and key.mod.eq(.{})) {
@@ -945,13 +963,7 @@ pub const App = struct {
                                     var it = self.log.selected_changes.iterator();
                                     while (it.next()) |e| {
                                         try args.append(e.key_ptr.id[0..]);
-
-                                        if (std.meta.eql(e.key_ptr.*, self.log.focused_change)) {
-                                            break :event_blk;
-                                        }
                                     }
-
-                                    try args.append(self.log.focused_change.id[0..]);
 
                                     try self.execute_non_interactive_command(args.items);
 
@@ -1129,7 +1141,7 @@ pub const App = struct {
         try self.command_text.draw(&command);
     }
 
-    fn render(self: *@This()) !void {
+    fn render(self: *@This(), tropes: anytype) !void {
         defer self.render_count += 1;
 
         self.x_split = @min(@max(0.0, self.x_split), 1.0);
@@ -1145,7 +1157,7 @@ pub const App = struct {
 
             var diffs = try status.split_x(cast(i32, cast(f32, status.size().x) * self.x_split), .border);
 
-            try self.log.render(&status, &self.events, self.state);
+            try self.log.render(&status, &self.events, self.state, tropes);
             try self.diff.render(&diffs, self.log.focused_change);
 
             if (self.state == .command) {

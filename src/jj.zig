@@ -17,7 +17,8 @@ pub const JujutsuServer = struct {
     events: utils_mod.Channel(App.Event),
 
     pub const Request = union(enum) {
-        status,
+        log,
+        oplog,
         diff: Change,
     };
 
@@ -71,7 +72,7 @@ pub const JujutsuServer = struct {
         while (self.requests.wait_recv()) |req| {
             if (self.quit.check()) return;
             switch (req) {
-                .status => {
+                .log => {
                     const res = self.jjcall(&[_][]const u8{
                         "jj",
                         "--color",
@@ -85,6 +86,7 @@ pub const JujutsuServer = struct {
                     };
                     try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = res } } });
                 },
+                .oplog => unreachable,
                 .diff => |change| {
                     const stat = self.jjcall(&[_][]const u8{
                         "jj",

@@ -440,14 +440,25 @@ pub const App = struct {
         log,
         oplog,
         evlog: jj_mod.Change,
+        bookmark: enum {
+            new,
+            move,
+            delete,
+            forget,
+        },
+        git: enum {
+            fetch,
+            push,
+        },
         command,
-        rebase: Rebase,
+        rebase: Where,
+        duplicate: Where,
         new,
         squash,
         abandon,
     };
 
-    pub const Rebase = enum(u8) {
+    pub const Where = enum(u8) {
         onto,
         after,
         before,
@@ -488,7 +499,7 @@ pub const App = struct {
         const jj = try jj_mod.JujutsuServer.init(alloc, events);
         errdefer jj.deinit();
 
-        try jj.requests.send(.status);
+        try jj.requests.send(.log);
 
         self.* = .{
             .alloc = alloc,
@@ -595,7 +606,7 @@ pub const App = struct {
         self.screen.term.register_signal_handlers(@This());
         try self.screen.term.uncook();
         try self.events.send(.rerender);
-        try self.jj.requests.send(.status);
+        try self.jj.requests.send(.log);
     }
 
     fn event_loop(self: *@This()) !void {
@@ -653,10 +664,10 @@ pub const App = struct {
                     .space_select = true,
                     .colored_gutter_cursor = true,
                 },
-                .command => .{
+                .oplog, .command => .{
                     .escape_to_status = true,
                 },
-                .oplog, .evlog => .{},
+                .bookmark, .git, .duplicate, .evlog => .{},
             };
 
             event_blk: switch (event) {
@@ -733,7 +744,7 @@ pub const App = struct {
 
                             switch (e) {
                                 .out => {},
-                                .in => try self.jj.requests.send(.status),
+                                .in => try self.jj.requests.send(.log),
                             }
                         },
                         .unsupported => {},
@@ -825,7 +836,7 @@ pub const App = struct {
                                         "edit",
                                         self.log.focused_change.id[0..],
                                     });
-                                    try self.jj.requests.send(.status);
+                                    try self.jj.requests.send(.log);
                                 }
                                 if (key.key == 'r' and key.action.pressed() and key.mod.eq(.{})) {
                                     self.state = .{ .rebase = .onto };
@@ -916,7 +927,7 @@ pub const App = struct {
 
                                     try self.execute_non_interactive_command(args.items);
 
-                                    try self.jj.requests.send(.status);
+                                    try self.jj.requests.send(.log);
                                     break :event_blk;
                                 }
                             },
@@ -942,7 +953,7 @@ pub const App = struct {
 
                                     try self.execute_non_interactive_command(args.items);
 
-                                    try self.jj.requests.send(.status);
+                                    try self.jj.requests.send(.log);
                                     break :event_blk;
                                 }
                             },
@@ -975,7 +986,7 @@ pub const App = struct {
 
                                     try self.execute_non_interactive_command(args.items);
 
-                                    try self.jj.requests.send(.status);
+                                    try self.jj.requests.send(.log);
                                     break :event_blk;
                                 }
                             },
@@ -1000,7 +1011,7 @@ pub const App = struct {
 
                                     try self.execute_non_interactive_command(args.items);
 
-                                    try self.jj.requests.send(.status);
+                                    try self.jj.requests.send(.log);
                                     self.log.y = 0;
                                     break :event_blk;
                                 }
@@ -1054,11 +1065,25 @@ pub const App = struct {
                             },
                             else => {},
                         },
-                        .oplog, .evlog => unreachable,
+                        .oplog => switch (input) {
+                            .key => |key| {
+                                if (key.key == 'r' and key.action.pressed() and key.mod.eq(.{})) {
+                                    try self.execute_non_interactive_command(&[_][]const u8{
+                                        "jj",
+                                        "op",
+                                        "restore",
+                                        // TODO:
+                                    });
+                                    try self.jj.requests.send(.oplog);
+                                }
+                            },
+                            else => {},
+                        },
+                        .bookmark, .git, .duplicate, .evlog => unreachable,
                     }
                 },
                 .jj => |res| switch (res.req) {
-                    .status => {
+                    .log => {
                         self.alloc.free(self.log.status);
                         switch (res.res) {
                             .ok => |buf| {
@@ -1081,6 +1106,7 @@ pub const App = struct {
                         }
                         try self.events.send(.rerender);
                     },
+                    .oplog => unreachable,
                 },
             }
         }

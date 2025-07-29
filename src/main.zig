@@ -432,12 +432,12 @@ pub const App = struct {
     diff: DiffSlate,
     log: LogSlate,
 
-    state: State = .status,
+    state: State = .log,
     render_count: u64 = 0,
     last_hash: u64 = 0,
 
     pub const State = union(enum(u8)) {
-        status,
+        log,
         oplog,
         evlog: jj_mod.Change,
         command,
@@ -640,7 +640,7 @@ pub const App = struct {
                 space_select: bool = false,
                 colored_gutter_cursor: bool = false,
             } = switch (self.state) {
-                .status => .{
+                .log => .{
                     .scroll_log = true,
                     .scroll_diff = true,
                     .resize_master = true,
@@ -791,7 +791,7 @@ pub const App = struct {
                         .functional => |key| {
                             if (key.key == .escape and key.action.pressed() and key.mod.eq(.{})) {
                                 self.log.selected_changes.clearRetainingCapacity();
-                                self.state = .status;
+                                self.state = .log;
                                 break :event_blk;
                             }
                         },
@@ -809,7 +809,7 @@ pub const App = struct {
                     };
 
                     switch (self.state) {
-                        .status => switch (input) {
+                        .log => switch (input) {
                             .key => |key| {
                                 if (key.key == 'q') {
                                     try self.events.send(.quit);
@@ -879,7 +879,7 @@ pub const App = struct {
                                         'b' => self.state = .{ .rebase = .before },
                                         else => {
                                             self.log.selected_changes.clearRetainingCapacity();
-                                            self.state = .status;
+                                            self.state = .log;
                                         },
                                     }
                                     break :event_blk;
@@ -889,7 +889,7 @@ pub const App = struct {
                                 if (key.key == .enter and key.action.pressed() and key.mod.eq(.{})) {
                                     defer {
                                         self.log.selected_changes.clearRetainingCapacity();
-                                        self.state = .status;
+                                        self.state = .log;
                                     }
 
                                     var args = std.ArrayList([]const u8).init(temp);
@@ -927,7 +927,7 @@ pub const App = struct {
                                 if (key.key == .enter and key.action.pressed() and key.mod.eq(.{})) {
                                     defer {
                                         self.log.selected_changes.clearRetainingCapacity();
-                                        self.state = .status;
+                                        self.state = .log;
                                     }
 
                                     var args = std.ArrayList([]const u8).init(temp);
@@ -953,7 +953,7 @@ pub const App = struct {
                                 if (key.key == .enter and key.action.pressed() and key.mod.eq(.{})) {
                                     defer {
                                         self.log.selected_changes.clearRetainingCapacity();
-                                        self.state = .status;
+                                        self.state = .log;
                                     }
 
                                     var args = std.ArrayList([]const u8).init(temp);
@@ -986,7 +986,7 @@ pub const App = struct {
                                 if (key.key == .enter and key.action.pressed() and key.mod.eq(.{})) {
                                     defer {
                                         self.log.selected_changes.clearRetainingCapacity();
-                                        self.state = .status;
+                                        self.state = .log;
                                     }
 
                                     var args = std.ArrayList([]const u8).init(temp);
@@ -1025,7 +1025,7 @@ pub const App = struct {
 
                                     try self.execute_interactive_command(args.items);
                                     self.command_text.reset();
-                                    self.state = .status;
+                                    self.state = .log;
                                 }
                                 if (key.key == .left and key.action.pressed() and key.mod.eq(.{})) {
                                     self.command_text.left();

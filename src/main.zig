@@ -1174,7 +1174,12 @@ pub const App = struct {
             try surface.apply_style(.{ .background_color = .from_theme(.default_foreground) });
             try surface.apply_style(.{ .foreground_color = .from_theme(.default_background) });
             try surface.apply_style(.bold);
-            try surface.draw_buf(" NORMAL ");
+            try surface.draw_buf(switch (self.state) {
+                inline .rebase, .git, .duplicate, .bookmark => |_p, t| switch (_p) {
+                    inline else => |p| " " ++ @tagName(t) ++ "." ++ @tagName(p) ++ " ",
+                },
+                inline else => |_, t| " " ++ @tagName(t) ++ " ",
+            });
             try surface.apply_style(.reset);
 
             try surface.draw_buf(" ");

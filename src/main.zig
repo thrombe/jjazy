@@ -293,7 +293,9 @@ const LogSlate = struct {
             const is_selected = self.selected_changes.contains(change.change);
             if (i == self.y) {
                 if (tropes.colored_gutter_cursor) {
-                    try gutter.apply_style(.{ .background_color = .from_theme(.success) });
+                    try gutter.apply_style(.{ .background_color = .from_theme(.dim_text) });
+                    try gutter.apply_style(.{ .foreground_color = .from_theme(.default_background) });
+                    try gutter.apply_style(.bold);
                 }
 
                 if (state == .rebase) {

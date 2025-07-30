@@ -821,7 +821,10 @@ pub const App = struct {
 
                             switch (e) {
                                 .out => {},
-                                .in => try self.jj.requests.send(.log),
+                                .in => switch (self.state) {
+                                    .oplog => try self.jj.requests.send(.oplog),
+                                    else => try self.jj.requests.send(.log),
+                                },
                             }
                         },
                         .unsupported => {},

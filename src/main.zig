@@ -373,6 +373,68 @@ const LogSlate = struct {
     }
 };
 
+const OpLogSlate = struct {
+    y: i32 = 0,
+    skip_y: i32 = 0,
+    alloc: std.mem.Allocator,
+    oplog: []const u8,
+    ops: jj_mod.OpIterator,
+    focused_op: jj_mod.Operation = .{},
+
+    fn deinit(self: *@This()) void {
+        self.alloc.free(self.oplog);
+        self.ops.deinit();
+    }
+
+    fn render(
+        self: *@This(),
+        surface: *Surface,
+        events: *utils_mod.Channel(App.Event),
+    ) !void {
+        self.y = @max(0, self.y);
+        if (self.skip_y > self.y) {
+            self.skip_y = self.y;
+        }
+
+        var gutter = try surface.split_x(3, .none);
+        std.mem.swap(Surface, surface, &gutter);
+
+        var i: i32 = 0;
+        self.ops.reset(self.oplog);
+        while (try self.ops.next()) |op| {
+            defer i += 1;
+            if (self.skip_y > i) {
+                continue;
+            }
+
+            if (i == self.y) {
+                try gutter.draw_bufln("->");
+                try gutter.new_line();
+                try gutter.new_line();
+
+                try surface.draw_bufln(op.buf);
+            } else {
+                try gutter.new_line();
+                try gutter.new_line();
+                try gutter.new_line();
+
+                try surface.draw_bufln(op.buf);
+            }
+
+            if (surface.is_full()) break;
+        }
+
+        if (self.ops.ended() and self.y >= i and i > 0) {
+            self.y = i - 1;
+        }
+
+        if (self.y >= i and !self.ops.ended()) {
+            self.skip_y += 1;
+            try events.send(.rerender);
+        }
+    }
+};
+
 const DiffSlate = struct {
     alloc: std.mem.Allocator,
     diffcache: DiffCache,
@@ -429,8 +491,9 @@ pub const App = struct {
     x_split: f32 = 0.55,
     command_text: TextInput,
 
-    diff: DiffSlate,
     log: LogSlate,
+    oplog: OpLogSlate,
+    diff: DiffSlate,
 
     state: State = .log,
     render_count: u64 = 0,
@@ -508,15 +571,20 @@ pub const App = struct {
             .input_iterator = .{ .input = try .init(alloc) },
             .events = events,
             .jj = jj,
-            .diff = .{
-                .alloc = alloc,
-                .diffcache = .init(alloc),
-            },
             .log = .{
                 .alloc = alloc,
                 .status = &.{},
                 .changes = .init(alloc, &[_]u8{}),
                 .selected_changes = .init(alloc),
+            },
+            .oplog = .{
+                .alloc = alloc,
+                .oplog = &.{},
+                .ops = .init(alloc, &[_]u8{}),
+            },
+            .diff = .{
+                .alloc = alloc,
+                .diffcache = .init(alloc),
             },
             .command_text = .init(alloc),
             .input_thread = undefined,
@@ -539,6 +607,7 @@ pub const App = struct {
         const alloc = self.alloc;
         defer alloc.destroy(self);
         defer self.log.deinit();
+        defer self.oplog.deinit();
         defer self.diff.deinit();
         defer self.command_text.deinit();
         defer self.arena.deinit();
@@ -627,6 +696,7 @@ pub const App = struct {
                 if (self.diff.diffcache.getPtr(self.log.focused_change.hash)) |diff| {
                     hasher.update(&std.mem.toBytes(diff.y));
                 }
+                hasher.update(&std.mem.toBytes(self.oplog.y));
                 var it = self.log.selected_changes.iterator();
                 while (it.next()) |e| {
                     hasher.update(&e.key_ptr.id);
@@ -645,6 +715,7 @@ pub const App = struct {
             const tropes: struct {
                 global: bool = true,
                 scroll_log: bool = false,
+                scroll_oplog: bool = false,
                 scroll_diff: bool = false,
                 resize_master: bool = false,
                 escape_to_log: bool = false,
@@ -664,8 +735,12 @@ pub const App = struct {
                     .space_select = true,
                     .colored_gutter_cursor = true,
                 },
-                .oplog, .command => .{
+                .command => .{
                     .escape_to_log = true,
+                },
+                .oplog => .{
+                    .escape_to_log = true,
+                    .scroll_oplog = true,
                 },
                 .bookmark, .git, .duplicate, .evlog => .{},
             };
@@ -772,6 +847,29 @@ pub const App = struct {
                         },
                         else => {},
                     };
+                    if (tropes.scroll_oplog) switch (input) {
+                        .key => |key| {
+                            if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{})) {
+                                self.oplog.y += 1;
+                                // try self.events.send(.op_show_update);
+                            }
+                            if (key.key == 'k' and key.action.pressed() and key.mod.eq(.{})) {
+                                self.oplog.y -= 1;
+                                // try self.events.send(.op_show_update);
+                            }
+                        },
+                        .mouse => |key| {
+                            if (key.key == .scroll_down and key.action.pressed() and key.mod.eq(.{})) {
+                                self.oplog.y += 1;
+                                // try self.events.send(.op_show_update);
+                            }
+                            if (key.key == .scroll_up and key.action.pressed() and key.mod.eq(.{})) {
+                                self.oplog.y -= 1;
+                                // try self.events.send(.op_show_update);
+                            }
+                        },
+                        else => {},
+                    };
                     if (tropes.scroll_diff) switch (input) {
                         .key => |key| {
                             if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
@@ -851,6 +949,11 @@ pub const App = struct {
                                 if (key.key == 'a' and key.action.pressed() and key.mod.eq(.{})) {
                                     self.state = .abandon;
                                     try self.log.selected_changes.put(self.log.focused_change, {});
+                                    break :event_blk;
+                                }
+                                if (key.key == 'o' and key.action.pressed() and key.mod.eq(.{})) {
+                                    self.state = .oplog;
+                                    try self.jj.requests.send(.oplog);
                                     break :event_blk;
                                 }
                                 if (key.key == 's' and key.action.pressed() and key.mod.eq(.{})) {
@@ -1106,7 +1209,16 @@ pub const App = struct {
                         }
                         try self.events.send(.rerender);
                     },
-                    .oplog => unreachable,
+                    .oplog => {
+                        self.alloc.free(self.oplog.oplog);
+                        switch (res.res) {
+                            .ok, .err => |buf| {
+                                self.oplog.oplog = buf;
+                                self.oplog.ops.reset(buf);
+                                try self.events.send(.rerender);
+                            },
+                        }
+                    },
                 },
             }
         }
@@ -1221,7 +1333,11 @@ pub const App = struct {
 
             var diffs = try status.split_x(cast(i32, cast(f32, status.size().x) * self.x_split), .border);
 
-            try self.log.render(&status, &self.events, self.state, tropes);
+            if (self.state == .oplog) {
+                try self.oplog.render(&status, &self.events);
+            } else {
+                try self.log.render(&status, &self.events, self.state, tropes);
+            }
             try self.diff.render(&diffs, self.log.focused_change);
 
             if (self.state == .command) {

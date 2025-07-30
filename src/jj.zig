@@ -212,6 +212,72 @@ pub const JujutsuServer = struct {
     }
 };
 
+pub const OpIterator = struct {
+    oplog: utils_mod.LineIterator,
+
+    temp: std.heap.ArenaAllocator,
+    scratch: std.ArrayListUnmanaged(u8) = .{},
+
+    pub fn init(alloc: std.mem.Allocator, buf: []const u8) @This() {
+        return .{ .temp = .init(alloc), .oplog = .init(buf) };
+    }
+
+    pub fn deinit(self: *@This()) void {
+        self.temp.deinit();
+    }
+
+    pub fn reset(self: *@This(), buf: []const u8) void {
+        self.scratch.clearRetainingCapacity();
+        self.oplog = .init(buf);
+    }
+
+    pub fn next(self: *@This()) !?OpEntry {
+        const start = self.oplog.index;
+        while (self.oplog.next()) |line| {
+            self.scratch.clearRetainingCapacity();
+            var tokens = try term_mod.TermStyledGraphemeIterator.init(line);
+
+            while (try tokens.next()) |token| {
+                if (token.codepoint != null) {
+                    continue;
+                }
+
+                try self.scratch.appendSlice(self.temp.allocator(), token.grapheme);
+            }
+
+            const id = blk: {
+                var chunks = std.mem.splitScalar(u8, self.scratch.items, ' ');
+                while (chunks.next()) |chunk| {
+                    if (chunk.len == 12) {
+                        break :blk chunk;
+                    }
+                }
+                return error.ErrorParsingChangeId;
+            };
+
+            var op = std.mem.zeroes(Operation);
+            @memcpy(op.id[0..], id);
+
+            // description line
+            _ = self.oplog.next();
+            _ = self.oplog.next();
+
+            return .{ .op = op, .buf = self.oplog.buf[start..self.oplog.index] };
+        }
+
+        return null;
+    }
+
+    pub fn ended(self: *@This()) bool {
+        return self.oplog.ended();
+    }
+
+    pub const OpEntry = struct {
+        buf: []const u8,
+        op: Operation,
+    };
+};
+
 pub const ChangeIterator = struct {
     state: utils_mod.LineIterator,
 
@@ -298,4 +364,10 @@ pub const Change = struct {
     pub fn is_root(self: *@This()) bool {
         return std.mem.allEqual(u8, self.hash, 0);
     }
+};
+
+pub const Operation = struct {
+    id: Hash = [1]u8{'z'} ** 12,
+
+    pub const Hash = [12]u8;
 };

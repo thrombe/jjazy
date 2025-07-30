@@ -531,6 +531,7 @@ pub const App = struct {
         sigwinch,
         rerender,
         diff_update,
+        op_update,
         quit,
         input: term_mod.TermInputIterator.Input,
         jj: jj_mod.JujutsuServer.Response,
@@ -750,7 +751,8 @@ pub const App = struct {
                 .err => |err| return err,
                 .rerender => try self.render(tropes),
                 .sigwinch => try self.events.send(.rerender),
-                .diff_update => try self.request_jj(),
+                .diff_update => try self.request_jj_diff(),
+                .op_update => try self.request_jj_op(),
                 .input => |input| {
                     if (tropes.global) switch (input) {
                         .key => |key| {
@@ -851,21 +853,21 @@ pub const App = struct {
                         .key => |key| {
                             if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{})) {
                                 self.oplog.y += 1;
-                                // try self.events.send(.op_show_update);
+                                try self.events.send(.op_update);
                             }
                             if (key.key == 'k' and key.action.pressed() and key.mod.eq(.{})) {
                                 self.oplog.y -= 1;
-                                // try self.events.send(.op_show_update);
+                                try self.events.send(.op_update);
                             }
                         },
                         .mouse => |key| {
                             if (key.key == .scroll_down and key.action.pressed() and key.mod.eq(.{})) {
                                 self.oplog.y += 1;
-                                // try self.events.send(.op_show_update);
+                                try self.events.send(.op_update);
                             }
                             if (key.key == .scroll_up and key.action.pressed() and key.mod.eq(.{})) {
                                 self.oplog.y -= 1;
-                                // try self.events.send(.op_show_update);
+                                try self.events.send(.op_update);
                             }
                         },
                         else => {},
@@ -1175,8 +1177,9 @@ pub const App = struct {
                                         "jj",
                                         "op",
                                         "restore",
-                                        // TODO:
+                                        self.oplog.focused_op.id[0..],
                                     });
+                                    self.oplog.y = 0;
                                     try self.jj.requests.send(.oplog);
                                 }
                             },
@@ -1234,7 +1237,7 @@ pub const App = struct {
         }
     }
 
-    fn request_jj(self: *@This()) !void {
+    fn request_jj_diff(self: *@This()) !void {
         self.log.changes.reset(self.log.status);
         var i: i32 = 0;
         while (try self.log.changes.next()) |change| {
@@ -1259,6 +1262,19 @@ pub const App = struct {
             try self.diff.diffcache.put(self.log.focused_change.hash, .{});
             // somehow debounce diff requests
             try self.jj.requests.send(.{ .diff = self.log.focused_change });
+        }
+    }
+
+    fn request_jj_op(self: *@This()) !void {
+        self.oplog.ops.reset(self.oplog.oplog);
+        var i: i32 = 0;
+        while (try self.oplog.ops.next()) |op| {
+            if (self.oplog.y == i) {
+                self.oplog.focused_op = op.op;
+            } else if (self.log.y < i) {
+                break;
+            }
+            i += 1;
         }
     }
 

@@ -201,7 +201,7 @@ pub const JujutsuServer = struct {
         stdin.close();
 
         // similar to child.collectOutput
-        const max_output_bytes = 1000 * 1000;
+        const max_output_bytes = 1000 * 1000 * 10;
         var poller = std.io.poll(alloc, enum { stdout, stderr }, .{
             .stdout = stdout,
             .stderr = stderr,
@@ -254,6 +254,21 @@ pub const JujutsuServer = struct {
 pub const Formatted = struct {
     height: u32,
     buf: []const u8,
+};
+
+const template_sep = struct {
+    const sep = "-JJAZY1-";
+    const escaped = escape(sep);
+
+    fn escape(comptime str: []const u8) [str.len * 4]u8 {
+        comptime {
+            var buf = std.mem.zeroes([str.len * 4]u8);
+            for (str, 0..) |c, i| {
+                _ = std.fmt.bufPrint(buf[i * 4 ..], "\\x{x}", .{c}) catch unreachable;
+            }
+            return buf;
+        }
+    }
 };
 
 fn Template(typ: type, _template: []const u8, _sep: []const u8) type {
@@ -311,7 +326,13 @@ fn Template(typ: type, _template: []const u8, _sep: []const u8) type {
                     try self.scratch.appendSlice(node);
                     try self.scratch.appendSlice(chunks.rest());
                     while (self.state.peek()) |nextline| {
-                        if (std.mem.containsAtLeast(u8, nextline, 1, sep)) {
+                        const contains_sep = std.mem.containsAtLeast(
+                            u8,
+                            nextline,
+                            1,
+                            sep,
+                        );
+                        if (contains_sep) {
                             break;
                         }
                         try self.scratch.append('\n');
@@ -348,8 +369,8 @@ pub const Change = struct {
 
     pub const Parsed = Template(
         Schema.Change,
-        "json(self) ++ \"-JJAZY-\" ++ builtin_log_compact",
-        "-JJAZY-",
+        "json(self) ++ \"" ++ template_sep.escaped ++ "\" ++ builtin_log_compact",
+        template_sep.sep,
     );
 
     pub fn from_parsed(parsed: *const Parsed) @This() {
@@ -371,8 +392,8 @@ pub const Operation = struct {
 
     pub const Parsed = Template(
         Schema.Operation,
-        "json(self) ++ \"-JJAZY-\" ++ builtin_op_log_compact",
-        "-JJAZY-",
+        "json(self) ++ \"" ++ template_sep.escaped ++ "\" ++ builtin_op_log_compact",
+        template_sep.sep,
     );
 
     pub fn from_parsed(parsed: *const Parsed) @This() {

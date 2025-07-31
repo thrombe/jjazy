@@ -1040,6 +1040,7 @@ pub const Screen = struct {
             try self.term.tty.writeAll(cmdbuf.items);
             cmdbuf.clearRetainingCapacity();
         }
+
         try self.term.tty.writeAll(codes.sync_reset);
 
         self.surface_id = 0;

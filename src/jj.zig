@@ -212,149 +212,6 @@ pub const JujutsuServer = struct {
     }
 };
 
-pub const OpIterator = struct {
-    oplog: utils_mod.LineIterator,
-
-    temp: std.heap.ArenaAllocator,
-    scratch: std.ArrayListUnmanaged(u8) = .{},
-
-    pub fn init(alloc: std.mem.Allocator, buf: []const u8) @This() {
-        return .{ .temp = .init(alloc), .oplog = .init(buf) };
-    }
-
-    pub fn deinit(self: *@This()) void {
-        self.temp.deinit();
-    }
-
-    pub fn reset(self: *@This(), buf: []const u8) void {
-        self.scratch.clearRetainingCapacity();
-        self.oplog = .init(buf);
-    }
-
-    pub fn next(self: *@This()) !?OpEntry {
-        const start = self.oplog.index;
-        while (self.oplog.next()) |line| {
-            self.scratch.clearRetainingCapacity();
-            var tokens = try term_mod.TermStyledGraphemeIterator.init(line);
-
-            while (try tokens.next()) |token| {
-                if (token.codepoint != null) {
-                    continue;
-                }
-
-                try self.scratch.appendSlice(self.temp.allocator(), token.grapheme);
-            }
-
-            const id = blk: {
-                var chunks = std.mem.splitScalar(u8, self.scratch.items, ' ');
-                while (chunks.next()) |chunk| {
-                    if (chunk.len == 12) {
-                        break :blk chunk;
-                    }
-                }
-                return error.ErrorParsingChangeId;
-            };
-
-            var op = std.mem.zeroes(Operation);
-            @memcpy(op.id[0..], id);
-
-            // description line
-            _ = self.oplog.next();
-            _ = self.oplog.next();
-
-            return .{ .op = op, .buf = self.oplog.buf[start..self.oplog.index] };
-        }
-
-        return null;
-    }
-
-    pub fn ended(self: *@This()) bool {
-        return self.oplog.ended();
-    }
-
-    pub const OpEntry = struct {
-        buf: []const u8,
-        op: Operation,
-    };
-};
-
-pub const ChangeIterator = struct {
-    state: utils_mod.LineIterator,
-
-    temp: std.heap.ArenaAllocator,
-    scratch: std.ArrayListUnmanaged(u8) = .{},
-
-    pub fn init(alloc: std.mem.Allocator, buf: []const u8) @This() {
-        return .{ .temp = .init(alloc), .state = .init(buf) };
-    }
-
-    pub fn deinit(self: *@This()) void {
-        self.temp.deinit();
-    }
-
-    pub fn reset(self: *@This(), buf: []const u8) void {
-        self.scratch.clearRetainingCapacity();
-        self.state = .init(buf);
-    }
-
-    pub fn next(self: *@This()) !?ChangeEntry {
-        const start = self.state.index;
-        while (self.state.next()) |line| {
-            self.scratch.clearRetainingCapacity();
-            var tokens = try term_mod.TermStyledGraphemeIterator.init(line);
-
-            while (try tokens.next()) |token| {
-                if (token.codepoint != null) {
-                    continue;
-                }
-
-                try self.scratch.appendSlice(self.temp.allocator(), token.grapheme);
-            }
-
-            const hash = blk: {
-                var chunks = std.mem.splitBackwardsScalar(u8, self.scratch.items, ' ');
-                while (chunks.next()) |chunk| {
-                    if (chunk.len == 8) {
-                        break :blk chunk;
-                    }
-                }
-                return error.ErrorParsingChangeHash;
-            };
-            const id = blk: {
-                var chunks = std.mem.splitScalar(u8, self.scratch.items, ' ');
-                while (chunks.next()) |chunk| {
-                    if (chunk.len == 8) {
-                        break :blk chunk;
-                    }
-                }
-                return error.ErrorParsingChangeId;
-            };
-
-            var change = std.mem.zeroes(Change);
-            @memcpy(change.id[0..], id);
-            @memcpy(change.hash[0..], hash);
-
-            // description line
-            _ = self.state.next();
-            // json line
-            // _ = self.state.next();
-
-            return .{ .change = change, .buf = self.state.buf[start..self.state.index] };
-        }
-
-        return null;
-    }
-
-    pub fn ended(self: *@This()) bool {
-        return self.state.ended();
-    }
-
-    pub const ChangeEntry = struct {
-        buf: []const u8,
-        change: Change,
-    };
-};
-
 pub const Change = struct {
     id: Hash = [1]u8{'z'} ** 8,
     hash: Hash = [1]u8{0} ** 8,
@@ -364,10 +221,153 @@ pub const Change = struct {
     pub fn is_root(self: *@This()) bool {
         return std.mem.allEqual(u8, self.hash, 0);
     }
+
+    pub const Iterator = struct {
+        state: utils_mod.LineIterator,
+
+        temp: std.heap.ArenaAllocator,
+        scratch: std.ArrayListUnmanaged(u8) = .{},
+
+        pub fn init(alloc: std.mem.Allocator, buf: []const u8) @This() {
+            return .{ .temp = .init(alloc), .state = .init(buf) };
+        }
+
+        pub fn deinit(self: *@This()) void {
+            self.temp.deinit();
+        }
+
+        pub fn reset(self: *@This(), buf: []const u8) void {
+            self.scratch.clearRetainingCapacity();
+            self.state = .init(buf);
+        }
+
+        pub fn next(self: *@This()) !?Entry {
+            const start = self.state.index;
+            while (self.state.next()) |line| {
+                self.scratch.clearRetainingCapacity();
+                var tokens = try term_mod.TermStyledGraphemeIterator.init(line);
+
+                while (try tokens.next()) |token| {
+                    if (token.codepoint != null) {
+                        continue;
+                    }
+
+                    try self.scratch.appendSlice(self.temp.allocator(), token.grapheme);
+                }
+
+                const hash = blk: {
+                    var chunks = std.mem.splitBackwardsScalar(u8, self.scratch.items, ' ');
+                    while (chunks.next()) |chunk| {
+                        if (chunk.len == 8) {
+                            break :blk chunk;
+                        }
+                    }
+                    return error.ErrorParsingChangeHash;
+                };
+                const id = blk: {
+                    var chunks = std.mem.splitScalar(u8, self.scratch.items, ' ');
+                    while (chunks.next()) |chunk| {
+                        if (chunk.len == 8) {
+                            break :blk chunk;
+                        }
+                    }
+                    return error.ErrorParsingChangeId;
+                };
+
+                var change = std.mem.zeroes(Change);
+                @memcpy(change.id[0..], id);
+                @memcpy(change.hash[0..], hash);
+
+                // description line
+                _ = self.state.next();
+                // json line
+                // _ = self.state.next();
+
+                return .{ .change = change, .buf = self.state.buf[start..self.state.index] };
+            }
+
+            return null;
+        }
+
+        pub fn ended(self: *@This()) bool {
+            return self.state.ended();
+        }
+
+        pub const Entry = struct {
+            buf: []const u8,
+            change: Change,
+        };
+    };
 };
 
 pub const Operation = struct {
     id: Hash = [1]u8{'z'} ** 12,
 
     pub const Hash = [12]u8;
+
+    pub const Iterator = struct {
+        oplog: utils_mod.LineIterator,
+
+        temp: std.heap.ArenaAllocator,
+        scratch: std.ArrayListUnmanaged(u8) = .{},
+
+        pub fn init(alloc: std.mem.Allocator, buf: []const u8) @This() {
+            return .{ .temp = .init(alloc), .oplog = .init(buf) };
+        }
+
+        pub fn deinit(self: *@This()) void {
+            self.temp.deinit();
+        }
+
+        pub fn reset(self: *@This(), buf: []const u8) void {
+            self.scratch.clearRetainingCapacity();
+            self.oplog = .init(buf);
+        }
+
+        pub fn next(self: *@This()) !?Entry {
+            const start = self.oplog.index;
+            while (self.oplog.next()) |line| {
+                self.scratch.clearRetainingCapacity();
+                var tokens = try term_mod.TermStyledGraphemeIterator.init(line);
+
+                while (try tokens.next()) |token| {
+                    if (token.codepoint != null) {
+                        continue;
+                    }
+
+                    try self.scratch.appendSlice(self.temp.allocator(), token.grapheme);
+                }
+
+                const id = blk: {
+                    var chunks = std.mem.splitScalar(u8, self.scratch.items, ' ');
+                    while (chunks.next()) |chunk| {
+                        if (chunk.len == 12) {
+                            break :blk chunk;
+                        }
+                    }
+                    return error.ErrorParsingChangeId;
+                };
+
+                var op = std.mem.zeroes(Operation);
+                @memcpy(op.id[0..], id);
+
+                // description line
+                _ = self.oplog.next();
+                _ = self.oplog.next();
+
+                return .{ .op = op, .buf = self.oplog.buf[start..self.oplog.index] };
+            }
+
+            return null;
+        }
+
+        pub fn ended(self: *@This()) bool {
+            return self.oplog.ended();
+        }
+
+        pub const Entry = struct {
+            buf: []const u8,
+            op: Operation,
+        };
+    };
 };

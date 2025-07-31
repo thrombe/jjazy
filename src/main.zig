@@ -255,7 +255,7 @@ const LogSlate = struct {
     y: i32 = 0,
     skip_y: i32 = 0,
     status: []const u8,
-    changes: jj_mod.ChangeIterator,
+    changes: jj_mod.Change.Iterator,
     focused_change: jj_mod.Change = .{},
     alloc: std.mem.Allocator,
     // arrayhashmap to preserve insertion order
@@ -378,7 +378,7 @@ const OpLogSlate = struct {
     skip_y: i32 = 0,
     alloc: std.mem.Allocator,
     oplog: []const u8,
-    ops: jj_mod.OpIterator,
+    ops: jj_mod.Operation.Iterator,
     focused_op: jj_mod.Operation = .{},
 
     fn deinit(self: *@This()) void {
@@ -1279,6 +1279,8 @@ pub const App = struct {
             }
             i += 1;
         }
+
+        // TODO: jj op show in diff area + cache for it
     }
 
     fn render_status_bar(self: *@This(), surface: *Surface) !void {

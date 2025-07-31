@@ -270,7 +270,7 @@ const LogSlate = struct {
     fn render(
         self: *@This(),
         surface: *Surface,
-        events: *utils_mod.Channel(App.Event),
+        app: *App,
         state: App.State,
         tropes: anytype,
     ) !void {
@@ -378,7 +378,7 @@ const LogSlate = struct {
 
         if (self.y >= i and !self.changes.ended()) {
             self.skip_y += 1;
-            try events.send(.rerender);
+            try app._send_event(.rerender);
         }
     }
 };
@@ -399,7 +399,7 @@ const OpLogSlate = struct {
     fn render(
         self: *@This(),
         surface: *Surface,
-        events: *utils_mod.Channel(App.Event),
+        app: *App,
     ) !void {
         self.y = @max(0, self.y);
         if (self.skip_y > self.y) {
@@ -441,7 +441,7 @@ const OpLogSlate = struct {
 
         if (self.y >= i and !self.ops.ended()) {
             self.skip_y += 1;
-            try events.send(.rerender);
+            try app._send_event(.rerender);
         }
     }
 };
@@ -507,6 +507,8 @@ pub const App = struct {
     diff: DiffSlate,
 
     state: State = .log,
+    rerender_pending_since: u64 = 0,
+    rerender_pending_count: u64 = 0,
     render_count: u64 = 0,
     last_hash: u64 = 0,
 
@@ -686,18 +688,41 @@ pub const App = struct {
         self.input_thread = try std.Thread.spawn(.{}, @This()._input_loop, .{self});
         self.screen.term.register_signal_handlers(@This());
         try self.screen.term.uncook();
-        try self.events.send(.rerender);
+        try self._send_event(.rerender);
         try self.jj.requests.send(.log);
     }
 
+    // thread safety: do not use from other threads
+    fn _send_event(self: *@This(), event: Event) !void {
+        switch (event) {
+            .rerender => {
+                self.rerender_pending_count += 1;
+            },
+            else => {},
+        }
+
+        try self.events.send(event);
+    }
+
+    fn _wait_recv_event(self: *@This()) ?Event {
+        const event = self.events.wait_recv() orelse return null;
+        switch (event) {
+            .rerender => {
+                self.rerender_pending_count -|= 1;
+            },
+            else => {},
+        }
+        return event;
+    }
+
     fn event_loop(self: *@This()) !void {
-        try self.events.send(.rerender);
+        try self._send_event(.rerender);
 
         if (comptime builtin.mode == .Debug) {
             // try self.screen.term.fancy_features_that_break_gdb(.disable, .{});
         }
 
-        while (self.events.wait_recv()) |event| {
+        while (self._wait_recv_event()) |event| {
             defer _ = self.arena.reset(.retain_capacity);
             const temp = self.arena.allocator();
             var hasher = std.hash.Wyhash.init(0);
@@ -719,7 +744,7 @@ pub const App = struct {
 
                 const final_hash = hasher.final();
                 if (final_hash != self.last_hash) {
-                    self.events.send(.rerender) catch |e| utils_mod.dump_error(e);
+                    self._send_event(.rerender) catch |e| utils_mod.dump_error(e);
                 }
                 self.last_hash = final_hash;
             }
@@ -760,8 +785,23 @@ pub const App = struct {
             event_blk: switch (event) {
                 .quit => return,
                 .err => |err| return err,
-                .rerender => try self.render(tropes),
-                .sigwinch => try self.events.send(.rerender),
+                .rerender => {
+                    var should_render = false;
+                    // should_render = should_render or self.rerender_pending_count == 0;
+                    should_render = should_render or self.events.count() < 5;
+                    should_render = should_render or self.rerender_pending_since > 50;
+
+                    if (should_render) {
+                        self.rerender_pending_since = 0;
+                        try self.render(tropes);
+                    } else {
+                        self.rerender_pending_since += 1;
+                    }
+                },
+                .sigwinch => {
+                    try self.screen.term.update_size();
+                    try self._send_event(.rerender);
+                },
                 .diff_update => try self.request_jj_diff(),
                 .op_update => try self.request_jj_op(),
                 .input => |input| {
@@ -844,21 +884,21 @@ pub const App = struct {
                         .key => |key| {
                             if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{})) {
                                 self.log.y += 1;
-                                try self.events.send(.diff_update);
+                                try self._send_event(.diff_update);
                             }
                             if (key.key == 'k' and key.action.pressed() and key.mod.eq(.{})) {
                                 self.log.y -= 1;
-                                try self.events.send(.diff_update);
+                                try self._send_event(.diff_update);
                             }
                         },
                         .mouse => |key| {
                             if (key.key == .scroll_down and key.action.pressed() and key.mod.eq(.{})) {
                                 self.log.y += 1;
-                                try self.events.send(.diff_update);
+                                try self._send_event(.diff_update);
                             }
                             if (key.key == .scroll_up and key.action.pressed() and key.mod.eq(.{})) {
                                 self.log.y -= 1;
-                                try self.events.send(.diff_update);
+                                try self._send_event(.diff_update);
                             }
                         },
                         else => {},
@@ -867,21 +907,21 @@ pub const App = struct {
                         .key => |key| {
                             if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{})) {
                                 self.oplog.y += 1;
-                                try self.events.send(.op_update);
+                                try self._send_event(.op_update);
                             }
                             if (key.key == 'k' and key.action.pressed() and key.mod.eq(.{})) {
                                 self.oplog.y -= 1;
-                                try self.events.send(.op_update);
+                                try self._send_event(.op_update);
                             }
                         },
                         .mouse => |key| {
                             if (key.key == .scroll_down and key.action.pressed() and key.mod.eq(.{})) {
                                 self.oplog.y += 1;
-                                try self.events.send(.op_update);
+                                try self._send_event(.op_update);
                             }
                             if (key.key == .scroll_up and key.action.pressed() and key.mod.eq(.{})) {
                                 self.oplog.y -= 1;
-                                try self.events.send(.op_update);
+                                try self._send_event(.op_update);
                             }
                         },
                         else => {},
@@ -937,7 +977,7 @@ pub const App = struct {
                         .log => switch (input) {
                             .key => |key| {
                                 if (key.key == 'q') {
-                                    try self.events.send(.quit);
+                                    try self._send_event(.quit);
                                 }
                                 if (key.key == 'n' and key.action.pressed() and key.mod.eq(.{})) {
                                     self.state = .new;
@@ -1209,14 +1249,14 @@ pub const App = struct {
                             .ok => |buf| {
                                 self.log.status = buf;
                                 self.log.changes.reset(buf);
-                                try self.events.send(.diff_update);
+                                try self._send_event(.diff_update);
                             },
                             .err => |buf| {
                                 self.log.status = buf;
                             },
                         }
 
-                        try self.events.send(.rerender);
+                        try self._send_event(.rerender);
                     },
                     .diff => |req| {
                         switch (res.res) {
@@ -1224,7 +1264,7 @@ pub const App = struct {
                                 self.diff.diffcache.getPtr(req.hash).?.diff = buf;
                             },
                         }
-                        try self.events.send(.rerender);
+                        try self._send_event(.rerender);
                     },
                     .oplog => {
                         self.alloc.free(self.oplog.oplog);
@@ -1232,7 +1272,7 @@ pub const App = struct {
                             .ok, .err => |buf| {
                                 self.oplog.oplog = buf;
                                 self.oplog.ops.reset(buf);
-                                try self.events.send(.rerender);
+                                try self._send_event(.rerender);
                             },
                         }
                     },
@@ -1273,7 +1313,7 @@ pub const App = struct {
         }
 
         if (self.diff.diffcache.get(self.log.focused_change.hash)) |_| {
-            try self.events.send(.rerender);
+            try self._send_event(.rerender);
         } else {
             try self.diff.diffcache.put(self.log.focused_change.hash, .{});
             // somehow debounce diff requests
@@ -1358,7 +1398,6 @@ pub const App = struct {
 
         self.x_split = @min(@max(0.0, self.x_split), 1.0);
 
-        try self.screen.term.update_size();
         {
             var status = try Surface.init(&self.screen, .{});
             try status.clear();
@@ -1370,9 +1409,9 @@ pub const App = struct {
             var diffs = try status.split_x(cast(i32, cast(f32, status.size().x) * self.x_split), .border);
 
             if (self.state == .oplog) {
-                try self.oplog.render(&status, &self.events);
+                try self.oplog.render(&status, self);
             } else {
-                try self.log.render(&status, &self.events, self.state, tropes);
+                try self.log.render(&status, self, self.state, tropes);
             }
             try self.diff.render(&diffs, self.log.focused_change);
 

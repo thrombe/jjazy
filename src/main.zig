@@ -655,7 +655,7 @@ pub const App = struct {
         while (true) {
             var fds = [1]std.posix.pollfd{.{ .fd = self.screen.term.tty.handle, .events = std.posix.POLL.IN, .revents = 0 }};
             if (try std.posix.poll(&fds, 20) > 0) {
-                var buf = std.mem.zeroes([32]u8);
+                var buf = std.mem.zeroes([256]u8);
                 const n = try self.screen.term.tty.read(&buf);
                 for (buf[0..n]) |c| try self.input_iterator.input.push_back(c);
 

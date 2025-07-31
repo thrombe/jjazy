@@ -255,7 +255,7 @@ const LogSlate = struct {
     y: i32 = 0,
     skip_y: i32 = 0,
     status: []const u8,
-    changes: jj_mod.Change.Iterator,
+    changes: jj_mod.Change.Parsed.Iterator,
     focused_change: jj_mod.Change = .{},
     alloc: std.mem.Allocator,
     // arrayhashmap to preserve insertion order
@@ -284,13 +284,14 @@ const LogSlate = struct {
 
         var i: i32 = 0;
         self.changes.reset(self.status);
-        while (try self.changes.next()) |change| {
+        while (try self.changes.next()) |parsed| {
             defer i += 1;
             if (self.skip_y > i) {
                 continue;
             }
 
-            const is_selected = self.selected_changes.contains(change.change);
+            const change = jj_mod.Change.from_parsed(&parsed);
+            const is_selected = self.selected_changes.contains(change);
             if (i == self.y) {
                 if (tropes.colored_gutter_cursor) {
                     try gutter.apply_style(.{ .background_color = .from_theme(.dim_text) });
@@ -306,9 +307,11 @@ const LogSlate = struct {
                             } else {
                                 try gutter.draw_bufln("->");
                             }
-                            try gutter.draw_bufln("  ");
+                            for (0..parsed.formatted.height - 1) |_| {
+                                try gutter.draw_bufln("  ");
+                            }
 
-                            try surface.draw_bufln(change.buf);
+                            try surface.draw_bufln(parsed.formatted.buf);
                         },
                         .after => {
                             try gutter.draw_bufln("->");
@@ -319,9 +322,11 @@ const LogSlate = struct {
                             } else {
                                 try gutter.draw_bufln("  ");
                             }
-                            try gutter.draw_bufln("  ");
+                            for (0..parsed.formatted.height - 1) |_| {
+                                try gutter.draw_bufln("  ");
+                            }
 
-                            try surface.draw_bufln(change.buf);
+                            try surface.draw_bufln(parsed.formatted.buf);
                         },
                         .before => {
                             if (is_selected) {
@@ -329,8 +334,10 @@ const LogSlate = struct {
                             } else {
                                 try gutter.draw_bufln("  ");
                             }
-                            try gutter.draw_bufln("  ");
-                            try surface.draw_bufln(change.buf);
+                            for (0..parsed.formatted.height - 1) |_| {
+                                try gutter.draw_bufln("  ");
+                            }
+                            try surface.draw_bufln(parsed.formatted.buf);
 
                             try gutter.draw_bufln("->");
                             try surface.new_line();
@@ -342,8 +349,10 @@ const LogSlate = struct {
                     } else {
                         try gutter.draw_bufln("->");
                     }
-                    try gutter.draw_bufln("  ");
-                    try surface.draw_bufln(change.buf);
+                    for (0..parsed.formatted.height - 1) |_| {
+                        try gutter.draw_bufln("  ");
+                    }
+                    try surface.draw_bufln(parsed.formatted.buf);
                 }
 
                 if (tropes.colored_gutter_cursor) {
@@ -353,10 +362,11 @@ const LogSlate = struct {
                 if (is_selected) {
                     try gutter.draw_buf("#");
                 }
-                try gutter.new_line();
-                try gutter.new_line();
+                for (0..parsed.formatted.height) |_| {
+                    try gutter.draw_bufln("  ");
+                }
 
-                try surface.draw_bufln(change.buf);
+                try surface.draw_bufln(parsed.formatted.buf);
             }
 
             if (surface.is_full()) break;
@@ -378,7 +388,7 @@ const OpLogSlate = struct {
     skip_y: i32 = 0,
     alloc: std.mem.Allocator,
     oplog: []const u8,
-    ops: jj_mod.Operation.Iterator,
+    ops: jj_mod.Operation.Parsed.Iterator,
     focused_op: jj_mod.Operation = .{},
 
     fn deinit(self: *@This()) void {
@@ -401,7 +411,7 @@ const OpLogSlate = struct {
 
         var i: i32 = 0;
         self.ops.reset(self.oplog);
-        while (try self.ops.next()) |op| {
+        while (try self.ops.next()) |parsed| {
             defer i += 1;
             if (self.skip_y > i) {
                 continue;
@@ -409,16 +419,17 @@ const OpLogSlate = struct {
 
             if (i == self.y) {
                 try gutter.draw_bufln("->");
-                try gutter.new_line();
-                try gutter.new_line();
+                for (0..parsed.formatted.height - 1) |_| {
+                    try gutter.draw_bufln("  ");
+                }
 
-                try surface.draw_bufln(op.buf);
+                try surface.draw_bufln(parsed.formatted.buf);
             } else {
-                try gutter.new_line();
-                try gutter.new_line();
-                try gutter.new_line();
+                for (0..parsed.formatted.height) |_| {
+                    try gutter.draw_bufln("  ");
+                }
 
-                try surface.draw_bufln(op.buf);
+                try surface.draw_bufln(parsed.formatted.buf);
             }
 
             if (surface.is_full()) break;
@@ -1243,15 +1254,17 @@ pub const App = struct {
     fn request_jj_diff(self: *@This()) !void {
         self.log.changes.reset(self.log.status);
         var i: i32 = 0;
-        while (try self.log.changes.next()) |change| {
+        while (try self.log.changes.next()) |parsed| {
+            const change = jj_mod.Change.from_parsed(&parsed);
+
             // const n: i32 = 3;
             const n: i32 = 0;
             if (self.log.y == i) {
-                self.log.focused_change = change.change;
+                self.log.focused_change = change;
             } else if (@abs(self.log.y - i) < n) {
-                if (self.diff.diffcache.get(change.change.hash) == null) {
-                    try self.diff.diffcache.put(change.change.hash, .{});
-                    try self.jj.requests.send(.{ .diff = change.change });
+                if (self.diff.diffcache.get(change.hash) == null) {
+                    try self.diff.diffcache.put(change.hash, .{});
+                    try self.jj.requests.send(.{ .diff = change });
                 }
             } else if (self.log.y + n < i) {
                 break;
@@ -1271,9 +1284,11 @@ pub const App = struct {
     fn request_jj_op(self: *@This()) !void {
         self.oplog.ops.reset(self.oplog.oplog);
         var i: i32 = 0;
-        while (try self.oplog.ops.next()) |op| {
+        while (try self.oplog.ops.next()) |parsed| {
+            const op = jj_mod.Operation.from_parsed(&parsed);
+
             if (self.oplog.y == i) {
-                self.oplog.focused_op = op.op;
+                self.oplog.focused_op = op;
             } else if (self.log.y < i) {
                 break;
             }

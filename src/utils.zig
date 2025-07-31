@@ -136,6 +136,11 @@ pub const LineIterator = struct {
         return .{ .buf = buf };
     }
 
+    pub fn peek(self: *@This()) ?[]const u8 {
+        var this = self.*;
+        return this.next();
+    }
+
     pub fn next(self: *@This()) ?[]const u8 {
         if (self.ended()) return null;
 

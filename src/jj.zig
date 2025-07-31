@@ -59,6 +59,7 @@ pub const JujutsuServer = struct {
         log,
         oplog,
         diff: Change,
+        evolog: Change,
     };
 
     pub const Result = union(enum) {
@@ -134,6 +135,22 @@ pub const JujutsuServer = struct {
                         "log",
                         "--template",
                         Operation.Parsed.template,
+                    }) catch |e| {
+                        utils_mod.dump_error(e);
+                        continue;
+                    };
+                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = res } } });
+                },
+                .evolog => |change| {
+                    const res = self.jjcall(&[_][]const u8{
+                        "jj",
+                        "--color",
+                        "always",
+                        "evolog",
+                        "--template",
+                        Change.Parsed.template,
+                        "-r",
+                        change.id[0..],
                     }) catch |e| {
                         utils_mod.dump_error(e);
                         continue;

@@ -1343,6 +1343,14 @@ pub const App = struct {
                             },
                         }
                     },
+                    .evolog => |req| {
+                        _ = req;
+                        switch (res.res) {
+                            .ok, .err => |buf| {
+                                self.alloc.free(buf);
+                            },
+                        }
+                    },
                 },
             }
         }

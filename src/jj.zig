@@ -31,7 +31,7 @@ pub const Schema = struct {
     };
 
     pub const Tags = struct {
-        args: []const u8,
+        args: ?[]const u8 = null,
     };
 
     pub const Operation = struct {
@@ -317,10 +317,13 @@ fn Template(typ: type, _template: []const u8, _sep: []const u8) type {
                     var chunks = std.mem.splitSequence(u8, rest, sep);
                     const json = chunks.next() orelse return error.ExpectedJjazyDelim;
 
-                    const change = try std.json.parseFromSliceLeaky(typ, self.temp.allocator(), json, .{
+                    const change = std.json.parseFromSliceLeaky(typ, self.temp.allocator(), json, .{
                         .ignore_unknown_fields = true,
                         .allocate = .alloc_if_needed,
-                    });
+                    }) catch |e| {
+                        std.log.err("{s}", .{json});
+                        return e;
+                    };
 
                     var height: u32 = 1;
                     try self.scratch.appendSlice(node);

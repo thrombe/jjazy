@@ -329,6 +329,12 @@ pub fn Channel(typ: type) type {
             self.pinned.notify.signal();
         }
 
+        pub fn count(self: *@This()) usize {
+            self.pinned.lock.lock();
+            defer self.pinned.lock.unlock();
+            return self.pinned.dq.size;
+        }
+
         pub fn try_recv(self: *@This()) ?typ {
             self.pinned.lock.lock();
             defer self.pinned.lock.unlock();

@@ -257,7 +257,8 @@ pub const Formatted = struct {
 };
 
 const template_sep = struct {
-    const sep = "-JJAZY1-";
+    const seed = "JJAZY";
+    const sep = "-" ++ std.fmt.comptimePrint("{d}", .{hash(seed)}) ++ "-";
     const escaped = escape(sep);
 
     fn escape(comptime str: []const u8) [str.len * 4]u8 {
@@ -268,6 +269,12 @@ const template_sep = struct {
             }
             return buf;
         }
+    }
+
+    fn hash(str: []const u8) u64 {
+        var hasher = std.hash.Wyhash.init(0);
+        hasher.update(str);
+        return hasher.final();
     }
 };
 

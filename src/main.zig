@@ -489,6 +489,17 @@ const DiffSlate = struct {
     }
 };
 
+const BookmarkSlate = struct {
+    alloc: std.mem.Allocator,
+    buf: []const u8,
+    it: jj_mod.Bookmark.Parsed.Iterator,
+
+    fn deinit(self: *@This()) void {
+        self.alloc.free(self.buf);
+        self.it.deinit();
+    }
+};
+
 pub const App = struct {
     screen: term_mod.Screen,
 
@@ -509,6 +520,7 @@ pub const App = struct {
     log: LogSlate,
     oplog: OpLogSlate,
     diff: DiffSlate,
+    bookmarks: BookmarkSlate,
 
     state: State = .log,
     rerender_pending_since: u64 = 0,
@@ -581,6 +593,7 @@ pub const App = struct {
         errdefer jj.deinit();
 
         try jj.requests.send(.log);
+        try jj.requests.send(.bookmark);
 
         self.* = .{
             .alloc = alloc,
@@ -603,6 +616,11 @@ pub const App = struct {
             .diff = .{
                 .alloc = alloc,
                 .diffcache = .init(alloc),
+            },
+            .bookmarks = .{
+                .alloc = alloc,
+                .buf = &.{},
+                .it = .init(alloc, &[_]u8{}),
             },
             .command_text = .init(alloc),
             .input_thread = undefined,
@@ -1348,6 +1366,14 @@ pub const App = struct {
                         switch (res.res) {
                             .ok, .err => |buf| {
                                 self.alloc.free(buf);
+                            },
+                        }
+                    },
+                    .bookmark => {
+                        switch (res.res) {
+                            .err, .ok => |buf| {
+                                self.alloc.free(self.bookmarks.buf);
+                                self.bookmarks.buf = buf;
                             },
                         }
                     },

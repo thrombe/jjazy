@@ -44,6 +44,13 @@ pub const Schema = struct {
         is_snapshot: bool,
         tags: Tags,
     };
+
+    pub const Bookmark = struct {
+        name: []const u8,
+        target: []const []const u8,
+        remote: ?[]const u8 = null,
+        tracking_target: ?[]const []const u8 = null,
+    };
 };
 
 pub const JujutsuServer = struct {
@@ -58,6 +65,7 @@ pub const JujutsuServer = struct {
     pub const Request = union(enum) {
         log,
         oplog,
+        bookmark,
         diff: Change,
         evolog: Change,
     };
@@ -192,6 +200,20 @@ pub const JujutsuServer = struct {
                     try output.appendSlice(diff);
 
                     try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = try output.toOwnedSlice() } } });
+                },
+                .bookmark => {
+                    const res = self.jjcall(&[_][]const u8{
+                        "jj",
+                        "bookmark",
+                        "list",
+                        "-a",
+                        "--template",
+                        Bookmark.Parsed.template,
+                    }) catch |e| {
+                        utils_mod.dump_error(e);
+                        continue;
+                    };
+                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = res } } });
                 },
             }
         }
@@ -387,6 +409,14 @@ fn Template(typ: type, _template: []const u8, _sep: []const u8) type {
         };
     };
 }
+
+pub const Bookmark = struct {
+    pub const Parsed = Template(
+        Schema.Bookmark,
+        "json(self) ++ \"" ++ template_sep.escaped ++ "\"\n",
+        template_sep.sep,
+    );
+};
 
 pub const Change = struct {
     id: Hash = [1]u8{'z'} ** 8,

@@ -1009,6 +1009,7 @@ pub const App = struct {
                                 }
                                 if (key.key == 'o' and key.action.pressed() and key.mod.eq(.{})) {
                                     self.state = .oplog;
+                                    self.oplog.y = 0;
                                     try self.jj.requests.send(.oplog);
                                     break :event_blk;
                                 }

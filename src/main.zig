@@ -299,8 +299,8 @@ const LogSlate = struct {
                     try gutter.apply_style(.bold);
                 }
 
-                if (state == .rebase) {
-                    switch (state.rebase) {
+                switch (state) {
+                    .duplicate, .rebase => |where| switch (where) {
                         .onto => {
                             if (is_selected) {
                                 try gutter.draw_bufln("#>");
@@ -342,17 +342,18 @@ const LogSlate = struct {
                             try gutter.draw_bufln("->");
                             try surface.new_line();
                         },
-                    }
-                } else {
-                    if (is_selected) {
-                        try gutter.draw_bufln("#>");
-                    } else {
-                        try gutter.draw_bufln("->");
-                    }
-                    for (0..parsed.formatted.height - 1) |_| {
-                        try gutter.draw_bufln("  ");
-                    }
-                    try surface.draw_bufln(parsed.formatted.buf);
+                    },
+                    else => {
+                        if (is_selected) {
+                            try gutter.draw_bufln("#>");
+                        } else {
+                            try gutter.draw_bufln("->");
+                        }
+                        for (0..parsed.formatted.height - 1) |_| {
+                            try gutter.draw_bufln("  ");
+                        }
+                        try surface.draw_bufln(parsed.formatted.buf);
+                    },
                 }
 
                 if (tropes.colored_gutter_cursor) {
@@ -758,19 +759,29 @@ pub const App = struct {
                 escape_to_log: bool = false,
                 space_select: bool = false,
                 colored_gutter_cursor: bool = false,
+                where_oba: bool = false,
             } = switch (self.state) {
                 .log => .{
                     .scroll_log = true,
                     .scroll_diff = true,
                     .resize_master = true,
                 },
-                .new, .squash, .abandon, .rebase => .{
+                .new, .squash, .abandon => .{
                     .scroll_log = true,
                     .scroll_diff = true,
                     .resize_master = true,
                     .escape_to_log = true,
                     .space_select = true,
                     .colored_gutter_cursor = true,
+                },
+                .duplicate, .rebase => .{
+                    .scroll_log = true,
+                    .scroll_diff = true,
+                    .resize_master = true,
+                    .escape_to_log = true,
+                    .space_select = true,
+                    .colored_gutter_cursor = true,
+                    .where_oba = true,
                 },
                 .command => .{
                     .escape_to_log = true,
@@ -779,7 +790,9 @@ pub const App = struct {
                     .escape_to_log = true,
                     .scroll_oplog = true,
                 },
-                .bookmark, .git, .duplicate, .evlog => .{},
+                .bookmark, .git, .evlog => .{
+                    .escape_to_log = true,
+                },
             };
 
             event_blk: switch (event) {
@@ -972,6 +985,31 @@ pub const App = struct {
                         },
                         else => {},
                     };
+                    if (tropes.where_oba) switch (input) {
+                        .key => |key| {
+                            switch (self.state) {
+                                .rebase, .duplicate => |*where| {
+                                    if (std.mem.indexOfScalar(u8, "oba", cast(u8, key.key)) != null and
+                                        key.action.pressed() and
+                                        key.mod.eq(.{}))
+                                    {
+                                        switch (key.key) {
+                                            'o' => where.* = .onto,
+                                            'b' => where.* = .before,
+                                            'a' => where.* = .after,
+                                            else => {
+                                                self.log.selected_changes.clearRetainingCapacity();
+                                                self.state = .log;
+                                            },
+                                        }
+                                        break :event_blk;
+                                    }
+                                },
+                                else => unreachable,
+                            }
+                        },
+                        else => {},
+                    };
 
                     switch (self.state) {
                         .log => switch (input) {
@@ -1013,6 +1051,11 @@ pub const App = struct {
                                     try self.jj.requests.send(.oplog);
                                     break :event_blk;
                                 }
+                                if (key.key == 'd' and key.action.pressed() and key.mod.eq(.{})) {
+                                    self.state = .{ .duplicate = .onto };
+                                    try self.log.selected_changes.put(self.log.focused_change, {});
+                                    break :event_blk;
+                                }
                                 if (key.key == 's' and key.action.pressed() and key.mod.eq(.{})) {
                                     try self.execute_interactive_command(&[_][]const u8{
                                         "jj",
@@ -1039,23 +1082,6 @@ pub const App = struct {
                             else => {},
                         },
                         .rebase => |rebase| switch (input) {
-                            .key => |key| {
-                                if (std.mem.indexOfScalar(u8, "abo", cast(u8, key.key)) != null and
-                                    key.action.pressed() and
-                                    key.mod.eq(.{}))
-                                {
-                                    switch (key.key) {
-                                        'o' => self.state = .{ .rebase = .onto },
-                                        'a' => self.state = .{ .rebase = .after },
-                                        'b' => self.state = .{ .rebase = .before },
-                                        else => {
-                                            self.log.selected_changes.clearRetainingCapacity();
-                                            self.state = .log;
-                                        },
-                                    }
-                                    break :event_blk;
-                                }
-                            },
                             .functional => |key| {
                                 if (key.key == .enter and key.action.pressed() and key.mod.eq(.{})) {
                                     defer {
@@ -1240,7 +1266,44 @@ pub const App = struct {
                             },
                             else => {},
                         },
-                        .bookmark, .git, .duplicate, .evlog => unreachable,
+                        .duplicate => |where| switch (input) {
+                            .functional => |key| {
+                                if (key.key == .enter and key.action.pressed() and key.mod.eq(.{})) {
+                                    defer {
+                                        self.log.selected_changes.clearRetainingCapacity();
+                                        self.state = .log;
+                                    }
+
+                                    var args = std.ArrayList([]const u8).init(temp);
+                                    try args.append("jj");
+                                    try args.append("duplicate");
+
+                                    var it = self.log.selected_changes.iterator();
+                                    while (it.next()) |e| {
+                                        try args.append(e.key_ptr.id[0..]);
+
+                                        if (std.meta.eql(e.key_ptr.*, self.log.focused_change)) {
+                                            break :event_blk;
+                                        }
+                                    }
+
+                                    switch (where) {
+                                        .onto => try args.append("-d"),
+                                        .after => try args.append("-A"),
+                                        .before => try args.append("-B"),
+                                    }
+
+                                    try args.append(self.log.focused_change.id[0..]);
+
+                                    try self.execute_non_interactive_command(args.items);
+
+                                    try self.jj.requests.send(.log);
+                                    break :event_blk;
+                                }
+                            },
+                            else => {},
+                        },
+                        .bookmark, .git, .evlog => unreachable,
                     }
                 },
                 .jj => |res| switch (res.req) {

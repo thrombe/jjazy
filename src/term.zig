@@ -1001,7 +1001,7 @@ pub const Term = struct {
 pub const Screen = struct {
     term: Term,
 
-    surface_id: u32 = 0,
+    cmdbuf_id: u32 = 0,
     cmdbufs: std.ArrayList(std.ArrayList(u8)),
 
     alloc: std.mem.Allocator,
@@ -1020,12 +1020,12 @@ pub const Screen = struct {
         defer self.term.deinit();
     }
 
-    pub fn get_surface_id(self: *@This()) !u32 {
-        defer self.surface_id += 1;
-        if (self.cmdbufs.items.len <= self.surface_id) {
+    pub fn get_cmdbuf_id(self: *@This()) !u32 {
+        defer self.cmdbuf_id += 1;
+        if (self.cmdbufs.items.len <= self.cmdbuf_id) {
             try self.cmdbufs.append(.init(self.alloc));
         }
-        return self.surface_id;
+        return self.cmdbuf_id;
     }
 
     pub fn writer(self: *@This(), id: u32) std.ArrayList(u8).Writer {
@@ -1036,14 +1036,14 @@ pub const Screen = struct {
         try self.term.tty.writeAll(codes.sync_set ++ codes.clear);
 
         // submit and clear cmdbufs
-        for (self.cmdbufs.items[0..self.surface_id]) |*cmdbuf| {
+        for (self.cmdbufs.items[0..self.cmdbuf_id]) |*cmdbuf| {
             try self.term.tty.writeAll(cmdbuf.items);
             cmdbuf.clearRetainingCapacity();
         }
 
         try self.term.tty.writeAll(codes.sync_reset);
 
-        self.surface_id = 0;
+        self.cmdbuf_id = 0;
     }
 
     pub fn clear_region(self: *@This(), id: u32, region: Region) !void {

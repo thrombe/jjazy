@@ -32,7 +32,7 @@ const Surface = struct {
 
     fn init(screen: *term_mod.Screen, v: struct { origin: ?Vec2 = null, size: ?Vec2 = null }) !@This() {
         return .{
-            .id = try screen.get_surface_id(),
+            .id = try screen.get_cmdbuf_id(),
             .screen = screen,
             .region = .{
                 .origin = v.origin orelse screen.term.screen.origin,
@@ -119,7 +119,7 @@ const Surface = struct {
         }
 
         const other = @This(){
-            .id = try self.screen.get_surface_id(),
+            .id = try self.screen.get_cmdbuf_id(),
             .screen = self.screen,
             .region = regions.right,
         };
@@ -141,7 +141,7 @@ const Surface = struct {
         }
 
         const other = @This(){
-            .id = try self.screen.get_surface_id(),
+            .id = try self.screen.get_cmdbuf_id(),
             .screen = self.screen,
             .region = regions.bottom,
         };

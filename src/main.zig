@@ -498,6 +498,19 @@ const BookmarkSlate = struct {
         self.alloc.free(self.buf);
         self.it.deinit();
     }
+
+    fn render(self: *@This(), surface: *Surface) !void {
+        try surface.clear();
+        try surface.apply_style(.bold);
+        try surface.draw_border(term_mod.border.rounded);
+        try surface.draw_border_heading(" Bookmarks ");
+        try surface.apply_style(.reset);
+
+        self.it.reset(self.buf);
+        while (try self.it.next()) |bookmark| {
+            try surface.draw_bufln(bookmark.parsed.name);
+        }
+    }
 };
 
 const HelpSlate = struct {
@@ -514,7 +527,7 @@ const HelpSlate = struct {
         try surface.apply_style(.bold);
 
         try surface.clear();
-        try surface.draw_border(term_mod.border.square);
+        try surface.draw_border(term_mod.border.rounded);
         try surface.draw_border_heading(" Help ");
 
         try surface.apply_style(.reset);
@@ -1537,19 +1550,6 @@ pub const App = struct {
         }
     }
 
-    fn render_command_input(self: *@This()) !void {
-        const screen = self.screen.term.screen;
-        const popup_size = Vec2{ .x = 60, .y = 20 };
-        const origin = screen.origin.add(screen.size.mul(0.5)).sub(popup_size.mul(0.5));
-        const region = self.screen.term.screen.clamp(.{ .origin = origin, .size = popup_size });
-        var command = try Surface.init(&self.screen, .{ .origin = region.origin, .size = region.size });
-        try command.clear();
-        try command.draw_border(term_mod.border.rounded);
-        try command.draw_border_heading(" Command ");
-
-        try self.command_text.draw(&command);
-    }
-
     fn render(self: *@This(), tropes: anytype) !void {
         defer self.render_count += 1;
 
@@ -1571,6 +1571,19 @@ pub const App = struct {
             }
             try self.diff.render(&diffs, self.log.focused_change);
 
+            const max_popup_region = self.screen.term.screen
+                .split_y(-2, false).top
+                .split_y(1, false).bottom
+                .border_sub(.{ .x = 2 });
+            if (self.state == .bookmark) {
+                const popup_size = Vec2{ .x = 60, .y = 30 };
+                const origin = max_popup_region.origin.add(max_popup_region.size.mul(0.5)).sub(popup_size.mul(0.5));
+                const region = max_popup_region.clamp(.{ .origin = origin, .size = popup_size });
+                var surface = try Surface.init(&self.screen, .{ .origin = region.origin, .size = region.size });
+
+                try self.bookmarks.render(&surface);
+            }
+
             if (self.show_help) {
                 const screen = self.screen.term.screen;
                 const r0 = screen.border_sub(.{ .x = 3, .y = 2 });
@@ -1584,7 +1597,15 @@ pub const App = struct {
             }
 
             if (self.state == .command) {
-                try self.render_command_input();
+                const popup_size = Vec2{ .x = 60, .y = 20 };
+                const origin = max_popup_region.origin.add(max_popup_region.size.mul(0.5)).sub(popup_size.mul(0.5));
+                const region = max_popup_region.clamp(.{ .origin = origin, .size = popup_size });
+                var command = try Surface.init(&self.screen, .{ .origin = region.origin, .size = region.size });
+                try command.clear();
+                try command.draw_border(term_mod.border.rounded);
+                try command.draw_border_heading(" Command ");
+
+                try self.command_text.draw(&command);
             }
         }
         try self.screen.flush_writes();

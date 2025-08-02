@@ -540,6 +540,8 @@ pub const App = struct {
     alloc: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
 
+    state: State = .log,
+    show_help: bool = false,
     x_split: f32 = 0.55,
     command_text: TextInput,
 
@@ -549,8 +551,6 @@ pub const App = struct {
     bookmarks: BookmarkSlate,
     help: HelpSlate,
 
-    state: State = .log,
-    show_help: bool = false,
     rerender_pending_since: u64 = 0,
     rerender_pending_count: u64 = 0,
     render_count: u64 = 0,
@@ -803,11 +803,11 @@ pub const App = struct {
 
             const tropes: struct {
                 global: bool = true,
+                escape_to_log: bool = true,
                 scroll_log: bool = false,
                 scroll_oplog: bool = false,
                 scroll_diff: bool = false,
                 resize_master: bool = false,
-                escape_to_log: bool = false,
                 space_select: bool = false,
                 colored_gutter_cursor: bool = false,
                 where_oba: bool = false,
@@ -821,7 +821,6 @@ pub const App = struct {
                     .scroll_log = true,
                     .scroll_diff = true,
                     .resize_master = true,
-                    .escape_to_log = true,
                     .space_select = true,
                     .colored_gutter_cursor = true,
                 },
@@ -829,21 +828,14 @@ pub const App = struct {
                     .scroll_log = true,
                     .scroll_diff = true,
                     .resize_master = true,
-                    .escape_to_log = true,
                     .space_select = true,
                     .colored_gutter_cursor = true,
                     .where_oba = true,
                 },
-                .command => .{
-                    .escape_to_log = true,
-                },
                 .oplog => .{
-                    .escape_to_log = true,
                     .scroll_oplog = true,
                 },
-                .bookmark, .git, .evlog => .{
-                    .escape_to_log = true,
-                },
+                .command, .bookmark, .git, .evlog => .{},
             };
 
             event_blk: switch (event) {

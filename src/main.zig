@@ -508,20 +508,15 @@ const HelpSlate = struct {
     fn render(self: *@This(), surface: *Surface, app: *App) !void {
         _ = self;
         _ = app;
-        try surface.clear();
 
         try surface.apply_style(.{ .background_color = .from_theme(.default_background) });
         try surface.apply_style(.{ .foreground_color = .from_theme(.default_foreground) });
         try surface.apply_style(.bold);
 
+        try surface.clear();
         try surface.draw_border(term_mod.border.square);
         try surface.draw_border_heading(" Help ");
-        while (!surface.is_full()) {
-            while (!surface.is_x_out()) {
-                try surface.draw_buf(" ");
-            }
-            try surface.new_line();
-        }
+
         try surface.apply_style(.reset);
     }
 };

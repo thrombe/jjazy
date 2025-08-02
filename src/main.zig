@@ -532,7 +532,8 @@ pub const App = struct {
         log,
         oplog,
         evlog: jj_mod.Change,
-        bookmark: ?enum {
+        bookmark: enum {
+            none,
             new,
             move,
             delete,
@@ -1078,7 +1079,7 @@ pub const App = struct {
                                     break :event_blk;
                                 }
                                 if (key.key == 'b' and key.action.pressed() and key.mod.eq(.{})) {
-                                    self.state = .{ .bookmark = null };
+                                    self.state = .{ .bookmark = .none };
                                     break :event_blk;
                                 }
                                 if (key.key == 's' and key.action.pressed() and key.mod.eq(.{})) {
@@ -1328,7 +1329,24 @@ pub const App = struct {
                             },
                             else => {},
                         },
-                        .bookmark => |*state| if (state.*) |bookmark_state| switch (bookmark_state) {
+                        .bookmark => |*state| switch (state.*) {
+                            .none => switch (input) {
+                                .key => |key| {
+                                    if (key.key == 'n' and key.action.pressed() and key.mod.eq(.{})) {
+                                        state.* = .new;
+                                    }
+                                    if (key.key == 'm' and key.action.pressed() and key.mod.eq(.{})) {
+                                        state.* = .move;
+                                    }
+                                    if (key.key == 'd' and key.action.pressed() and key.mod.eq(.{})) {
+                                        state.* = .delete;
+                                    }
+                                    if (key.key == 'f' and key.action.pressed() and key.mod.eq(.{})) {
+                                        state.* = .forget;
+                                    }
+                                },
+                                else => {},
+                            },
                             .new => switch (input) {
                                 else => {},
                             },
@@ -1341,24 +1359,16 @@ pub const App = struct {
                             .forget => switch (input) {
                                 else => {},
                             },
-                        } else switch (input) {
-                            .key => |key| {
-                                if (key.key == 'n' and key.action.pressed() and key.mod.eq(.{})) {
-                                    state.* = .new;
-                                }
-                                if (key.key == 'm' and key.action.pressed() and key.mod.eq(.{})) {
-                                    state.* = .move;
-                                }
-                                if (key.key == 'd' and key.action.pressed() and key.mod.eq(.{})) {
-                                    state.* = .delete;
-                                }
-                                if (key.key == 'f' and key.action.pressed() and key.mod.eq(.{})) {
-                                    state.* = .forget;
-                                }
-                            },
-                            else => {},
                         },
-                        .git, .evlog => unreachable,
+                        .git => |*state| switch (state.*) {
+                            .fetch => switch (input) {
+                                else => {},
+                            },
+                            .push => switch (input) {
+                                else => {},
+                            },
+                        },
+                        .evlog => unreachable,
                     }
                 },
                 .jj => |res| switch (res.req) {
@@ -1503,12 +1513,9 @@ pub const App = struct {
                 inline .rebase, .git, .duplicate => |_p, t| switch (_p) {
                     inline else => |p| " " ++ @tagName(t) ++ "." ++ @tagName(p) ++ " ",
                 },
-                inline .bookmark => |__p, t| blk: {
-                    if (__p) |_p| break :blk switch (_p) {
-                        inline else => |p| " " ++ @tagName(t) ++ "." ++ @tagName(p) ++ " ",
-                    } else {
-                        break :blk " " ++ @tagName(t) ++ " ";
-                    }
+                inline .bookmark => |_p, t| switch (_p) {
+                    inline .none => " " ++ @tagName(t) ++ " ",
+                    inline else => |p| " " ++ @tagName(t) ++ "." ++ @tagName(p) ++ " ",
                 },
                 inline else => |_, t| " " ++ @tagName(t) ++ " ",
             });

@@ -514,14 +514,35 @@ const BookmarkSlate = struct {
 
     fn render(self: *@This(), surface: *Surface) !void {
         try surface.clear();
+
         try surface.apply_style(.bold);
         try surface.draw_border(term_mod.border.rounded);
         try surface.draw_border_heading(" Bookmarks ");
         try surface.apply_style(.reset);
 
+        var gutter = try surface.split_x(2, .gap);
+        std.mem.swap(Surface, surface, &gutter);
+
+        var i: u32 = 0;
         self.it.reset(self.buf);
         while (try self.it.next()) |bookmark| {
-            try surface.draw_bufln(bookmark.parsed.name);
+            try surface.draw_buf(bookmark.parsed.name);
+            if (bookmark.parsed.remote) |remote| {
+                try surface.draw_buf(" @");
+                try surface.draw_buf(remote);
+            }
+            try surface.new_line();
+
+            if (i == self.index) {
+                try gutter.draw_bufln("->");
+            } else {
+                try gutter.new_line();
+            }
+            i += 1;
+        }
+
+        if (self.index >= i) {
+            self.index = i -| 1;
         }
     }
 };
@@ -813,6 +834,7 @@ pub const App = struct {
                 }
                 hasher.update(&std.mem.toBytes(self.text_input.text.items.len));
                 hasher.update(&std.mem.toBytes(self.text_input.cursor));
+                hasher.update(&std.mem.toBytes(self.bookmarks.index));
                 // hasher.update(self.log.status); // too much text for hashing on every event
 
                 const final_hash = hasher.final();
@@ -1395,6 +1417,13 @@ pub const App = struct {
                         .bookmark => |*state| switch (state.*) {
                             .view => switch (input) {
                                 .key => |key| {
+                                    if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{})) {
+                                        self.bookmarks.index += 1;
+                                    }
+                                    if (key.key == 'k' and key.action.pressed() and key.mod.eq(.{})) {
+                                        self.bookmarks.index -|= 1;
+                                    }
+
                                     if (key.key == 'n' and key.action.pressed() and key.mod.eq(.{})) {
                                         state.* = .new;
                                     }

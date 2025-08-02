@@ -533,11 +533,8 @@ pub const App = struct {
         oplog,
         evlog: jj_mod.Change,
         bookmark: enum {
-            none,
+            view,
             new,
-            move,
-            delete,
-            forget,
         },
         git: enum {
             fetch,
@@ -646,6 +643,7 @@ pub const App = struct {
         defer self.log.deinit();
         defer self.oplog.deinit();
         defer self.diff.deinit();
+        defer self.bookmarks.deinit();
         defer self.command_text.deinit();
         defer self.arena.deinit();
         defer self.screen.deinit();
@@ -1079,7 +1077,7 @@ pub const App = struct {
                                     break :event_blk;
                                 }
                                 if (key.key == 'b' and key.action.pressed() and key.mod.eq(.{})) {
-                                    self.state = .{ .bookmark = .none };
+                                    self.state = .{ .bookmark = .view };
                                     break :event_blk;
                                 }
                                 if (key.key == 's' and key.action.pressed() and key.mod.eq(.{})) {
@@ -1330,33 +1328,18 @@ pub const App = struct {
                             else => {},
                         },
                         .bookmark => |*state| switch (state.*) {
-                            .none => switch (input) {
+                            .view => switch (input) {
                                 .key => |key| {
                                     if (key.key == 'n' and key.action.pressed() and key.mod.eq(.{})) {
                                         state.* = .new;
                                     }
-                                    if (key.key == 'm' and key.action.pressed() and key.mod.eq(.{})) {
-                                        state.* = .move;
-                                    }
-                                    if (key.key == 'd' and key.action.pressed() and key.mod.eq(.{})) {
-                                        state.* = .delete;
-                                    }
-                                    if (key.key == 'f' and key.action.pressed() and key.mod.eq(.{})) {
-                                        state.* = .forget;
-                                    }
+                                    if (key.key == 'm' and key.action.pressed() and key.mod.eq(.{})) {}
+                                    if (key.key == 'd' and key.action.pressed() and key.mod.eq(.{})) {}
+                                    if (key.key == 'f' and key.action.pressed() and key.mod.eq(.{})) {}
                                 },
                                 else => {},
                             },
                             .new => switch (input) {
-                                else => {},
-                            },
-                            .move => switch (input) {
-                                else => {},
-                            },
-                            .delete => switch (input) {
-                                else => {},
-                            },
-                            .forget => switch (input) {
                                 else => {},
                             },
                         },
@@ -1514,7 +1497,7 @@ pub const App = struct {
                     inline else => |p| " " ++ @tagName(t) ++ "." ++ @tagName(p) ++ " ",
                 },
                 inline .bookmark => |_p, t| switch (_p) {
-                    inline .none => " " ++ @tagName(t) ++ " ",
+                    inline .view => " " ++ @tagName(t) ++ " ",
                     inline else => |p| " " ++ @tagName(t) ++ "." ++ @tagName(p) ++ " ",
                 },
                 inline else => |_, t| " " ++ @tagName(t) ++ " ",

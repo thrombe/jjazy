@@ -1507,6 +1507,22 @@ pub const App = struct {
                         },
                         .git => |*state| switch (state.*) {
                             .fetch => switch (input) {
+                                .functional => |key| {
+                                    if (key.key == .enter and key.action.pressed() and key.mod.eq(.{})) {
+                                        defer self.state = .log;
+
+                                        // TODO:
+                                        //  support --branch
+                                        //  support --remote
+                                        try self.execute_non_interactive_command(&[_][]const u8{
+                                            "jj",
+                                            "git",
+                                            "fetch",
+                                        });
+                                        try self.jj.requests.send(.log);
+                                        break :event_blk;
+                                    }
+                                },
                                 else => {},
                             },
                             .push => switch (input) {

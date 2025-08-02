@@ -493,10 +493,22 @@ const BookmarkSlate = struct {
     alloc: std.mem.Allocator,
     buf: []const u8,
     it: jj_mod.Bookmark.Parsed.Iterator,
+    index: u32 = 0,
 
     fn deinit(self: *@This()) void {
         self.alloc.free(self.buf);
         self.it.deinit();
+    }
+
+    fn get_selected(self: *@This()) !?jj_mod.Bookmark.Parsed {
+        var i = self.index;
+        while (try self.it.next()) |b| {
+            defer i -= 1;
+            if (i == 0) {
+                return b;
+            }
+        }
+        return null;
     }
 
     fn render(self: *@This(), surface: *Surface) !void {
@@ -551,7 +563,7 @@ pub const App = struct {
     state: State = .log,
     show_help: bool = false,
     x_split: f32 = 0.55,
-    command_text: TextInput,
+    text_input: TextInput,
 
     log: LogSlate,
     oplog: OpLogSlate,
@@ -657,7 +669,7 @@ pub const App = struct {
                 .it = .init(alloc, &[_]u8{}),
             },
             .help = .{},
-            .command_text = .init(alloc),
+            .text_input = .init(alloc),
             .input_thread = undefined,
         };
 
@@ -682,7 +694,7 @@ pub const App = struct {
         defer self.diff.deinit();
         defer self.bookmarks.deinit();
         defer self.help.deinit();
-        defer self.command_text.deinit();
+        defer self.text_input.deinit();
         defer self.arena.deinit();
         defer self.screen.deinit();
         defer self.screen.term.unregister_signal_handlers();
@@ -798,8 +810,8 @@ pub const App = struct {
                 while (it.next()) |e| {
                     hasher.update(&e.key_ptr.id);
                 }
-                hasher.update(&std.mem.toBytes(self.command_text.text.items.len));
-                hasher.update(&std.mem.toBytes(self.command_text.cursor));
+                hasher.update(&std.mem.toBytes(self.text_input.text.items.len));
+                hasher.update(&std.mem.toBytes(self.text_input.cursor));
                 // hasher.update(self.log.status); // too much text for hashing on every event
 
                 const final_hash = hasher.final();
@@ -819,6 +831,7 @@ pub const App = struct {
                 space_select: bool = false,
                 colored_gutter_cursor: bool = false,
                 where_oba: bool = false,
+                input_text: bool = false,
             } = switch (self.state) {
                 .log => .{
                     .scroll_log = true,
@@ -843,7 +856,16 @@ pub const App = struct {
                 .oplog => .{
                     .scroll_oplog = true,
                 },
-                .command, .bookmark, .git, .evlog => .{},
+                .command => .{
+                    .input_text = true,
+                },
+                .bookmark => |state| switch (state) {
+                    .view => .{},
+                    .new => .{
+                        .input_text = true,
+                    },
+                },
+                .git, .evlog => .{},
             };
 
             event_blk: switch (event) {
@@ -1062,6 +1084,40 @@ pub const App = struct {
                         },
                         else => {},
                     };
+                    if (tropes.input_text) switch (input) {
+                        .key => |key| {
+                            if (key.action.pressed() and (key.mod.eq(.{ .shift = true }) or key.mod.eq(.{}))) {
+                                try self.text_input.write(cast(u8, key.key));
+                            }
+                        },
+                        .functional => |key| {
+                            if (key.key == .left and key.action.pressed() and key.mod.eq(.{})) {
+                                self.text_input.left();
+                            }
+                            if (key.key == .right and key.action.pressed() and key.mod.eq(.{})) {
+                                self.text_input.right();
+                            }
+                            if (key.key == .left and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
+                                self.text_input.left_word();
+                            }
+                            if (key.key == .right and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
+                                self.text_input.right_word();
+                            }
+                            if (key.key == .backspace and key.action.pressed() and key.mod.eq(.{})) {
+                                _ = self.text_input.back();
+                            }
+                            if (key.key == .backspace and key.action.pressed() and key.mod.eq(.{ .alt = true })) {
+                                _ = self.text_input.back();
+                                while (true) {
+                                    if (' ' == self.text_input.peek_back() orelse break) {
+                                        break;
+                                    }
+                                    _ = self.text_input.back();
+                                }
+                            }
+                        },
+                        else => {},
+                    };
 
                     switch (self.state) {
                         .log => switch (input) {
@@ -1110,6 +1166,7 @@ pub const App = struct {
                                 }
                                 if (key.key == 'b' and key.action.pressed() and key.mod.eq(.{})) {
                                     self.state = .{ .bookmark = .view };
+                                    try self.jj.requests.send(.bookmark);
                                     break :event_blk;
                                 }
                                 if (key.key == '?' and key.action.pressed() and key.mod.eq(.{ .shift = true })) {
@@ -1135,7 +1192,7 @@ pub const App = struct {
 
                                 if (key.key == ':' and key.action.just_pressed() and key.mod.eq(.{ .shift = true })) {
                                     self.state = .command;
-                                    self.command_text.reset();
+                                    self.text_input.reset();
                                     break :event_blk;
                                 }
                             },
@@ -1265,48 +1322,19 @@ pub const App = struct {
                             else => {},
                         },
                         .command => switch (input) {
-                            .key => |key| {
-                                if (key.action.pressed() and (key.mod.eq(.{ .shift = true }) or key.mod.eq(.{}))) {
-                                    try self.command_text.write(cast(u8, key.key));
-                                }
-                            },
                             .functional => |key| {
                                 if (key.key == .enter and key.action.pressed() and key.mod.eq(.{})) {
                                     var args = std.ArrayList([]const u8).init(temp);
 
                                     // TODO: support parsing and passing "string" and 'string' with \" \' and spaces properly
-                                    var arg_it = std.mem.splitAny(u8, self.command_text.text.items, &std.ascii.whitespace);
+                                    var arg_it = std.mem.splitAny(u8, self.text_input.text.items, &std.ascii.whitespace);
                                     while (arg_it.next()) |arg| {
                                         try args.append(arg);
                                     }
 
                                     try self.execute_interactive_command(args.items);
-                                    self.command_text.reset();
+                                    self.text_input.reset();
                                     self.state = .log;
-                                }
-                                if (key.key == .left and key.action.pressed() and key.mod.eq(.{})) {
-                                    self.command_text.left();
-                                }
-                                if (key.key == .right and key.action.pressed() and key.mod.eq(.{})) {
-                                    self.command_text.right();
-                                }
-                                if (key.key == .left and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
-                                    self.command_text.left_word();
-                                }
-                                if (key.key == .right and key.action.pressed() and key.mod.eq(.{ .ctrl = true })) {
-                                    self.command_text.right_word();
-                                }
-                                if (key.key == .backspace and key.action.pressed() and key.mod.eq(.{})) {
-                                    _ = self.command_text.back();
-                                }
-                                if (key.key == .backspace and key.action.pressed() and key.mod.eq(.{ .alt = true })) {
-                                    _ = self.command_text.back();
-                                    while (true) {
-                                        if (' ' == self.command_text.peek_back() orelse break) {
-                                            break;
-                                        }
-                                        _ = self.command_text.back();
-                                    }
                                 }
                             },
                             else => {},
@@ -1369,13 +1397,49 @@ pub const App = struct {
                                     if (key.key == 'n' and key.action.pressed() and key.mod.eq(.{})) {
                                         state.* = .new;
                                     }
-                                    if (key.key == 'm' and key.action.pressed() and key.mod.eq(.{})) {}
-                                    if (key.key == 'd' and key.action.pressed() and key.mod.eq(.{})) {}
-                                    if (key.key == 'f' and key.action.pressed() and key.mod.eq(.{})) {}
+                                    if (key.key == 'm' and key.action.pressed() and (key.mod.eq(.{}) or key.mod.eq(.{ .ctrl = true }))) {
+                                        defer self.state = .log;
+                                        const bookmark = try self.bookmarks.get_selected() orelse break :event_blk;
+                                        try self.execute_non_interactive_command(&[_][]const u8{
+                                            "jj",
+                                            "bookmark",
+                                            "move",
+                                            bookmark.parsed.name,
+                                            "--to",
+                                            self.oplog.focused_op.id[0..],
+                                            if (key.mod.eq(.{ .ctrl = true })) "--allow-backwards" else "",
+                                        });
+                                        try self.jj.requests.send(.log);
+                                    }
+                                    if (key.key == 'd' and key.action.pressed() and key.mod.eq(.{})) {
+                                        defer self.state = .log;
+                                    }
+                                    if (key.key == 'f' and key.action.pressed() and key.mod.eq(.{})) {
+                                        defer self.state = .log;
+                                    }
                                 },
                                 else => {},
                             },
                             .new => switch (input) {
+                                .functional => |key| {
+                                    if (key.key == .enter and key.action.pressed() and key.mod.eq(.{})) {
+                                        defer {
+                                            self.text_input.reset();
+                                            self.state = .log;
+                                        }
+
+                                        try self.execute_non_interactive_command(&[_][]const u8{
+                                            "jj",
+                                            "bookmark",
+                                            "create",
+                                            "-r",
+                                            self.log.focused_change.id[0..],
+                                            self.text_input.text.items,
+                                        });
+                                        try self.jj.requests.send(.log);
+                                        break :event_blk;
+                                    }
+                                },
                                 else => {},
                             },
                         },
@@ -1575,6 +1639,7 @@ pub const App = struct {
                 .split_y(-2, false).top
                 .split_y(1, false).bottom
                 .border_sub(.{ .x = 2 });
+
             if (self.state == .bookmark) {
                 const popup_size = Vec2{ .x = 60, .y = 30 };
                 const origin = max_popup_region.origin.add(max_popup_region.size.mul(0.5)).sub(popup_size.mul(0.5));
@@ -1582,6 +1647,23 @@ pub const App = struct {
                 var surface = try Surface.init(&self.screen, .{ .origin = region.origin, .size = region.size });
 
                 try self.bookmarks.render(&surface);
+            }
+
+            if (self.state == .command or (self.state == .bookmark and self.state.bookmark == .new)) {
+                const popup_size = Vec2{ .x = 55, .y = 5 };
+                const origin = max_popup_region.origin.add(max_popup_region.size.mul(0.5)).sub(popup_size.mul(0.5));
+                const region = max_popup_region.clamp(.{ .origin = origin, .size = popup_size });
+                var input_box = try Surface.init(&self.screen, .{ .origin = region.origin, .size = region.size });
+                try input_box.clear();
+                try input_box.draw_border(term_mod.border.rounded);
+
+                if (self.state == .command) {
+                    try input_box.draw_border_heading(" Command ");
+                } else {
+                    try input_box.draw_border_heading(" Enter new bookmark name ");
+                }
+
+                try self.text_input.draw(&input_box);
             }
 
             if (self.show_help) {
@@ -1594,18 +1676,6 @@ pub const App = struct {
                     .size = r2.size,
                 });
                 try self.help.render(&help, self);
-            }
-
-            if (self.state == .command) {
-                const popup_size = Vec2{ .x = 60, .y = 20 };
-                const origin = max_popup_region.origin.add(max_popup_region.size.mul(0.5)).sub(popup_size.mul(0.5));
-                const region = max_popup_region.clamp(.{ .origin = origin, .size = popup_size });
-                var command = try Surface.init(&self.screen, .{ .origin = region.origin, .size = region.size });
-                try command.clear();
-                try command.draw_border(term_mod.border.rounded);
-                try command.draw_border_heading(" Command ");
-
-                try self.command_text.draw(&command);
             }
         }
         try self.screen.flush_writes();

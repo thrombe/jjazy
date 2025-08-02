@@ -502,11 +502,12 @@ const BookmarkSlate = struct {
 
     fn get_selected(self: *@This()) !?jj_mod.Bookmark.Parsed {
         var i = self.index;
+        self.it.reset(self.buf);
         while (try self.it.next()) |b| {
-            defer i -= 1;
             if (i == 0) {
                 return b;
             }
+            i -|= 1;
         }
         return null;
     }
@@ -1397,25 +1398,57 @@ pub const App = struct {
                                     if (key.key == 'n' and key.action.pressed() and key.mod.eq(.{})) {
                                         state.* = .new;
                                     }
-                                    if (key.key == 'm' and key.action.pressed() and (key.mod.eq(.{}) or key.mod.eq(.{ .ctrl = true }))) {
+                                    if ((key.key == 'm' or key.key == 'M') and
+                                        key.action.pressed() and
+                                        (key.mod.eq(.{}) or key.mod.eq(.{ .shift = true })))
+                                    {
+                                        defer self.state = .log;
+                                        const bookmark = try self.bookmarks.get_selected() orelse break :event_blk;
+
+                                        var args = std.ArrayList([]const u8).init(temp);
+                                        try args.append("jj");
+                                        try args.append("bookmark");
+                                        try args.append("move");
+                                        try args.append(bookmark.parsed.name);
+                                        try args.append("--to");
+                                        try args.append(self.log.focused_change.id[0..]);
+                                        if (key.key == 'M') {
+                                            try args.append("--allow-backwards");
+                                        }
+
+                                        try self.execute_non_interactive_command(args.items);
+                                        try self.jj.requests.send(.log);
+                                        break :event_blk;
+                                    }
+                                    if (key.key == 'd' and key.action.pressed() and key.mod.eq(.{})) {
                                         defer self.state = .log;
                                         const bookmark = try self.bookmarks.get_selected() orelse break :event_blk;
                                         try self.execute_non_interactive_command(&[_][]const u8{
                                             "jj",
                                             "bookmark",
-                                            "move",
+                                            "delete",
                                             bookmark.parsed.name,
-                                            "--to",
-                                            self.oplog.focused_op.id[0..],
-                                            if (key.mod.eq(.{ .ctrl = true })) "--allow-backwards" else "",
                                         });
-                                        try self.jj.requests.send(.log);
+                                        break :event_blk;
                                     }
-                                    if (key.key == 'd' and key.action.pressed() and key.mod.eq(.{})) {
+                                    if ((key.key == 'f' or key.key == 'F') and
+                                        key.action.pressed() and
+                                        (key.mod.eq(.{}) or key.mod.eq(.{ .shift = true })))
+                                    {
                                         defer self.state = .log;
-                                    }
-                                    if (key.key == 'f' and key.action.pressed() and key.mod.eq(.{})) {
-                                        defer self.state = .log;
+                                        const bookmark = try self.bookmarks.get_selected() orelse break :event_blk;
+
+                                        var args = std.ArrayList([]const u8).init(temp);
+                                        try args.append("jj");
+                                        try args.append("bookmark");
+                                        try args.append("forget");
+                                        try args.append(bookmark.parsed.name);
+                                        if (key.key == 'F') {
+                                            try args.append("--include-remotes");
+                                        }
+
+                                        try self.execute_non_interactive_command(args.items);
+                                        break :event_blk;
                                     }
                                 },
                                 else => {},

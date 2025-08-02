@@ -413,7 +413,7 @@ fn Template(typ: type, _template: []const u8, _sep: []const u8) type {
 pub const Bookmark = struct {
     pub const Parsed = Template(
         Schema.Bookmark,
-        "json(self) ++ \"" ++ template_sep.escaped ++ "\"\n",
+        "json(self) ++ \"" ++ template_sep.escaped ++ "\n\"",
         template_sep.sep,
     );
 };

@@ -500,6 +500,32 @@ const BookmarkSlate = struct {
     }
 };
 
+const HelpSlate = struct {
+    fn deinit(self: *@This()) void {
+        _ = self;
+    }
+
+    fn render(self: *@This(), surface: *Surface, app: *App) !void {
+        _ = self;
+        _ = app;
+        try surface.clear();
+
+        try surface.apply_style(.{ .background_color = .from_theme(.default_background) });
+        try surface.apply_style(.{ .foreground_color = .from_theme(.default_foreground) });
+        try surface.apply_style(.bold);
+
+        try surface.draw_border(term_mod.border.square);
+        try surface.draw_border_heading(" Help ");
+        while (!surface.is_full()) {
+            while (!surface.is_x_out()) {
+                try surface.draw_buf(" ");
+            }
+            try surface.new_line();
+        }
+        try surface.apply_style(.reset);
+    }
+};
+
 pub const App = struct {
     screen: term_mod.Screen,
 
@@ -521,8 +547,10 @@ pub const App = struct {
     oplog: OpLogSlate,
     diff: DiffSlate,
     bookmarks: BookmarkSlate,
+    help: HelpSlate,
 
     state: State = .log,
+    show_help: bool = false,
     rerender_pending_since: u64 = 0,
     rerender_pending_count: u64 = 0,
     render_count: u64 = 0,
@@ -620,6 +648,7 @@ pub const App = struct {
                 .buf = &.{},
                 .it = .init(alloc, &[_]u8{}),
             },
+            .help = .{},
             .command_text = .init(alloc),
             .input_thread = undefined,
         };
@@ -644,6 +673,7 @@ pub const App = struct {
         defer self.oplog.deinit();
         defer self.diff.deinit();
         defer self.bookmarks.deinit();
+        defer self.help.deinit();
         defer self.command_text.deinit();
         defer self.arena.deinit();
         defer self.screen.deinit();
@@ -749,6 +779,7 @@ pub const App = struct {
             var hasher = std.hash.Wyhash.init(0);
             defer {
                 hasher.update(&std.mem.toBytes(self.state));
+                hasher.update(&std.mem.toBytes(self.show_help));
                 hasher.update(&std.mem.toBytes(self.x_split));
                 hasher.update(&std.mem.toBytes(self.log.y));
                 if (self.diff.diffcache.getPtr(self.log.focused_change.hash)) |diff| {
@@ -990,6 +1021,7 @@ pub const App = struct {
                             if (key.key == .escape and key.action.pressed() and key.mod.eq(.{})) {
                                 self.log.selected_changes.clearRetainingCapacity();
                                 self.state = .log;
+                                self.show_help = false;
                                 break :event_blk;
                             }
                         },
@@ -1078,6 +1110,10 @@ pub const App = struct {
                                 }
                                 if (key.key == 'b' and key.action.pressed() and key.mod.eq(.{})) {
                                     self.state = .{ .bookmark = .view };
+                                    break :event_blk;
+                                }
+                                if (key.key == '?' and key.action.pressed() and key.mod.eq(.{ .shift = true })) {
+                                    self.show_help = true;
                                     break :event_blk;
                                 }
                                 if (key.key == 's' and key.action.pressed() and key.mod.eq(.{})) {
@@ -1542,12 +1578,23 @@ pub const App = struct {
 
             var diffs = try status.split_x(cast(i32, cast(f32, status.size().x) * self.x_split), .border);
 
-            if (self.state == .oplog) {
-                try self.oplog.render(&status, self);
-            } else {
-                try self.log.render(&status, self, self.state, tropes);
+            switch (self.state) {
+                .oplog => try self.oplog.render(&status, self),
+                else => try self.log.render(&status, self, self.state, tropes),
             }
             try self.diff.render(&diffs, self.log.focused_change);
+
+            if (self.show_help) {
+                const screen = self.screen.term.screen;
+                const r0 = screen.border_sub(.{ .x = 3, .y = 2 });
+                const r1 = r0.split_x(-50, false).right;
+                const r2 = r1.split_y(-25, false).bottom;
+                var help = try Surface.init(&self.screen, .{
+                    .origin = r2.origin,
+                    .size = r2.size,
+                });
+                try self.help.render(&help, self);
+            }
 
             if (self.state == .command) {
                 try self.render_command_input();

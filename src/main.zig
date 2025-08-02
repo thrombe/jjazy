@@ -532,7 +532,7 @@ pub const App = struct {
         log,
         oplog,
         evlog: jj_mod.Change,
-        bookmark: enum {
+        bookmark: ?enum {
             new,
             move,
             delete,
@@ -1077,6 +1077,10 @@ pub const App = struct {
                                     try self.log.selected_changes.put(self.log.focused_change, {});
                                     break :event_blk;
                                 }
+                                if (key.key == 'b' and key.action.pressed() and key.mod.eq(.{})) {
+                                    self.state = .{ .bookmark = null };
+                                    break :event_blk;
+                                }
                                 if (key.key == 's' and key.action.pressed() and key.mod.eq(.{})) {
                                     try self.execute_interactive_command(&[_][]const u8{
                                         "jj",
@@ -1324,7 +1328,37 @@ pub const App = struct {
                             },
                             else => {},
                         },
-                        .bookmark, .git, .evlog => unreachable,
+                        .bookmark => |*state| if (state.*) |bookmark_state| switch (bookmark_state) {
+                            .new => switch (input) {
+                                else => {},
+                            },
+                            .move => switch (input) {
+                                else => {},
+                            },
+                            .delete => switch (input) {
+                                else => {},
+                            },
+                            .forget => switch (input) {
+                                else => {},
+                            },
+                        } else switch (input) {
+                            .key => |key| {
+                                if (key.key == 'n' and key.action.pressed() and key.mod.eq(.{})) {
+                                    state.* = .new;
+                                }
+                                if (key.key == 'm' and key.action.pressed() and key.mod.eq(.{})) {
+                                    state.* = .move;
+                                }
+                                if (key.key == 'd' and key.action.pressed() and key.mod.eq(.{})) {
+                                    state.* = .delete;
+                                }
+                                if (key.key == 'f' and key.action.pressed() and key.mod.eq(.{})) {
+                                    state.* = .forget;
+                                }
+                            },
+                            else => {},
+                        },
+                        .git, .evlog => unreachable,
                     }
                 },
                 .jj => |res| switch (res.req) {
@@ -1374,6 +1408,8 @@ pub const App = struct {
                             .err, .ok => |buf| {
                                 self.alloc.free(self.bookmarks.buf);
                                 self.bookmarks.buf = buf;
+                                self.bookmarks.it.reset(buf);
+                                try self._send_event(.rerender);
                             },
                         }
                     },
@@ -1464,8 +1500,15 @@ pub const App = struct {
             try surface.apply_style(.{ .foreground_color = .from_theme(.default_background) });
             try surface.apply_style(.bold);
             try surface.draw_buf(switch (self.state) {
-                inline .rebase, .git, .duplicate, .bookmark => |_p, t| switch (_p) {
+                inline .rebase, .git, .duplicate => |_p, t| switch (_p) {
                     inline else => |p| " " ++ @tagName(t) ++ "." ++ @tagName(p) ++ " ",
+                },
+                inline .bookmark => |__p, t| blk: {
+                    if (__p) |_p| break :blk switch (_p) {
+                        inline else => |p| " " ++ @tagName(t) ++ "." ++ @tagName(p) ++ " ",
+                    } else {
+                        break :blk " " ++ @tagName(t) ++ " ";
+                    }
                 },
                 inline else => |_, t| " " ++ @tagName(t) ++ " ",
             });

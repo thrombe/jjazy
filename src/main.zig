@@ -50,15 +50,18 @@ const Surface = struct {
     }
 
     fn is_y_out(self: *@This()) bool {
-        return !self.region.contains_y(self.region.origin.y + self.y);
+        const region = self.region.border_sub(.splat(@intFromBool(self.border)));
+        return !region.contains_y(region.origin.y + self.y);
     }
 
     fn is_x_out(self: *@This()) bool {
-        return !self.region.contains_x(self.region.origin.x + self.x);
+        const region = self.region.border_sub(.splat(@intFromBool(self.border)));
+        return !region.contains_x(region.origin.x + self.x);
     }
 
     fn is_full(self: *@This()) bool {
-        const x_full = self.region.size.y - 1 == self.y and self.is_x_out();
+        const region = self.region.border_sub(.splat(@intFromBool(self.border)));
+        const x_full = region.size.y - 1 == self.y and self.is_x_out();
         return x_full or self.is_y_out();
     }
 

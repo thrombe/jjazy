@@ -500,6 +500,11 @@ const BookmarkSlate = struct {
         self.it.deinit();
     }
 
+    fn reset(self: *@This()) void {
+        self.index = 0;
+        self.it.reset(self.buf);
+    }
+
     fn get_selected(self: *@This()) !?jj_mod.Bookmark.Parsed {
         var i = self.index;
         self.it.reset(self.buf);
@@ -1579,7 +1584,7 @@ pub const App = struct {
                             .err, .ok => |buf| {
                                 self.alloc.free(self.bookmarks.buf);
                                 self.bookmarks.buf = buf;
-                                self.bookmarks.it.reset(buf);
+                                self.bookmarks.reset();
                                 try self._send_event(.rerender);
                             },
                         }

@@ -408,8 +408,13 @@ pub fn Channel(typ: type) type {
     };
 }
 
-pub fn ArrayXar(T: type) type {
-    const chunks = 48;
+pub fn ArrayXar(T: type, base_chunk_size_log2: comptime_int) type {
+    if (base_chunk_size_log2 == 0 or base_chunk_size_log2 >= 48) {
+        @compileError("comptime assertion failed 48 > chunk_len_log2 > 0");
+    }
+
+    const base_chunk_size = 1 << base_chunk_size_log2;
+    const chunks = 48 + 1 - base_chunk_size_log2;
     return struct {
         chunks: [chunks]?[*c]T,
         size: usize = 0,
@@ -433,23 +438,33 @@ pub fn ArrayXar(T: type) type {
             self.size = 0;
             for (&self.chunks, 0..) |*_chunk, i| if (_chunk.*) |chunk| {
                 const pow: u6 = @intCast(i);
-                const size: usize = @as(usize, 1) << @max(pow, 1);
+                const size = chunkSize(pow);
                 self.alloc.free(chunk[0..size]);
                 _chunk.* = null;
             };
         }
 
+        inline fn chunkIndex(index: usize) u6 {
+            const lim_log2: u6 = @intCast(64 - @clz(index));
+            std.debug.assert(lim_log2 <= 48);
+            const chunk_index: u6 = @intFromBool(lim_log2 > base_chunk_size_log2) *
+                (lim_log2 - base_chunk_size_log2 * @as(u6, @intFromBool(lim_log2 > base_chunk_size_log2)));
+            return chunk_index;
+        }
+
+        inline fn chunkSize(chunk_index: u6) usize {
+            const size: usize = @as(usize, base_chunk_size) << @max(chunk_index, 1) - 1;
+            return size;
+        }
+
         pub fn getPtr(self: *@This(), index: usize) ?*T {
             if (self.size <= index) return null;
 
-            const lim_log2: u6 = @intCast(64 - @clz(index));
-            std.debug.assert(lim_log2 <= 48);
-
-            const chunk_index: usize = @max(lim_log2, 1) - 1;
-            const chunk_len: usize = @as(usize, 1) << (@max(lim_log2, 2) - 1);
+            const chunk_index = chunkIndex(index);
+            const chunk_size = chunkSize(chunk_index);
 
             if (self.chunks[chunk_index]) |chunk| {
-                return &chunk[0..chunk_len][index - chunk_len * @intFromBool(lim_log2 > 1)];
+                return &chunk[0..chunk_size][index - chunk_size * @intFromBool(chunk_index > 0)];
             } else {
                 return null;
             }
@@ -461,19 +476,16 @@ pub fn ArrayXar(T: type) type {
         }
 
         pub fn addOne(self: *@This()) !*T {
-            const lim_log2: u6 = @intCast(64 - @clz(self.size));
-            std.debug.assert(lim_log2 <= 48);
-
-            const chunk_index: usize = @max(lim_log2, 1) - 1;
-            const chunk_len: usize = @as(usize, 1) << (@max(lim_log2, 2) - 1);
+            const chunk_index = chunkIndex(self.size);
+            const chunk_size = chunkSize(chunk_index);
 
             if (self.chunks[chunk_index] == null) {
-                const chunk = try self.alloc.alloc(T, chunk_len);
+                const chunk = try self.alloc.alloc(T, chunk_size);
                 self.chunks[chunk_index] = chunk.ptr;
             }
 
             defer self.size += 1;
-            return &self.chunks[chunk_index].?[0..chunk_len][self.size - chunk_len * @intFromBool(lim_log2 > 1)];
+            return &self.chunks[chunk_index].?[0..chunk_size][self.size - chunk_size * @intFromBool(chunk_index > 0)];
         }
 
         pub fn append(self: *@This(), val: T) !void {
@@ -522,7 +534,7 @@ pub fn ArrayXar(T: type) type {
                 if (self.remaining == 0) return null;
                 if (self.chunks.len == self.index) return null;
 
-                const chunk_size = @as(usize, 1) << @max(self.index, 1);
+                const chunk_size = chunkSize(self.index);
                 if (self.chunks[self.index]) |chunk| {
                     defer self.index += 1;
                     defer self.remaining -|= chunk_size;
@@ -574,10 +586,10 @@ pub const Fuse = struct {
     }
 };
 
-test "Xar test" {
+test "Xar test base 1" {
     const alloc = std.testing.allocator;
 
-    var bytes = ArrayXar(u8).init(alloc);
+    var bytes = ArrayXar(u8, 1).init(alloc);
     defer bytes.deinit();
 
     try bytes.append(0);
@@ -627,5 +639,104 @@ test "Xar test" {
     try std.testing.expectEqual(2, bytes.pop());
     try std.testing.expectEqual(1, bytes.pop());
     try std.testing.expectEqual(0, bytes.pop());
+    try std.testing.expectEqual(null, bytes.pop());
+}
+
+test "Xar test base 2" {
+    const alloc = std.testing.allocator;
+
+    var bytes = ArrayXar(u8, 2).init(alloc);
+    defer bytes.deinit();
+
+    try bytes.append(0);
+    try bytes.append(1);
+    try bytes.append(2);
+    try bytes.append(3);
+    try bytes.append(4);
+    try std.testing.expectEqual(4, bytes.pop());
+    try std.testing.expectEqual(3, bytes.pop());
+    try bytes.append(3);
+    try bytes.append(4);
+
+    try std.testing.expectEqual(0, bytes.get(0));
+    try std.testing.expectEqual(1, bytes.get(1));
+    try std.testing.expectEqual(2, bytes.get(2));
+    try std.testing.expectEqual(3, bytes.get(3));
+    try std.testing.expectEqual(4, bytes.get(4));
+    try std.testing.expectEqual(null, bytes.get(5));
+
+    var it = bytes.iterator();
+    try std.testing.expectEqual(4, it.chunk.?.len);
+    try std.testing.expectEqual(1, it.it.index);
+    try std.testing.expectEqual(1, it.it.remaining);
+    try std.testing.expectEqual(0, it.next().?.*);
+    try std.testing.expectEqual(1, it.next().?.*);
+    try std.testing.expectEqual(2, it.next().?.*);
+    try std.testing.expectEqual(3, it.next().?.*);
+    try std.testing.expectEqual(1, it.chunk.?.len);
+    try std.testing.expectEqual(2, it.it.index);
+    try std.testing.expectEqual(0, it.it.remaining);
+    try std.testing.expectEqual(0, it.index);
+    try std.testing.expectEqual(4, it.next().?.*);
+    try std.testing.expectEqual(null, it.chunk);
+    try std.testing.expectEqual(null, it.next());
+
+    it.reset();
+    try std.testing.expectEqual(4, it.chunk.?.len);
+    try std.testing.expectEqual(1, it.it.index);
+    try std.testing.expectEqual(1, it.it.remaining);
+    try std.testing.expectEqual(0, it.next().?.*);
+
+    try std.testing.expectEqual(4, bytes.pop());
+    try std.testing.expectEqual(3, bytes.pop());
+    try std.testing.expectEqual(2, bytes.pop());
+    try std.testing.expectEqual(1, bytes.pop());
+    try std.testing.expectEqual(0, bytes.pop());
+    try std.testing.expectEqual(null, bytes.pop());
+}
+
+test "Xar test base 5" {
+    const alloc = std.testing.allocator;
+
+    var bytes = ArrayXar(usize, 5).init(alloc);
+    defer bytes.deinit();
+
+    for (0..33) |i| {
+        try bytes.append(i);
+    }
+    try std.testing.expectEqual(32, bytes.pop());
+    try std.testing.expectEqual(31, bytes.pop());
+    try bytes.append(31);
+    try bytes.append(32);
+
+    for (0..33) |i| {
+        try std.testing.expectEqual(i, bytes.get(i));
+    }
+    try std.testing.expectEqual(null, bytes.get(33));
+
+    var it = bytes.iterator();
+    try std.testing.expectEqual(32, it.chunk.?.len);
+    try std.testing.expectEqual(1, it.it.index);
+    try std.testing.expectEqual(1, it.it.remaining);
+    for (0..32) |i| {
+        try std.testing.expectEqual(i, it.next().?.*);
+    }
+    try std.testing.expectEqual(1, it.chunk.?.len);
+    try std.testing.expectEqual(2, it.it.index);
+    try std.testing.expectEqual(0, it.it.remaining);
+    try std.testing.expectEqual(0, it.index);
+    try std.testing.expectEqual(32, it.next().?.*);
+    try std.testing.expectEqual(null, it.chunk);
+    try std.testing.expectEqual(null, it.next());
+
+    it.reset();
+    try std.testing.expectEqual(32, it.chunk.?.len);
+    try std.testing.expectEqual(1, it.it.index);
+    try std.testing.expectEqual(1, it.it.remaining);
+    try std.testing.expectEqual(0, it.next().?.*);
+
+    for (0..33) |i| {
+        try std.testing.expectEqual(32 - i, bytes.pop());
+    }
     try std.testing.expectEqual(null, bytes.pop());
 }

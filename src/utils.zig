@@ -502,20 +502,31 @@ pub fn ArrayXar(T: type, base_chunk_size_log2: comptime_int) type {
             }
         }
 
-        pub fn chunk_iterator(self: *@This()) ChunkIterator {
+        pub fn chunk_iterator(self: *@This(), v: struct { start: ?usize = null, size: ?usize = null }) ChunkIterator {
+            const start = v.start orelse 0;
+            const chunk_index = chunkIndex(start);
+
+            const size = if (v.size) |size| @min(self.size, start + size) else self.size;
             return .{
                 .chunks = self.chunks,
-                .size = self.size,
-                .remaining = self.size,
+                .size = size,
+                .remaining = size -| start,
+                .index = chunk_index,
             };
         }
 
-        pub fn iterator(self: *@This()) Iterator {
-            var it = self.chunk_iterator();
+        pub fn iterator(self: *@This(), v: struct { start: ?usize = null, size: ?usize = null }) Iterator {
+            var it = self.chunk_iterator(.{ .start = v.start, .size = v.size });
+            const start = v.start orelse 0;
+            const chunk_index = chunkIndex(start);
+            const chunk_size = chunkSize(chunk_index);
+            const index_in_chunk = start - chunk_size * @intFromBool(chunk_index > 0);
+
             const chunk = it.next();
             return .{
                 .it = it,
                 .chunk = if (chunk) |e| e.chunk else null,
+                .index = index_in_chunk,
             };
         }
 
@@ -600,8 +611,10 @@ test "Xar test base 1" {
     try bytes.append(2);
     try bytes.append(3);
     try bytes.append(4);
+    try std.testing.expectEqual(5, bytes.size);
     try std.testing.expectEqual(4, bytes.pop());
     try std.testing.expectEqual(3, bytes.pop());
+    try std.testing.expectEqual(3, bytes.size);
     try bytes.append(3);
     try bytes.append(4);
 
@@ -612,7 +625,7 @@ test "Xar test base 1" {
     try std.testing.expectEqual(4, bytes.get(4));
     try std.testing.expectEqual(null, bytes.get(5));
 
-    var it = bytes.iterator();
+    var it = bytes.iterator(.{});
     try std.testing.expectEqual(2, it.chunk.?.len);
     try std.testing.expectEqual(1, it.it.index);
     try std.testing.expectEqual(3, it.it.remaining);
@@ -643,6 +656,21 @@ test "Xar test base 1" {
     try std.testing.expectEqual(1, bytes.pop());
     try std.testing.expectEqual(0, bytes.pop());
     try std.testing.expectEqual(null, bytes.pop());
+
+    try bytes.append(0);
+    try bytes.append(1);
+    try bytes.append(2);
+    try bytes.append(3);
+    try bytes.append(4);
+    try std.testing.expectEqual(5, bytes.size);
+    it = bytes.iterator(.{ .start = 2, .size = 2 });
+    try std.testing.expectEqual(0, it.index);
+    try std.testing.expectEqual(4, it.it.size);
+    try std.testing.expectEqual(0, it.it.remaining);
+    try std.testing.expectEqual(2, it.it.index);
+    try std.testing.expectEqual(2, it.next().?.*);
+    try std.testing.expectEqual(3, it.next().?.*);
+    try std.testing.expectEqual(null, it.next());
 }
 
 test "Xar test base 2" {
@@ -668,7 +696,7 @@ test "Xar test base 2" {
     try std.testing.expectEqual(4, bytes.get(4));
     try std.testing.expectEqual(null, bytes.get(5));
 
-    var it = bytes.iterator();
+    var it = bytes.iterator(.{});
     try std.testing.expectEqual(4, it.chunk.?.len);
     try std.testing.expectEqual(1, it.it.index);
     try std.testing.expectEqual(1, it.it.remaining);
@@ -717,7 +745,7 @@ test "Xar test base 5" {
     }
     try std.testing.expectEqual(null, bytes.get(33));
 
-    var it = bytes.iterator();
+    var it = bytes.iterator(.{});
     try std.testing.expectEqual(32, it.chunk.?.len);
     try std.testing.expectEqual(1, it.it.index);
     try std.testing.expectEqual(1, it.it.remaining);

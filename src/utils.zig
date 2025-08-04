@@ -447,8 +447,8 @@ pub fn ArrayXar(T: type, base_chunk_size_log2: comptime_int) type {
         inline fn chunkIndex(index: usize) u6 {
             const lim_log2: u6 = @intCast(64 - @clz(index));
             std.debug.assert(lim_log2 <= 48);
-            const chunk_index: u6 = @intFromBool(lim_log2 > base_chunk_size_log2) *
-                (lim_log2 - base_chunk_size_log2 * @as(u6, @intFromBool(lim_log2 > base_chunk_size_log2)));
+            const is_greater_than_base = @intFromBool(lim_log2 > base_chunk_size_log2);
+            const chunk_index: u6 = is_greater_than_base * (lim_log2 - base_chunk_size_log2 * @as(u6, is_greater_than_base));
             return chunk_index;
         }
 
@@ -515,7 +515,7 @@ pub fn ArrayXar(T: type, base_chunk_size_log2: comptime_int) type {
             const chunk = it.next();
             return .{
                 .it = it,
-                .chunk = chunk,
+                .chunk = if (chunk) |e| e.chunk else null,
             };
         }
 
@@ -530,7 +530,7 @@ pub fn ArrayXar(T: type, base_chunk_size_log2: comptime_int) type {
                 self.remaining = self.size;
             }
 
-            pub fn next(self: *@This()) ?[]T {
+            pub fn next(self: *@This()) ?struct { chunk: []T, offset: usize } {
                 if (self.remaining == 0) return null;
                 if (self.chunks.len == self.index) return null;
 
@@ -538,7 +538,10 @@ pub fn ArrayXar(T: type, base_chunk_size_log2: comptime_int) type {
                 if (self.chunks[self.index]) |chunk| {
                     defer self.index += 1;
                     defer self.remaining -|= chunk_size;
-                    return chunk[0..@min(chunk_size, self.remaining)];
+                    return .{
+                        .chunk = chunk[0..@min(chunk_size, self.remaining)],
+                        .offset = self.size - self.remaining,
+                    };
                 } else {
                     return null;
                 }
@@ -552,7 +555,7 @@ pub fn ArrayXar(T: type, base_chunk_size_log2: comptime_int) type {
 
             pub fn reset(self: *@This()) void {
                 self.it.reset();
-                self.chunk = self.it.next();
+                self.chunk = if (self.it.next()) |e| e.chunk else null;
                 self.index = 0;
             }
 
@@ -562,7 +565,7 @@ pub fn ArrayXar(T: type, base_chunk_size_log2: comptime_int) type {
                     self.index += 1;
                     if (self.index == chunk.len) {
                         self.index -= chunk.len;
-                        self.chunk = self.it.next();
+                        self.chunk = if (self.it.next()) |e| e.chunk else null;
                     }
                 }
                 return &chunk[self.index];

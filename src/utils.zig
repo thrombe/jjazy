@@ -408,6 +408,157 @@ pub fn Channel(typ: type) type {
     };
 }
 
+pub fn ArrayXar(T: type) type {
+    const chunks = 48;
+    return struct {
+        chunks: [chunks]?[*c]T,
+        size: usize = 0,
+        alloc: std.mem.Allocator,
+        // index chunk_size total_size
+        // 0-1 2^1 2^1
+        // 2-3 2^1 2^2
+        // 4-7 2^2 2^3
+        // 8-15 2^3 2^4
+        // 16-31 2^4 2^5
+        // 32-63 2^5 2^6
+
+        pub fn init(alloc: std.mem.Allocator) @This() {
+            return .{
+                .alloc = alloc,
+                .chunks = std.mem.zeroes([chunks]?[*c]T),
+            };
+        }
+
+        pub fn deinit(self: *@This()) void {
+            self.size = 0;
+            for (&self.chunks, 0..) |*_chunk, i| if (_chunk.*) |chunk| {
+                const pow: u6 = @intCast(i);
+                const size: usize = @as(usize, 1) << @max(pow, 1);
+                self.alloc.free(chunk[0..size]);
+                _chunk.* = null;
+            };
+        }
+
+        pub fn getPtr(self: *@This(), index: usize) ?*T {
+            if (self.size <= index) return null;
+
+            const lim_log2: u6 = @intCast(64 - @clz(index));
+            std.debug.assert(lim_log2 <= 48);
+
+            const chunk_index: usize = @max(lim_log2, 1) - 1;
+            const chunk_len: usize = @as(usize, 1) << (@max(lim_log2, 2) - 1);
+
+            if (self.chunks[chunk_index]) |chunk| {
+                return &chunk[0..chunk_len][index - chunk_len * @intFromBool(lim_log2 > 1)];
+            } else {
+                return null;
+            }
+        }
+
+        pub fn get(self: *@This(), index: usize) ?T {
+            const t = self.getPtr(index) orelse return null;
+            return t.*;
+        }
+
+        pub fn addOne(self: *@This()) !*T {
+            const lim_log2: u6 = @intCast(64 - @clz(self.size));
+            std.debug.assert(lim_log2 <= 48);
+
+            const chunk_index: usize = @max(lim_log2, 1) - 1;
+            const chunk_len: usize = @as(usize, 1) << (@max(lim_log2, 2) - 1);
+
+            if (self.chunks[chunk_index] == null) {
+                const chunk = try self.alloc.alloc(T, chunk_len);
+                self.chunks[chunk_index] = chunk.ptr;
+            }
+
+            defer self.size += 1;
+            return &self.chunks[chunk_index].?[0..chunk_len][self.size - chunk_len * @intFromBool(lim_log2 > 1)];
+        }
+
+        pub fn append(self: *@This(), val: T) !void {
+            const new = try self.addOne();
+            new.* = val;
+        }
+
+        pub fn pop(self: *@This()) ?T {
+            if (self.size > 0) {
+                defer self.size -|= 1;
+                return self.get(self.size - 1);
+            } else {
+                return null;
+            }
+        }
+
+        pub fn chunk_iterator(self: *@This()) ChunkIterator {
+            return .{
+                .chunks = self.chunks,
+                .size = self.size,
+                .remaining = self.size,
+            };
+        }
+
+        pub fn iterator(self: *@This()) Iterator {
+            var it = self.chunk_iterator();
+            const chunk = it.next();
+            return .{
+                .it = it,
+                .chunk = chunk,
+            };
+        }
+
+        const ChunkIterator = struct {
+            chunks: [chunks]?[*c]T,
+            size: usize,
+            remaining: usize,
+            index: u6 = 0,
+
+            pub fn reset(self: *@This()) void {
+                self.index = 0;
+                self.remaining = self.size;
+            }
+
+            pub fn next(self: *@This()) ?[]T {
+                if (self.remaining == 0) return null;
+                if (self.chunks.len == self.index) return null;
+
+                const chunk_size = @as(usize, 1) << @max(self.index, 1);
+                if (self.chunks[self.index]) |chunk| {
+                    defer self.index += 1;
+                    defer self.remaining -|= chunk_size;
+                    return chunk[0..@min(chunk_size, self.remaining)];
+                } else {
+                    return null;
+                }
+            }
+        };
+
+        const Iterator = struct {
+            it: ChunkIterator,
+            chunk: ?[]T,
+            index: usize = 0,
+
+            pub fn reset(self: *@This()) void {
+                self.it.reset();
+                self.chunk = self.it.next();
+                self.index = 0;
+            }
+
+            pub fn next(self: *@This()) ?*T {
+                const chunk = self.chunk orelse return null;
+                defer {
+                    self.index += 1;
+                    if (self.index == chunk.len) {
+                        self.index -= chunk.len;
+                        self.chunk = self.it.next();
+                    }
+                }
+                return &chunk[self.index];
+            }
+        };
+    };
+}
+
 pub const Fuse = struct {
     fused: std.atomic.Value(bool) = .{ .raw = false },
 
@@ -422,3 +573,59 @@ pub const Fuse = struct {
         return self.fused.load(.acquire);
     }
 };
+
+test "Xar test" {
+    const alloc = std.testing.allocator;
+
+    var bytes = ArrayXar(u8).init(alloc);
+    defer bytes.deinit();
+
+    try bytes.append(0);
+    try bytes.append(1);
+    try bytes.append(2);
+    try bytes.append(3);
+    try bytes.append(4);
+    try std.testing.expectEqual(4, bytes.pop());
+    try std.testing.expectEqual(3, bytes.pop());
+    try bytes.append(3);
+    try bytes.append(4);
+
+    try std.testing.expectEqual(0, bytes.get(0));
+    try std.testing.expectEqual(1, bytes.get(1));
+    try std.testing.expectEqual(2, bytes.get(2));
+    try std.testing.expectEqual(3, bytes.get(3));
+    try std.testing.expectEqual(4, bytes.get(4));
+    try std.testing.expectEqual(null, bytes.get(5));
+
+    var it = bytes.iterator();
+    try std.testing.expectEqual(2, it.chunk.?.len);
+    try std.testing.expectEqual(1, it.it.index);
+    try std.testing.expectEqual(3, it.it.remaining);
+    try std.testing.expectEqual(0, it.next().?.*);
+    try std.testing.expectEqual(1, it.next().?.*);
+    try std.testing.expectEqual(2, it.chunk.?.len);
+    try std.testing.expectEqual(2, it.it.index);
+    try std.testing.expectEqual(1, it.it.remaining);
+    try std.testing.expectEqual(2, it.next().?.*);
+    try std.testing.expectEqual(3, it.next().?.*);
+    try std.testing.expectEqual(1, it.chunk.?.len);
+    try std.testing.expectEqual(3, it.it.index);
+    try std.testing.expectEqual(0, it.it.remaining);
+    try std.testing.expectEqual(0, it.index);
+    try std.testing.expectEqual(4, it.next().?.*);
+    try std.testing.expectEqual(null, it.chunk);
+    try std.testing.expectEqual(null, it.next());
+
+    it.reset();
+    try std.testing.expectEqual(2, it.chunk.?.len);
+    try std.testing.expectEqual(1, it.it.index);
+    try std.testing.expectEqual(3, it.it.remaining);
+    try std.testing.expectEqual(0, it.next().?.*);
+
+    try std.testing.expectEqual(4, bytes.pop());
+    try std.testing.expectEqual(3, bytes.pop());
+    try std.testing.expectEqual(2, bytes.pop());
+    try std.testing.expectEqual(1, bytes.pop());
+    try std.testing.expectEqual(0, bytes.pop());
+    try std.testing.expectEqual(null, bytes.pop());
+}

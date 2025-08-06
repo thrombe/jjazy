@@ -532,6 +532,10 @@ const BookmarkSlate = struct {
         self.it.reset(self.buf);
         while (try self.it.next()) |bookmark| {
             try surface.draw_buf(bookmark.parsed.name);
+            for (bookmark.parsed.target) |t| {
+                try surface.draw_buf(" ");
+                try surface.draw_buf(t[0..8]);
+            }
             if (bookmark.parsed.remote) |remote| {
                 try surface.draw_buf(" @");
                 try surface.draw_buf(remote);
@@ -610,6 +614,7 @@ pub const App = struct {
         bookmark: enum {
             view,
             new,
+            edit_new,
         },
         git: enum {
             fetch,
@@ -855,6 +860,7 @@ pub const App = struct {
                 scroll_log: bool = false,
                 scroll_oplog: bool = false,
                 scroll_diff: bool = false,
+                scroll_bookmarks: bool = false,
                 resize_master: bool = false,
                 space_select: bool = false,
                 colored_gutter_cursor: bool = false,
@@ -888,7 +894,12 @@ pub const App = struct {
                     .input_text = true,
                 },
                 .bookmark => |state| switch (state) {
-                    .view => .{},
+                    .view => .{
+                        .scroll_bookmarks = true,
+                    },
+                    .edit_new => .{
+                        .scroll_bookmarks = true,
+                    },
                     .new => .{
                         .input_text = true,
                     },
@@ -1142,6 +1153,17 @@ pub const App = struct {
                                     }
                                     _ = self.text_input.back();
                                 }
+                            }
+                        },
+                        else => {},
+                    };
+                    if (tropes.scroll_bookmarks) switch (input) {
+                        .key => |key| {
+                            if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{})) {
+                                self.bookmarks.index += 1;
+                            }
+                            if (key.key == 'k' and key.action.pressed() and key.mod.eq(.{})) {
+                                self.bookmarks.index -|= 1;
                             }
                         },
                         else => {},
@@ -1422,15 +1444,13 @@ pub const App = struct {
                         .bookmark => |*state| switch (state.*) {
                             .view => switch (input) {
                                 .key => |key| {
-                                    if (key.key == 'j' and key.action.pressed() and key.mod.eq(.{})) {
-                                        self.bookmarks.index += 1;
-                                    }
-                                    if (key.key == 'k' and key.action.pressed() and key.mod.eq(.{})) {
-                                        self.bookmarks.index -|= 1;
-                                    }
-
                                     if (key.key == 'n' and key.action.pressed() and key.mod.eq(.{})) {
                                         state.* = .new;
+                                        break :event_blk;
+                                    }
+                                    if (key.key == 'e' and key.action.pressed() and key.mod.eq(.{})) {
+                                        state.* = .edit_new;
+                                        break :event_blk;
                                     }
                                     if ((key.key == 'm' or key.key == 'M') and
                                         key.action.pressed() and
@@ -1482,6 +1502,33 @@ pub const App = struct {
                                         }
 
                                         try self.execute_non_interactive_command(args.items);
+                                        break :event_blk;
+                                    }
+                                },
+                                else => {},
+                            },
+                            .edit_new => switch (input) {
+                                .functional => |key| {
+                                    if (key.key == .enter and key.action.pressed() and key.mod.eq(.{})) {
+                                        defer {
+                                            self.text_input.reset();
+                                            self.state = .log;
+                                        }
+
+                                        const bookmark = try self.bookmarks.get_selected() orelse break :event_blk;
+
+                                        // TODO: why multiple targets?
+                                        if (bookmark.parsed.target.len != 1) {
+                                            break :event_blk;
+                                        }
+
+                                        try self.execute_non_interactive_command(&[_][]const u8{
+                                            "jj",
+                                            "new",
+                                            "-r",
+                                            bookmark.parsed.target[0][0..8],
+                                        });
+                                        try self.jj.requests.send(.log);
                                         break :event_blk;
                                     }
                                 },

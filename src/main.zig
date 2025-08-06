@@ -614,7 +614,6 @@ pub const App = struct {
         bookmark: enum {
             view,
             new,
-            edit_new,
         },
         git: enum {
             fetch,
@@ -895,9 +894,6 @@ pub const App = struct {
                 },
                 .bookmark => |state| switch (state) {
                     .view => .{
-                        .scroll_bookmarks = true,
-                    },
-                    .edit_new => .{
                         .scroll_bookmarks = true,
                     },
                     .new => .{
@@ -1449,7 +1445,25 @@ pub const App = struct {
                                         break :event_blk;
                                     }
                                     if (key.key == 'e' and key.action.pressed() and key.mod.eq(.{})) {
-                                        state.* = .edit_new;
+                                        defer {
+                                            self.text_input.reset();
+                                            self.state = .log;
+                                        }
+
+                                        const bookmark = try self.bookmarks.get_selected() orelse break :event_blk;
+
+                                        // TODO: why multiple targets?
+                                        if (bookmark.parsed.target.len != 1) {
+                                            break :event_blk;
+                                        }
+
+                                        try self.execute_non_interactive_command(&[_][]const u8{
+                                            "jj",
+                                            "new",
+                                            "-r",
+                                            bookmark.parsed.target[0][0..8],
+                                        });
+                                        try self.jj.requests.send(.log);
                                         break :event_blk;
                                     }
                                     if ((key.key == 'm' or key.key == 'M') and
@@ -1502,33 +1516,6 @@ pub const App = struct {
                                         }
 
                                         try self.execute_non_interactive_command(args.items);
-                                        break :event_blk;
-                                    }
-                                },
-                                else => {},
-                            },
-                            .edit_new => switch (input) {
-                                .functional => |key| {
-                                    if (key.key == .enter and key.action.pressed() and key.mod.eq(.{})) {
-                                        defer {
-                                            self.text_input.reset();
-                                            self.state = .log;
-                                        }
-
-                                        const bookmark = try self.bookmarks.get_selected() orelse break :event_blk;
-
-                                        // TODO: why multiple targets?
-                                        if (bookmark.parsed.target.len != 1) {
-                                            break :event_blk;
-                                        }
-
-                                        try self.execute_non_interactive_command(&[_][]const u8{
-                                            "jj",
-                                            "new",
-                                            "-r",
-                                            bookmark.parsed.target[0][0..8],
-                                        });
-                                        try self.jj.requests.send(.log);
                                         break :event_blk;
                                     }
                                 },

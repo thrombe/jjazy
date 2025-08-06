@@ -160,6 +160,15 @@ pub const LineIterator = struct {
         return self.index >= self.buf.len;
     }
 
+    pub fn count_height(self: @This()) i32 {
+        var it = self;
+        var height: i32 = 0;
+        while (it.next()) |_| {
+            height += 1;
+        }
+        return height;
+    }
+
     // consumes \n
     fn consume_nl(self: *LineIterator) void {
         if (self.index >= self.buf.len) return;

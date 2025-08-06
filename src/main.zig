@@ -610,9 +610,23 @@ const Toaster = struct {
     }
 
     fn render(self: *@This(), surface: *Surface, app: *App) !void {
-        _ = self;
-        _ = surface;
         _ = app;
+
+        var toast: Surface = undefined;
+        var it = self.toasts.iterator();
+        while (it.next()) |e| {
+            const height = utils_mod.LineIterator.init(e.value_ptr.msg).count_height();
+
+            toast = try surface.split_y(height + 2, .gap);
+            std.mem.swap(Surface, &toast, surface);
+
+            try toast.apply_style(.{ .foreground_color = .from_theme(if (e.value_ptr.err != null) .errors else .dim_text) });
+            try toast.apply_style(.{ .background_color = .from_theme(.default_background) });
+            try toast.clear();
+            toast.border = true;
+            try toast.draw_buf(e.value_ptr.msg);
+            try toast.apply_style(.reset);
+        }
     }
 };
 
@@ -659,9 +673,12 @@ pub const Sleeper = struct {
         _ = self.requests.close();
     }
 
-    pub fn delay_event(self: *@This(), time_ms: u32, event: App.Event) !void {
+    pub fn delay_event(self: *@This(), time_ms: i128, event: App.Event) !void {
+        const time = std.time.nanoTimestamp();
+        const del: i128 = std.time.ns_per_ms * time_ms;
+        const target = time + del;
         try self.requests.send(.{
-            .target_ts = std.time.nanoTimestamp() + std.time.ns_per_ms * time_ms,
+            .target_ts = target,
             .event = event,
         });
     }
@@ -1059,7 +1076,10 @@ pub const App = struct {
                     const id = try self.toaster.add(toast);
                     try self.sleeper.delay_event(500, .{ .pop_toast = id });
                 },
-                .pop_toast => |id| self.toaster.remove(id),
+                .pop_toast => |id| {
+                    self.toaster.remove(id);
+                    try self._send_event(.rerender);
+                },
                 .input => |input| {
                     if (tropes.global) switch (input) {
                         .key => |key| {
@@ -1765,7 +1785,7 @@ pub const App = struct {
 
     fn _err_toast(self: *@This(), err: ?anyerror, msg: []const u8) !void {
         const id = try self.toaster.add(.{ .err = err, .msg = msg });
-        try self.sleeper.delay_event(500, .{ .pop_toast = id });
+        try self.sleeper.delay_event(5000, .{ .pop_toast = id });
     }
 
     fn request_jj_diff(self: *@This()) !void {
@@ -1913,6 +1933,12 @@ pub const App = struct {
                 try self.text_input.draw(&input_box);
             }
 
+            {
+                const region = max_popup_region.split_x(-100, false).right;
+                var surface = try Surface.init(&self.screen, .{ .origin = region.origin, .size = region.size });
+                try self.toaster.render(&surface, self);
+            }
+
             if (self.show_help) {
                 const screen = self.screen.term.screen;
                 const r0 = screen.border_sub(.{ .x = 3, .y = 2 });
@@ -1930,7 +1956,7 @@ pub const App = struct {
 
     fn execute_non_interactive_command(self: *@This(), args: []const []const u8) !void {
         const _err_buf = try self._execute_non_interactive_command(args);
-        if (_err_buf) |err_buf| try self._err_toast(null, err_buf);
+        if (_err_buf) |err_buf| try self._err_toast(error.CommandExecutionError, err_buf);
     }
 
     fn _execute_non_interactive_command(self: *@This(), args: []const []const u8) !?[]const u8 {

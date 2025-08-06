@@ -577,6 +577,82 @@ const HelpSlate = struct {
     }
 };
 
+pub const Sleeper = struct {
+    alloc: std.mem.Allocator,
+    thread: std.Thread,
+    quit: utils_mod.Fuse = .{},
+    requests: utils_mod.Channel(Request),
+    sleeps: std.ArrayList(Request),
+
+    // not owned
+    events: utils_mod.Channel(App.Event),
+
+    const Request = struct { target_ts: i128, event: App.Event };
+
+    pub fn init(alloc: std.mem.Allocator, events: utils_mod.Channel(App.Event)) !*@This() {
+        const self = try alloc.create(@This());
+        errdefer alloc.destroy(self);
+
+        var requests = try utils_mod.Channel(Request).init(alloc);
+        errdefer requests.deinit();
+
+        self.* = .{
+            .alloc = alloc,
+            .sleeps = .init(alloc),
+            .requests = requests,
+            .events = events,
+            .thread = undefined,
+        };
+
+        self.thread = try std.Thread.spawn(.{}, @This()._start, .{self});
+        return self;
+    }
+
+    pub fn deinit(self: *@This()) void {
+        const alloc = self.alloc;
+        defer alloc.destroy(self);
+        defer self.requests.deinit();
+        defer self.sleeps.deinit();
+        defer self.thread.join();
+        _ = self.quit.fuse();
+        _ = self.requests.close();
+    }
+
+    pub fn delay_event(self: *@This(), time_ms: u32, event: App.Event) !void {
+        try self.requests.send(.{
+            .target_ts = std.time.nanoTimestamp() + std.time.ns_per_ms * time_ms,
+            .event = event,
+        });
+    }
+
+    fn _start(self: *@This()) void {
+        self.start() catch |e| utils_mod.dump_error(e);
+    }
+
+    fn start(self: *@This()) !void {
+        while (true) {
+            if (self.quit.check()) return;
+            if (self.requests.try_recv()) |e| {
+                self.sleeps.append(e);
+            }
+
+            const now = std.time.nanoTimestamp();
+            var i: usize = 0;
+            while (i < self.sleeps.items.len) {
+                const e = self.sleeps.items[i];
+                if (now >= e.target_ts) {
+                    _ = self.sleeps.swapRemove(i);
+                    try self.events.send(e.event);
+                } else {
+                    i += 1;
+                }
+            }
+
+            std.Thread.sleep(std.time.ns_per_ms * 50);
+        }
+    }
+};
+
 pub const App = struct {
     screen: term_mod.Screen,
 
@@ -586,6 +662,7 @@ pub const App = struct {
     input_iterator: term_mod.TermInputIterator,
     events: utils_mod.Channel(Event),
 
+    sleeper: *Sleeper,
     jj: *jj_mod.JujutsuServer,
 
     alloc: std.mem.Allocator,
@@ -642,6 +719,7 @@ pub const App = struct {
         input: term_mod.TermInputIterator.Input,
         jj: jj_mod.JujutsuServer.Response,
         err: anyerror,
+        toast: []const u8,
     };
 
     var app: *@This() = undefined;
@@ -666,6 +744,9 @@ pub const App = struct {
         var events = try utils_mod.Channel(Event).init(alloc);
         errdefer events.deinit();
 
+        const sleeper = try Sleeper.init(alloc, events);
+        errdefer sleeper.deinit();
+
         const jj = try jj_mod.JujutsuServer.init(alloc, events);
         errdefer jj.deinit();
 
@@ -678,6 +759,7 @@ pub const App = struct {
             .screen = screen,
             .input_iterator = .{ .input = try .init(alloc) },
             .events = events,
+            .sleeper = sleeper,
             .jj = jj,
             .log = .{
                 .alloc = alloc,
@@ -740,6 +822,7 @@ pub const App = struct {
             };
             self.events.deinit();
         }
+        defer self.sleeper.deinit();
         defer self.jj.deinit();
         defer self.input_thread.join();
         _ = self.quit_input_loop.fuse();

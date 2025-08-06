@@ -278,7 +278,6 @@ pub fn Deque(typ: type) type {
     };
 }
 
-// MAYBE: condvars + .block_recv()
 pub fn Channel(typ: type) type {
     return struct {
         const Dq = Deque(typ);

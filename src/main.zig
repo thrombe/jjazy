@@ -577,6 +577,47 @@ const HelpSlate = struct {
     }
 };
 
+const Toaster = struct {
+    alloc: std.mem.Allocator,
+    id: Id = 0,
+    // toasts need to maintain order even when adding/removing items
+    toasts: std.AutoArrayHashMap(Id, Toast),
+
+    const Id = u32;
+    const Toast = struct {
+        msg: []const u8,
+        err: ?anyerror,
+    };
+
+    fn deinit(self: *@This()) void {
+        var it = self.toasts.iterator();
+        while (it.next()) |toast| {
+            self.alloc.free(toast.value_ptr.*.msg);
+        }
+        self.toasts.deinit();
+    }
+
+    fn add(self: *@This(), toast: Toast) !Id {
+        defer self.id += 1;
+        const id = self.id;
+        try self.toasts.put(id, toast);
+        return id;
+    }
+
+    fn remove(self: *@This(), id: Id) void {
+        const toast = self.toasts.fetchOrderedRemove(id) orelse return;
+        self.alloc.free(toast.value.msg);
+    }
+
+    fn render(self: *@This(), surface: *Surface, app: *App) !void {
+        _ = self;
+        _ = surface;
+        _ = app;
+    }
+};
+
+const JjazyLogs = struct {};
+
 pub const Sleeper = struct {
     alloc: std.mem.Allocator,
     thread: std.Thread,
@@ -633,7 +674,7 @@ pub const Sleeper = struct {
         while (true) {
             if (self.quit.check()) return;
             if (self.requests.try_recv()) |e| {
-                self.sleeps.append(e);
+                try self.sleeps.append(e);
             }
 
             const now = std.time.nanoTimestamp();
@@ -678,6 +719,7 @@ pub const App = struct {
     diff: DiffSlate,
     bookmarks: BookmarkSlate,
     help: HelpSlate,
+    toaster: Toaster,
 
     rerender_pending_since: u64 = 0,
     rerender_pending_count: u64 = 0,
@@ -719,7 +761,8 @@ pub const App = struct {
         input: term_mod.TermInputIterator.Input,
         jj: jj_mod.JujutsuServer.Response,
         err: anyerror,
-        toast: []const u8,
+        toast: Toaster.Toast,
+        pop_toast: Toaster.Id,
     };
 
     var app: *@This() = undefined;
@@ -782,6 +825,10 @@ pub const App = struct {
                 .it = .init(alloc, &[_]u8{}),
             },
             .help = .{},
+            .toaster = .{
+                .alloc = alloc,
+                .toasts = .init(alloc),
+            },
             .text_input = .init(alloc),
             .input_thread = undefined,
         };
@@ -1008,6 +1055,11 @@ pub const App = struct {
                 },
                 .diff_update => try self.request_jj_diff(),
                 .op_update => try self.request_jj_op(),
+                .toast => |toast| {
+                    const id = try self.toaster.add(toast);
+                    try self.sleeper.delay_event(500, .{ .pop_toast = id });
+                },
+                .pop_toast => |id| self.toaster.remove(id),
                 .input => |input| {
                     if (tropes.global) switch (input) {
                         .key => |key| {
@@ -1711,14 +1763,9 @@ pub const App = struct {
         }
     }
 
-    fn save_diff(self: *@This(), change: *const jj_mod.Change, diff: []const u8) !void {
-        try self.diffcache.put(try self.alloc.dupe(u8, change.hash[0..]), diff);
-    }
-
-    fn maybe_request_diff(self: *@This(), change: *const jj_mod.Change) !void {
-        if (self.diffcache.get(change.hash) == null) {
-            try self.jj.requests.send(.{ .diff = change });
-        }
+    fn _err_toast(self: *@This(), err: ?anyerror, msg: []const u8) !void {
+        const id = try self.toaster.add(.{ .err = err, .msg = msg });
+        try self.sleeper.delay_event(500, .{ .pop_toast = id });
     }
 
     fn request_jj_diff(self: *@This()) !void {
@@ -1882,14 +1929,11 @@ pub const App = struct {
     }
 
     fn execute_non_interactive_command(self: *@This(), args: []const []const u8) !void {
-        // TODO: popup error window
-        self._execute_non_interactive_command(args) catch |e| switch (e) {
-            error.SomeErrorMan => {},
-            else => return e,
-        };
+        const _err_buf = try self._execute_non_interactive_command(args);
+        if (_err_buf) |err_buf| try self._err_toast(null, err_buf);
     }
 
-    fn _execute_non_interactive_command(self: *@This(), args: []const []const u8) !void {
+    fn _execute_non_interactive_command(self: *@This(), args: []const []const u8) !?[]const u8 {
         const alloc = self.alloc;
 
         var child = std.process.Child.init(args, alloc);
@@ -1925,31 +1969,46 @@ pub const App = struct {
         }
 
         const err = try child.wait();
+
+        const err_fifo = poller.fifo(.stderr);
+        const err_out = err_fifo.buf[err_fifo.head..][0..err_fifo.count];
+
+        var err_buf = std.ArrayList(u8).init(alloc);
+        var errored: bool = false;
+        if (err_fifo.count > 0) {
+            std.log.err("{s}", .{err_out});
+            try err_buf.writer().print("{s}\n", .{err_out});
+        }
+
         switch (err) {
             .Exited => |e| {
                 if (e != 0) {
                     std.log.err("exited with code: {}", .{e});
+                    try err_buf.writer().print("exited with code: {}\n", .{e});
+                    errored = true;
                 }
-                return error.SomeErrorMan;
             },
             // .Signal => |code| {},
             // .Stopped => |code| {},
             // .Unknown => |code| {},
             else => |e| {
                 std.log.err("exited with code: {}", .{e});
-                return error.SomeErrorMan;
+                try err_buf.writer().print("exited with code: {}\n", .{e});
+                errored = true;
             },
         }
 
-        const err_fifo = poller.fifo(.stderr);
-        if (err_fifo.count > 0) {
-            std.log.err("{s}", .{err_fifo.buf[err_fifo.head..][0..err_fifo.count]});
+        if (errored) {
+            return try err_buf.toOwnedSlice();
         }
 
         const out_fifo = poller.fifo(.stdout);
         if (out_fifo.count > 0) {
             std.log.debug("{s}", .{out_fifo.buf[out_fifo.head..][0..out_fifo.count]});
         }
+
+        err_buf.deinit();
+        return null;
     }
 
     fn execute_interactive_command(self: *@This(), args: []const []const u8) !void {

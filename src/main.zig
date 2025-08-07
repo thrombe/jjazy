@@ -1278,10 +1278,7 @@ pub const App = struct {
                                             'o' => where.* = .onto,
                                             'b' => where.* = .before,
                                             'a' => where.* = .after,
-                                            else => {
-                                                self.log.selected_changes.clearRetainingCapacity();
-                                                self.state = .log;
-                                            },
+                                            else => unreachable,
                                         }
                                         break :event_blk;
                                     }
@@ -1434,6 +1431,7 @@ pub const App = struct {
                                         try args.append(e.key_ptr.id[0..]);
 
                                         if (std.meta.eql(e.key_ptr.*, self.log.focused_change)) {
+                                            try self._err_toast(error.RebaseOnSelected, try self.alloc.dupe(u8, "Cannot rebase on selected change"));
                                             break :event_blk;
                                         }
                                     }
@@ -1498,6 +1496,7 @@ pub const App = struct {
                                         try args.append(e.key_ptr.id[0..]);
 
                                         if (std.meta.eql(e.key_ptr.*, self.log.focused_change)) {
+                                            try self._err_toast(error.SquashOnSelected, try self.alloc.dupe(u8, "Cannot squash on selected change"));
                                             break :event_blk;
                                         }
                                     }
@@ -1589,6 +1588,7 @@ pub const App = struct {
                                         try args.append(e.key_ptr.id[0..]);
 
                                         if (std.meta.eql(e.key_ptr.*, self.log.focused_change)) {
+                                            try self._err_toast(error.DuplicateOnSelected, try self.alloc.dupe(u8, "Cannot duplicate on selected change"));
                                             break :event_blk;
                                         }
                                     }
@@ -1626,6 +1626,7 @@ pub const App = struct {
 
                                         // TODO: why multiple targets?
                                         if (bookmark.parsed.target.len != 1) {
+                                            try self._err_toast(error.MultipleTargetsFound, try self.alloc.dupe(u8, "Error executing command"));
                                             break :event_blk;
                                         }
 
@@ -1743,6 +1744,7 @@ pub const App = struct {
                         .evlog => unreachable,
                     }
                 },
+                // TODO: handle errors better
                 .jj => |res| switch (res.req) {
                     .log => {
                         self.alloc.free(self.log.status);

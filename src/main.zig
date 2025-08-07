@@ -633,16 +633,24 @@ const Toaster = struct {
 
         var toast: Surface = undefined;
         for (buf.items) |e| {
-            const height = utils_mod.LineIterator.init(e.msg).count_height();
+            var height = utils_mod.LineIterator.init(e.msg).count_height();
+            height += 2;
 
-            toast = try surface.split_y(height + 2, .gap);
-            std.mem.swap(Surface, &toast, surface);
+            toast = try surface.split_y(-height, .gap);
 
             try toast.apply_style(.{ .foreground_color = .from_theme(if (e.err != null) .errors else .dim_text) });
             try toast.clear();
             try toast.draw_border(symbols.thin.square);
-            try toast.draw_buf(e.msg);
+            if (e.err) |err| {
+                try toast.apply_style(.{ .foreground_color = .from_theme(.max_contrast) });
+                try toast.apply_style(.bold);
+                try toast.draw_border_heading(try std.fmt.allocPrint(temp, " {any} ", .{err}));
+
+                try toast.apply_style(.reset);
+                try toast.apply_style(.{ .foreground_color = .from_theme(if (e.err != null) .errors else .dim_text) });
+            }
             try toast.apply_style(.reset);
+            try toast.draw_buf(e.msg);
         }
     }
 };

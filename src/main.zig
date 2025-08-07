@@ -610,20 +610,23 @@ const Toaster = struct {
     }
 
     fn render(self: *@This(), surface: *Surface, app: *App) !void {
-        _ = app;
+        const temp = app.arena.allocator();
+        var buf = std.ArrayList(Toaster.Toast).init(temp);
+
+        var it = self.toasts.iterator();
+        while (it.next()) |e| try buf.append(e.value_ptr.*);
 
         var toast: Surface = undefined;
-        var it = self.toasts.iterator();
-        while (it.next()) |e| {
-            const height = utils_mod.LineIterator.init(e.value_ptr.msg).count_height();
+        for (buf.items) |e| {
+            const height = utils_mod.LineIterator.init(e.msg).count_height();
 
             toast = try surface.split_y(height + 2, .gap);
             std.mem.swap(Surface, &toast, surface);
 
-            try toast.apply_style(.{ .foreground_color = .from_theme(if (e.value_ptr.err != null) .errors else .dim_text) });
+            try toast.apply_style(.{ .foreground_color = .from_theme(if (e.err != null) .errors else .dim_text) });
             try toast.clear();
             try toast.draw_border(term_mod.border.square);
-            try toast.draw_buf(e.value_ptr.msg);
+            try toast.draw_buf(e.msg);
             try toast.apply_style(.reset);
         }
     }

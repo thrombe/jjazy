@@ -2000,6 +2000,7 @@ pub const App = struct {
         const err_out = err_fifo.buf[err_fifo.head..][0..err_fifo.count];
 
         var err_buf = std.ArrayList(u8).init(alloc);
+        errdefer err_buf.deinit();
         var errored: bool = false;
         if (err_fifo.count > 0) {
             std.log.err("{s}", .{err_out});
@@ -2040,34 +2041,75 @@ pub const App = struct {
     fn execute_interactive_command(self: *@This(), args: []const []const u8) !void {
         try self.restore_terminal_for_command();
 
-        // TODO: popup error window
-        self._execute_command(args) catch |e| switch (e) {
-            error.SomeErrorMan => {},
-            error.FileNotFound => {},
+        const _err_buf = self._execute_command(args) catch |e| switch (e) {
+            error.FileNotFound => try std.fmt.allocPrint(self.alloc, "Executable not found", .{}),
             else => return e,
         };
+        if (_err_buf) |err_buf| try self._err_toast(error.CommandExecutionError, err_buf);
+
         try self.uncook_terminal();
     }
 
-    fn _execute_command(self: *@This(), args: []const []const u8) !void {
-        var child = std.process.Child.init(args, self.alloc);
+    fn _execute_command(self: *@This(), args: []const []const u8) !?[]const u8 {
+        const alloc = self.alloc;
+        var child = std.process.Child.init(args, alloc);
+        child.stderr_behavior = .Pipe;
+
         try child.spawn();
+
+        const stderr = child.stderr orelse return error.NoStderr;
+        child.stderr = null;
+        defer stderr.close();
+
+        // similar to child.collectOutput
+        const max_output_bytes = 1000 * 1000;
+        var poller = std.io.poll(alloc, enum { stderr }, .{
+            .stderr = stderr,
+        });
+        defer poller.deinit();
+
+        while (try poller.poll()) {
+            if (poller.fifo(.stderr).count > max_output_bytes)
+                return error.StderrStreamTooLong;
+        }
+
         const err = try child.wait();
+
+        const err_fifo = poller.fifo(.stderr);
+        const err_out = err_fifo.buf[err_fifo.head..][0..err_fifo.count];
+
+        var err_buf = std.ArrayList(u8).init(self.alloc);
+        errdefer err_buf.deinit();
+        var errored: bool = false;
+        if (err_fifo.count > 0) {
+            std.log.err("{s}", .{err_out});
+            try err_buf.writer().print("{s}\n", .{err_out});
+        }
+
         switch (err) {
             .Exited => |e| {
                 if (e != 0) {
                     std.log.err("exited with code: {}", .{e});
+                    try err_buf.writer().print("exited with code: {}\n", .{e});
+                    errored = true;
                 }
-                return error.SomeErrorMan;
             },
             // .Signal => |code| {},
             // .Stopped => |code| {},
             // .Unknown => |code| {},
             else => |e| {
                 std.log.err("exited with code: {}", .{e});
-                return error.SomeErrorMan;
+                try err_buf.writer().print("exited with code: {}\n", .{e});
+                errored = true;
             },
         }
+
+        if (errored) {
+            return try err_buf.toOwnedSlice();
+        }
+
+        err_buf.deinit();
+        return null;
     }
 };
 

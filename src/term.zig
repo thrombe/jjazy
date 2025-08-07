@@ -71,89 +71,158 @@ pub const codes = struct {
     };
 };
 
-pub const arrow = struct {
-    pub const up = "↑";
-    pub const down = "↓";
-    pub const left = "←";
-    pub const right = "→";
-};
-pub const key = struct {
-    pub const backspace = "⌫";
-    pub const tab = "⌫";
-    pub const space = "␣";
-    pub const shift = "⇧";
+pub const symbols = struct {
+    pub const arrow = struct {
+        pub const up = "↑";
+        pub const down = "↓";
+        pub const left = "←";
+        pub const right = "→";
+    };
+    pub const key = struct {
+        pub const backspace = "⌫";
+        pub const tab = "⌫";
+        pub const space = "␣";
+        pub const shift = "⇧";
+    };
+    pub const border = struct {
+        pub const double = struct {
+            pub const corners = struct {
+                pub const top_left = "╔";
+                pub const top_right = "╗";
+                pub const bottom_left = "╚";
+                pub const bottom_right = "╝";
+            };
+            pub const edges = struct {
+                pub const vertical = "║";
+                pub const horizontal = "═";
+            };
+            pub const cross = struct {
+                pub const nse = "╠";
+                pub const wse = "╦";
+                pub const nws = "╣";
+                pub const wne = "╩";
+                pub const nwse = "╬";
+            };
+        };
+        pub const thin = struct {
+            pub const corners = struct {
+                pub const rounded = struct {
+                    pub const top_left = "╭";
+                    pub const top_right = "╮";
+                    pub const bottom_left = "╰";
+                    pub const bottom_right = "╯";
+                };
+                pub const square = struct {
+                    pub const top_left = "┌";
+                    pub const top_right = "┐";
+                    pub const bottom_left = "└";
+                    pub const bottom_right = "┘";
+                };
+            };
+            pub const edges = struct {
+                pub const top = "▔";
+                pub const bottom = "▁";
+                pub const right = "▕";
+                pub const left = "▏";
+                pub const vertical = "│";
+                pub const horizontal = "─";
+            };
+            pub const cross = struct {
+                pub const nse = "├";
+                pub const wse = "┬";
+                pub const nws = "┤";
+                pub const wne = "┴";
+                pub const nwse = "┼";
+            };
+        };
+        pub const block = struct {
+            pub const full = "█";
+            pub const corners = struct {
+                pub const inverse = struct {
+                    pub const top_right = "▖";
+                    pub const top_left = "▗";
+                    pub const bottom_right = "▘";
+                    pub const bottom_left = "▝";
+                };
+                pub const filled = struct {
+                    pub const top_right = "▜";
+                    pub const top_left = "▛";
+                    pub const bottom_right = "▟";
+                    pub const bottom_left = "▙";
+                };
+            };
+            pub const edges = struct {
+                pub const left = "▌";
+                pub const right = "▐";
+                pub const top = "▀";
+                pub const bottom = "▄";
+            };
+        };
+    };
 };
 pub const border = struct {
-    pub const double = struct {
+    pub const none = struct {
         pub const corners = struct {
-            pub const top_left = "╔";
-            pub const top_right = "╗";
-            pub const bottom_left = "╚";
-            pub const bottom_right = "╝";
+            pub const top_right = " ";
+            pub const top_left = " ";
+            pub const bottom_right = " ";
+            pub const bottom_left = " ";
         };
         pub const edges = struct {
-            pub const vertical = "║";
-            pub const horizontal = "═";
+            pub const top = " ";
+            pub const bottom = " ";
+            pub const right = " ";
+            pub const left = " ";
+            pub const vertical = " ";
+            pub const horizontal = " ";
         };
         pub const cross = struct {
-            pub const nse = "╠";
-            pub const wse = "╦";
-            pub const nws = "╣";
-            pub const wne = "╩";
-            pub const nwse = "╬";
+            pub const nse = " ";
+            pub const wse = " ";
+            pub const nws = " ";
+            pub const wne = " ";
+            pub const nwse = " ";
         };
     };
     pub const thin = struct {
-        pub const corners = struct {
-            pub const rounded = struct {
-                pub const top_left = "╭";
-                pub const top_right = "╮";
-                pub const bottom_left = "╰";
-                pub const bottom_right = "╯";
-            };
-            pub const square = struct {
-                pub const top_left = "┌";
-                pub const top_right = "┐";
-                pub const bottom_left = "└";
-                pub const bottom_right = "┘";
-            };
+        pub const rounded = struct {
+            pub const corners = symbols.border.thin.corners.rounded;
+            pub const edges = symbols.border.thin.edges;
+            pub const cross = symbols.border.thin.cross;
         };
-        pub const edges = struct {
-            pub const top = "▔";
-            pub const bottom = "▁";
-            pub const right = "▕";
-            pub const left = "▏";
-            pub const vertical = "│";
-            pub const horizontal = "─";
-        };
-        pub const cross = struct {
-            pub const nse = "├";
-            pub const wse = "┬";
-            pub const nws = "┤";
-            pub const wne = "┴";
-            pub const nwse = "┼";
+        pub const square = struct {
+            pub const corners = symbols.border.thin.corners.square;
+            pub const edges = symbols.border.thin.edges;
+            pub const cross = symbols.border.thin.cross;
         };
     };
     pub const block = struct {
-        pub const corners = struct {
-            pub const inverse = struct {
-                pub const top_right = "▖";
-                pub const top_left = "▗";
-                pub const bottom_right = "▘";
-                pub const bottom_left = "▝";
-            };
-            pub const filled = struct {
-                pub const top_right = "▜";
-                pub const top_left = "▛";
-                pub const bottom_right = "▟";
-                pub const bottom_left = "▙";
+        pub const filled = struct {
+            pub const corners = symbols.border.block.corners.filled;
+            pub const edges = symbols.border.block.edges;
+            pub const cross = struct {
+                pub const nse = symbols.border.block.full;
+                pub const wse = symbols.border.block.full;
+                pub const nws = symbols.border.block.full;
+                pub const wne = symbols.border.block.full;
+                pub const nwse = symbols.border.block.full;
             };
         };
-        pub const edges = struct {
-            pub const left = "▌";
-            pub const right = "▐";
-            pub const top = "▀";
-            pub const bottom = "▄";
+        pub const inverse = struct {
+            pub const corners = symbols.border.block.corners.inverse;
+            pub const edges = struct {
+                pub const left = symbols.border.block.edges.right;
+                pub const right = symbols.border.block.edges.right;
+                pub const top = symbols.border.block.edges.bottom;
+                pub const bottom = symbols.border.block.edges.top;
+            };
+            pub const cross = struct {
+                pub const nse = symbols.border.block.full;
+                pub const wse = symbols.border.block.full;
+                pub const nws = symbols.border.block.full;
+                pub const wne = symbols.border.block.full;
+                pub const nwse = symbols.border.block.full;
+            };
         };
     };
 };
@@ -1123,7 +1192,7 @@ pub const Screen = struct {
         }
     }
 
-    pub fn draw_border(self: *@This(), id: u32, region: Region, corners: anytype, edges: anytype) !void {
+    pub fn draw_border(self: *@This(), id: u32, region: Region, borders: anytype) !void {
         const out = self.term.screen.clamp(region);
         const end = region.end();
         const range_y = out.range_y();
@@ -1134,39 +1203,39 @@ pub const Screen = struct {
             return;
         } else if (out.size.x == 1) {
             for (@intCast(range_y.begin)..@intCast(range_y.end)) |y| {
-                try self.draw_at(id, .{ .y = @intCast(y), .x = out.origin.x }, edges.vertical);
+                try self.draw_at(id, .{ .y = @intCast(y), .x = out.origin.x }, borders.edges.vertical);
             }
             return;
         } else if (out.size.y == 1) {
             try self.cursor_move(id, out.origin);
-            try self.writer(id).writeBytesNTimes(edges.horizontal, @intCast(out.size.x));
+            try self.writer(id).writeBytesNTimes(borders.edges.horizontal, @intCast(out.size.x));
             return;
         }
 
         if (self.term.screen.contains_y(region.origin.y)) {
             try self.cursor_move(id, out.origin);
-            try self.writer(id).writeBytesNTimes(edges.horizontal, @intCast(out.size.x));
+            try self.writer(id).writeBytesNTimes(borders.edges.horizontal, @intCast(out.size.x));
         }
         if (self.term.screen.contains_y(end.y)) {
             try self.cursor_move(id, .{ .x = out.origin.x, .y = end.y });
-            try self.writer(id).writeBytesNTimes(edges.horizontal, @intCast(out.size.x));
+            try self.writer(id).writeBytesNTimes(borders.edges.horizontal, @intCast(out.size.x));
         }
 
         for (@intCast(range_y.begin)..@intCast(range_y.end)) |y| {
-            try self.draw_at(id, .{ .y = @intCast(y), .x = region.origin.x }, edges.vertical);
-            try self.draw_at(id, .{ .y = @intCast(y), .x = end.x }, edges.vertical);
+            try self.draw_at(id, .{ .y = @intCast(y), .x = region.origin.x }, borders.edges.vertical);
+            try self.draw_at(id, .{ .y = @intCast(y), .x = end.x }, borders.edges.vertical);
         }
 
         // write corners last so that it overwrites the edges (this simplifies code)
-        try self.draw_at(id, .{ .x = region.origin.x, .y = region.origin.y }, corners.top_left);
-        try self.draw_at(id, .{ .x = end.x, .y = region.origin.y }, corners.top_right);
-        try self.draw_at(id, .{ .x = region.origin.x, .y = end.y }, corners.bottom_left);
-        try self.draw_at(id, .{ .x = end.x, .y = end.y }, corners.bottom_right);
+        try self.draw_at(id, .{ .x = region.origin.x, .y = region.origin.y }, borders.corners.top_left);
+        try self.draw_at(id, .{ .x = end.x, .y = region.origin.y }, borders.corners.top_right);
+        try self.draw_at(id, .{ .x = region.origin.x, .y = end.y }, borders.corners.bottom_left);
+        try self.draw_at(id, .{ .x = end.x, .y = end.y }, borders.corners.bottom_right);
     }
 
-    pub fn draw_split(self: *@This(), id: u32, region: Region, _x: ?i32, _y: ?i32, borders: bool, edges: anytype, cross: anytype) !void {
+    pub fn draw_split(self: *@This(), id: u32, region: Region, _x: ?i32, _y: ?i32, enable_borders: bool, borders: anytype) !void {
         const border_out = self.term.screen.clamp(region);
-        const in_region = region.border_sub(.splat(@intFromBool(borders)));
+        const in_region = region.border_sub(.splat(@intFromBool(enable_borders)));
         const out = self.term.screen.clamp(in_region);
         const end = out.end();
         const range_y = out.range_y();
@@ -1174,23 +1243,23 @@ pub const Screen = struct {
         if (_y) |y| {
             if (self.term.screen.contains_y(y) and in_region.contains_y(y)) {
                 try self.cursor_move(id, .{ .x = out.origin.x, .y = y });
-                try self.writer(id).writeBytesNTimes(edges.horizontal, @intCast(out.size.x));
+                try self.writer(id).writeBytesNTimes(borders.edges.horizontal, @intCast(out.size.x));
             }
-            if (borders and in_region.contains_y(y)) {
-                if (in_region.contains_x(out.origin.x)) try self.draw_at(id, .{ .y = y, .x = border_out.origin.x }, cross.nse);
-                if (in_region.contains_x(end.x)) try self.draw_at(id, .{ .y = y, .x = border_out.end().x }, cross.nws);
+            if (enable_borders and in_region.contains_y(y)) {
+                if (in_region.contains_x(out.origin.x)) try self.draw_at(id, .{ .y = y, .x = border_out.origin.x }, borders.cross.nse);
+                if (in_region.contains_x(end.x)) try self.draw_at(id, .{ .y = y, .x = border_out.end().x }, borders.cross.nws);
             }
         }
         if (_x) |x| {
             for (@intCast(range_y.begin)..@intCast(range_y.end)) |y| {
-                try self.draw_at(id, .{ .x = x, .y = @intCast(y) }, edges.vertical);
+                try self.draw_at(id, .{ .x = x, .y = @intCast(y) }, borders.edges.vertical);
             }
-            if (borders and in_region.contains_x(x)) {
-                if (in_region.contains_y(out.origin.y)) try self.draw_at(id, .{ .x = x, .y = border_out.origin.y }, cross.wse);
-                if (in_region.contains_y(end.y)) try self.draw_at(id, .{ .x = x, .y = border_out.end().y }, cross.wne);
+            if (enable_borders and in_region.contains_x(x)) {
+                if (in_region.contains_y(out.origin.y)) try self.draw_at(id, .{ .x = x, .y = border_out.origin.y }, borders.cross.wse);
+                if (in_region.contains_y(end.y)) try self.draw_at(id, .{ .x = x, .y = border_out.end().y }, borders.cross.wne);
             }
         }
-        if (_x) |x| if (_y) |y| if (in_region.contains_vec(.{ .x = x, .y = y })) try self.draw_at(id, .{ .x = x, .y = y }, cross.nwse);
+        if (_x) |x| if (_y) |y| if (in_region.contains_vec(.{ .x = x, .y = y })) try self.draw_at(id, .{ .x = x, .y = y }, borders.cross.nwse);
     }
 
     pub fn draw_buf(

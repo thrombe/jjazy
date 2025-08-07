@@ -805,6 +805,45 @@ pub const App = struct {
         err: anyerror,
         toast: Toaster.Toast,
         pop_toast: Toaster.Id,
+        action: Action,
+    };
+
+    pub const Action = union(enum) {
+        fancy_terminal_features_that_break_gdb: enum { enable, disable },
+        trigger_breakpoint,
+        refresh_master_content,
+        scroll: struct { target: enum { log, oplog, diff, bookmarks }, offset: i32 },
+        resize_master: f32,
+        escape_to_log,
+        select_focused_change,
+        set_where: Where,
+        send_quit_event,
+        switch_state_to_new,
+        jj_edit,
+        switch_state_to_rebase_onto,
+        switch_state_to_squash,
+        switch_state_to_abandon,
+        switch_state_to_oplog,
+        switch_state_to_duplicate,
+        switch_state_to_view,
+        show_help,
+        jj_split,
+        jj_describe,
+        switch_state_to_command,
+        apply_jj_rebase,
+        apply_jj_abandon,
+        apply_jj_squash,
+        apply_jj_new,
+        execute_command_in_input_buffer,
+        apply_jj_op_restore,
+        apply_jj_duplicate,
+        switch_state_to_bookmark_new,
+        new_commit_from_bookmark,
+        move_bookmark_to_selected: struct { force: bool },
+        apply_jj_bookmark_delete,
+        apply_jj_bookmark_forget: struct { include_remotes: bool },
+        apply_jj_bookmark_create_from_input_buffer_on_selected_change,
+        apply_jj_git_fetch,
     };
 
     var app: *@This() = undefined;
@@ -1527,6 +1566,7 @@ pub const App = struct {
                                 try self.execute_interactive_command(args.items);
                                 self.text_input.reset();
                                 self.state = .log;
+                                return;
                             }
                         },
                         else => {},
@@ -1542,6 +1582,7 @@ pub const App = struct {
                                 });
                                 self.oplog.y = 0;
                                 try self.jj.requests.send(.oplog);
+                                return;
                             }
                         },
                         else => {},
@@ -1718,6 +1759,375 @@ pub const App = struct {
                     },
                     .evlog => unreachable,
                 }
+            },
+            .action => |action| switch (action) {
+                .fancy_terminal_features_that_break_gdb => |set| switch (set) {
+                    .disable => try self.screen.term.fancy_features_that_break_gdb(.disable, .{}),
+                    .enable => try self.screen.term.fancy_features_that_break_gdb(.enable, .{}),
+                },
+                .trigger_breakpoint => {
+                    try self.screen.term.fancy_features_that_break_gdb(.disable, .{});
+                    @breakpoint();
+                },
+                .refresh_master_content => switch (self.state) {
+                    .oplog => try self.jj.requests.send(.oplog),
+                    else => try self.jj.requests.send(.log),
+                },
+                .scroll => |target| switch (target.target) {
+                    .log => {
+                        self.log.y += target.offset;
+                        try self._send_event(.diff_update);
+                    },
+                    .oplog => {
+                        self.oplog.y += target.offset;
+                        try self._send_event(.op_update);
+                    },
+                    .diff => {
+                        if (self.diff.diffcache.getPtr(self.log.focused_change.hash)) |diff| {
+                            diff.y += target.offset;
+                        }
+                    },
+                    .bookmarks => {
+                        self.bookmarks.index += target.offset;
+                    },
+                },
+                .resize_master => |offset| {
+                    self.x_split += offset;
+                },
+                .escape_to_log => {
+                    self.log.selected_changes.clearRetainingCapacity();
+                    self.state = .log;
+                    self.show_help = false;
+                },
+                .select_focused_change => {
+                    if (self.log.selected_changes.fetchOrderedRemove(self.log.focused_change) == null) {
+                        try self.log.selected_changes.put(self.log.focused_change, {});
+                    }
+                },
+                .set_where => |set| {
+                    switch (self.state) {
+                        .rebase, .duplicate => |*where| {
+                            where.* = set;
+                        },
+                        else => unreachable,
+                    }
+                },
+                .send_quit_event => {
+                    try self._send_event(.quit);
+                },
+                .switch_state_to_new => {
+                    self.state = .new;
+                    try self.log.selected_changes.put(self.log.focused_change, {});
+                },
+                .jj_edit => {
+                    try self.execute_non_interactive_command(&[_][]const u8{
+                        "jj",
+                        "edit",
+                        self.log.focused_change.id[0..],
+                    });
+                    try self.jj.requests.send(.log);
+                },
+                .switch_state_to_rebase_onto => {
+                    self.state = .{ .rebase = .onto };
+                    try self.log.selected_changes.put(self.log.focused_change, {});
+                },
+                .switch_state_to_squash => {
+                    self.state = .squash;
+                    try self.log.selected_changes.put(self.log.focused_change, {});
+                },
+                .switch_state_to_abandon => {
+                    self.state = .abandon;
+                    try self.log.selected_changes.put(self.log.focused_change, {});
+                },
+                .switch_state_to_oplog => {
+                    self.state = .oplog;
+                    self.oplog.y = 0;
+                    try self.jj.requests.send(.oplog);
+                },
+                .switch_state_to_duplicate => {
+                    self.state = .{ .duplicate = .onto };
+                    try self.log.selected_changes.put(self.log.focused_change, {});
+                },
+                .switch_state_to_view => {
+                    self.state = .{ .bookmark = .view };
+                    try self.jj.requests.send(.bookmark);
+                },
+                .show_help => {
+                    self.show_help = true;
+                },
+                .jj_split => {
+                    try self.execute_interactive_command(&[_][]const u8{
+                        "jj",
+                        "split",
+                        "-r",
+                        self.log.focused_change.id[0..],
+                    });
+                },
+                .jj_describe => {
+                    try self.execute_interactive_command(&[_][]const u8{
+                        "jj",
+                        "describe",
+                        "-r",
+                        self.log.focused_change.id[0..],
+                    });
+                },
+                .switch_state_to_command => {
+                    self.state = .command;
+                    self.text_input.reset();
+                },
+                .apply_jj_rebase => {
+                    defer {
+                        self.log.selected_changes.clearRetainingCapacity();
+                        self.state = .log;
+                    }
+
+                    var args = std.ArrayList([]const u8).init(temp);
+                    try args.append("jj");
+                    try args.append("rebase");
+
+                    var it = self.log.selected_changes.iterator();
+                    while (it.next()) |e| {
+                        try args.append("-r");
+                        try args.append(e.key_ptr.id[0..]);
+
+                        if (std.meta.eql(e.key_ptr.*, self.log.focused_change)) {
+                            try self._err_toast(error.RebaseOnSelected, try self.alloc.dupe(u8, "Cannot rebase on selected change"));
+                            return;
+                        }
+                    }
+
+                    switch (self.state.rebase) {
+                        .onto => try args.append("-d"),
+                        .after => try args.append("-A"),
+                        .before => try args.append("-B"),
+                    }
+
+                    try args.append(self.log.focused_change.id[0..]);
+
+                    try self.execute_non_interactive_command(args.items);
+
+                    try self.jj.requests.send(.log);
+                },
+                .apply_jj_abandon => {
+                    defer {
+                        self.log.selected_changes.clearRetainingCapacity();
+                        self.state = .log;
+                    }
+
+                    var args = std.ArrayList([]const u8).init(temp);
+                    try args.append("jj");
+                    try args.append("abandon");
+                    try args.append("--retain-bookmarks");
+
+                    var it = self.log.selected_changes.iterator();
+                    while (it.next()) |e| {
+                        try args.append(e.key_ptr.id[0..]);
+                    }
+
+                    try self.execute_non_interactive_command(args.items);
+
+                    try self.jj.requests.send(.log);
+                },
+                .apply_jj_squash => {
+                    defer {
+                        self.log.selected_changes.clearRetainingCapacity();
+                        self.state = .log;
+                    }
+
+                    var args = std.ArrayList([]const u8).init(temp);
+                    try args.append("jj");
+                    try args.append("squash");
+
+                    var it = self.log.selected_changes.iterator();
+                    while (it.next()) |e| {
+                        try args.append("--from");
+                        try args.append(e.key_ptr.id[0..]);
+
+                        if (std.meta.eql(e.key_ptr.*, self.log.focused_change)) {
+                            try self._err_toast(error.SquashOnSelected, try self.alloc.dupe(u8, "Cannot squash on selected change"));
+                            return;
+                        }
+                    }
+
+                    try args.append("--into");
+                    try args.append(self.log.focused_change.id[0..]);
+
+                    try self.execute_non_interactive_command(args.items);
+
+                    try self.jj.requests.send(.log);
+                },
+                .apply_jj_new => {
+                    defer {
+                        self.log.selected_changes.clearRetainingCapacity();
+                        self.state = .log;
+                    }
+
+                    var args = std.ArrayList([]const u8).init(temp);
+                    try args.append("jj");
+                    try args.append("new");
+
+                    var it = self.log.selected_changes.iterator();
+                    while (it.next()) |e| {
+                        try args.append(e.key_ptr.id[0..]);
+                    }
+
+                    try self.execute_non_interactive_command(args.items);
+
+                    try self.jj.requests.send(.log);
+                    self.log.y = 0;
+                },
+                .execute_command_in_input_buffer => {
+                    var args = std.ArrayList([]const u8).init(temp);
+
+                    // TODO: support parsing and passing "string" and 'string' with \" \' and spaces properly
+                    var arg_it = std.mem.splitAny(u8, self.text_input.text.items, &std.ascii.whitespace);
+                    while (arg_it.next()) |arg| {
+                        try args.append(arg);
+                    }
+
+                    try self.execute_interactive_command(args.items);
+                    self.text_input.reset();
+                    self.state = .log;
+                },
+                .apply_jj_op_restore => {
+                    try self.execute_non_interactive_command(&[_][]const u8{
+                        "jj",
+                        "op",
+                        "restore",
+                        self.oplog.focused_op.id[0..],
+                    });
+                    self.oplog.y = 0;
+                    try self.jj.requests.send(.oplog);
+                },
+                .apply_jj_duplicate => {
+                    defer {
+                        self.log.selected_changes.clearRetainingCapacity();
+                        self.state = .log;
+                    }
+
+                    var args = std.ArrayList([]const u8).init(temp);
+                    try args.append("jj");
+                    try args.append("duplicate");
+
+                    var it = self.log.selected_changes.iterator();
+                    while (it.next()) |e| {
+                        try args.append(e.key_ptr.id[0..]);
+
+                        if (std.meta.eql(e.key_ptr.*, self.log.focused_change)) {
+                            try self._err_toast(error.DuplicateOnSelected, try self.alloc.dupe(u8, "Cannot duplicate on selected change"));
+                            return;
+                        }
+                    }
+
+                    switch (self.state.duplicate) {
+                        .onto => try args.append("-d"),
+                        .after => try args.append("-A"),
+                        .before => try args.append("-B"),
+                    }
+
+                    try args.append(self.log.focused_change.id[0..]);
+
+                    try self.execute_non_interactive_command(args.items);
+
+                    try self.jj.requests.send(.log);
+                },
+                .switch_state_to_bookmark_new => {
+                    self.state = .{ .bookmark = .new };
+                },
+                .new_commit_from_bookmark => {
+                    defer {
+                        self.text_input.reset();
+                        self.state = .log;
+                    }
+
+                    const bookmark = try self.bookmarks.get_selected() orelse return;
+
+                    // TODO: why multiple targets?
+                    if (bookmark.parsed.target.len != 1) {
+                        try self._err_toast(error.MultipleTargetsFound, try self.alloc.dupe(u8, "Error executing command"));
+                        return;
+                    }
+
+                    try self.execute_non_interactive_command(&[_][]const u8{
+                        "jj",
+                        "new",
+                        "-r",
+                        bookmark.parsed.target[0][0..8],
+                    });
+                    try self.jj.requests.send(.log);
+                },
+                .move_bookmark_to_selected => |force| {
+                    defer self.state = .log;
+                    const bookmark = try self.bookmarks.get_selected() orelse return;
+
+                    var args = std.ArrayList([]const u8).init(temp);
+                    try args.append("jj");
+                    try args.append("bookmark");
+                    try args.append("move");
+                    try args.append(bookmark.parsed.name);
+                    try args.append("--to");
+                    try args.append(self.log.focused_change.id[0..]);
+                    if (force.force) {
+                        try args.append("--allow-backwards");
+                    }
+
+                    try self.execute_non_interactive_command(args.items);
+                    try self.jj.requests.send(.log);
+                },
+                .apply_jj_bookmark_delete => {
+                    defer self.state = .log;
+                    const bookmark = try self.bookmarks.get_selected() orelse return;
+                    try self.execute_non_interactive_command(&[_][]const u8{
+                        "jj",
+                        "bookmark",
+                        "delete",
+                        bookmark.parsed.name,
+                    });
+                },
+                .apply_jj_bookmark_forget => |v| {
+                    defer self.state = .log;
+                    const bookmark = try self.bookmarks.get_selected() orelse return;
+
+                    var args = std.ArrayList([]const u8).init(temp);
+                    try args.append("jj");
+                    try args.append("bookmark");
+                    try args.append("forget");
+                    try args.append(bookmark.parsed.name);
+                    if (v.include_remotes) {
+                        try args.append("--include-remotes");
+                    }
+
+                    try self.execute_non_interactive_command(args.items);
+                },
+                .apply_jj_bookmark_create_from_input_buffer_on_selected_change => {
+                    defer {
+                        self.text_input.reset();
+                        self.state = .log;
+                    }
+
+                    try self.execute_non_interactive_command(&[_][]const u8{
+                        "jj",
+                        "bookmark",
+                        "create",
+                        "-r",
+                        self.log.focused_change.id[0..],
+                        self.text_input.text.items,
+                    });
+                    try self.jj.requests.send(.log);
+                },
+                .apply_jj_git_fetch => {
+                    defer self.state = .log;
+
+                    // TODO:
+                    //  support --branch
+                    //  support --remote
+                    try self.execute_non_interactive_command(&[_][]const u8{
+                        "jj",
+                        "git",
+                        "fetch",
+                    });
+                    try self.jj.requests.send(.log);
+                },
             },
             // TODO: handle errors better
             .jj => |res| switch (res.req) {

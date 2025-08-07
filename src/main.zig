@@ -2056,6 +2056,8 @@ pub const App = struct {
     }
 
     fn execute_interactive_command(self: *@This(), args: []const []const u8) !void {
+        // sync_set just so commands that immediately terminate do not flash the screen :P
+        try self.screen.term.tty.writeAll(codes.sync_set);
         try self.restore_terminal_for_command();
 
         const _err_buf = self._execute_command(args) catch |e| switch (e) {

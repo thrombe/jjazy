@@ -9,6 +9,7 @@ const Vec2 = lay_mod.Vec2;
 
 const term_mod = @import("term.zig");
 const codes = term_mod.codes;
+const symbols = term_mod.border;
 
 const jj_mod = @import("jj.zig");
 
@@ -124,7 +125,7 @@ const Surface = struct {
                 regions.split,
                 null,
                 self.border,
-                term_mod.border.thin.square,
+                symbols.thin.square,
             );
         }
 
@@ -153,7 +154,7 @@ const Surface = struct {
                 null,
                 regions.split,
                 self.border,
-                term_mod.border.thin.square,
+                symbols.thin.square,
             );
         }
 
@@ -535,7 +536,7 @@ const BookmarkSlate = struct {
         try surface.clear();
 
         try surface.apply_style(.bold);
-        try surface.draw_border(term_mod.border.thin.rounded);
+        try surface.draw_border(symbols.thin.rounded);
         try surface.draw_border_heading(" Bookmarks ");
         try surface.apply_style(.reset);
 
@@ -584,7 +585,7 @@ const HelpSlate = struct {
         try surface.apply_style(.bold);
 
         try surface.clear();
-        try surface.draw_border(term_mod.border.thin.rounded);
+        try surface.draw_border(symbols.thin.rounded);
         try surface.draw_border_heading(" Help ");
 
         try surface.apply_style(.reset);
@@ -639,7 +640,7 @@ const Toaster = struct {
 
             try toast.apply_style(.{ .foreground_color = .from_theme(if (e.err != null) .errors else .dim_text) });
             try toast.clear();
-            try toast.draw_border(term_mod.border.thin.square);
+            try toast.draw_border(symbols.thin.square);
             try toast.draw_buf(e.msg);
             try toast.apply_style(.reset);
         }
@@ -1905,7 +1906,7 @@ pub const App = struct {
         {
             var status = try Surface.init(&self.screen, .{});
             try status.clear();
-            // try status.draw_border(term_mod.border.thin.rounded);
+            // try status.draw_border(symbols.thin.rounded);
 
             var bar = try status.split_y(-1, .none);
             try self.render_status_bar(&bar);
@@ -1938,7 +1939,7 @@ pub const App = struct {
                 const region = max_popup_region.clamp(.{ .origin = origin, .size = popup_size });
                 var input_box = try Surface.init(&self.screen, .{ .origin = region.origin, .size = region.size });
                 try input_box.clear();
-                try input_box.draw_border(term_mod.border.thin.rounded);
+                try input_box.draw_border(symbols.thin.rounded);
 
                 if (self.state == .command) {
                     try input_box.draw_border_heading(" Command ");

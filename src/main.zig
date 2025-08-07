@@ -621,9 +621,8 @@ const Toaster = struct {
             std.mem.swap(Surface, &toast, surface);
 
             try toast.apply_style(.{ .foreground_color = .from_theme(if (e.value_ptr.err != null) .errors else .dim_text) });
-            try toast.apply_style(.{ .background_color = .from_theme(.default_background) });
             try toast.clear();
-            toast.border = true;
+            try toast.draw_border(term_mod.border.square);
             try toast.draw_buf(e.value_ptr.msg);
             try toast.apply_style(.reset);
         }

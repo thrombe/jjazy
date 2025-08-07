@@ -1865,7 +1865,7 @@ pub const App = struct {
     fn render_status_bar(self: *@This(), surface: *Surface) !void {
         const temp = self.arena.allocator();
 
-        {
+        if (builtin.mode == .Debug) {
             var colors = try surface.split_x(-32, .none);
 
             try colors.apply_style(.{ .foreground_color = .from_theme(.default_background) });

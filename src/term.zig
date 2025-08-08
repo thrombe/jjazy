@@ -836,7 +836,12 @@ pub const TermInputIterator = struct {
                                     .ctrl = buttons & 0b0010000 > 0,
                                 };
 
-                                return Input{ .mouse = .{ .pos = .{ .x = cast(i32, x), .y = cast(i32, y) }, .key = button, .mod = mod, .action = action } };
+                                return Input{ .mouse = .{
+                                    .pos = .{ .x = cast(i32, x), .y = cast(i32, y) },
+                                    .key = button,
+                                    .mod = mod,
+                                    .action = action,
+                                } };
                             },
 
                             // focus events
@@ -872,11 +877,19 @@ pub const TermInputIterator = struct {
                             91...96, // [\]^_
                             123...126, // {|}~
                             => return Input{ .key = .{ .key = cast(u8, shifted_keycode orelse unicode_keycode), .mod = mod, .action = action } },
-                            else => return Input{ .functional = .{ .key = try std.meta.intToEnum(FunctionalKey, unicode_keycode), .mod = mod, .action = action } },
+                            else => return Input{ .functional = .{
+                                .key = try std.meta.intToEnum(FunctionalKey, unicode_keycode),
+                                .mod = mod,
+                                .action = action,
+                            } },
                         },
                         '~' => switch (unicode_keycode) {
                             13 => return Input{ .functional = .{ .key = .f3, .mod = mod, .action = action } },
-                            else => return Input{ .functional = .{ .key = try std.meta.intToEnum(FunctionalKey, unicode_keycode), .mod = mod, .action = action } },
+                            else => return Input{ .functional = .{
+                                .key = try std.meta.intToEnum(FunctionalKey, unicode_keycode),
+                                .mod = mod,
+                                .action = action,
+                            } },
                         },
                         else => if (unicode_keycode == 1) switch (end) {
                             'A' => return .{ .functional = .{ .key = .up, .mod = mod, .action = action } },
@@ -910,8 +923,8 @@ pub const TermInputIterator = struct {
                 // std.log.debug("non kitty kb event: {d}", .{c});
 
                 switch (c) {
+                    'A'...'Z' => return Input{ .key = .{ .key = cast(u8, c), .mod = .{ .shift = true } } },
                     'a'...'z',
-                    'A'...'Z',
                     '0'...'9',
                     ' ',
                     33...47, // !"#$%&'()*+,-./

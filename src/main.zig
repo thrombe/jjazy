@@ -777,6 +777,26 @@ const HelpSlate = struct {
             .action = .apply_jj_git_fetch,
             .help = "Git fetch",
         },
+        .{
+            .action = .switch_state_to_git_fetch,
+            .help = "jj git fetch a remote",
+        },
+        .{
+            .action = .apply_jj_git_push_all,
+            .help = "Git push all",
+        },
+        .{
+            .action = .switch_state_to_git_push,
+            .help = "Git push a bookmark",
+        },
+        .{
+            .action = .{ .apply_jj_git_push_selected = .{ .allow_new = false } },
+            .help = "Git push selected bookmark",
+        },
+        .{
+            .action = .{ .apply_jj_git_push_selected = .{ .allow_new = true } },
+            .help = "Git push selected bookmark (allow new)",
+        },
     };
 
     fn init(alloc: std.mem.Allocator) !@This() {
@@ -1143,6 +1163,10 @@ pub const Action = union(enum) {
     apply_jj_bookmark_forget: struct { include_remotes: bool },
     apply_jj_bookmark_create_from_input_buffer_on_selected_change,
     apply_jj_git_fetch,
+    apply_jj_git_push_all,
+    switch_state_to_git_fetch,
+    switch_state_to_git_push,
+    apply_jj_git_push_selected: struct { allow_new: bool },
 };
 
 pub const InputActionMap = struct {
@@ -1670,6 +1694,8 @@ pub const App = struct {
             defer map.reset();
             try map.for_states(&[_]State{
                 .{ .bookmark = .view },
+                .{ .git = .push },
+                .{ .git = .fetch },
             });
             try map.add_many(
                 &[_]Key{
@@ -1850,6 +1876,36 @@ pub const App = struct {
             .{ .git = .none },
             .{ .key = .{ .key = 'F', .mod = .{ .shift = true } } },
             .apply_jj_git_fetch,
+        );
+        try map.add_one_for_state(
+            .{ .git = .none },
+            .{ .key = .{ .key = 'P', .mod = .{ .shift = true } } },
+            .apply_jj_git_push_all,
+        );
+        try map.add_one_for_state(
+            .{ .git = .none },
+            .{ .key = .{ .key = 'f' } },
+            .switch_state_to_git_fetch,
+        );
+        try map.add_one_for_state(
+            .{ .git = .none },
+            .{ .key = .{ .key = 'p' } },
+            .switch_state_to_git_push,
+        );
+        try map.add_one_for_state(
+            .{ .git = .fetch },
+            .{ .functional = .{ .key = .enter } },
+            .apply_jj_git_fetch,
+        );
+        try map.add_one_for_state(
+            .{ .git = .push },
+            .{ .functional = .{ .key = .enter } },
+            .{ .apply_jj_git_push_selected = .{ .allow_new = false } },
+        );
+        try map.add_one_for_state(
+            .{ .git = .push },
+            .{ .functional = .{ .key = .enter, .mod = .{ .shift = true } } },
+            .{ .apply_jj_git_push_selected = .{ .allow_new = true } },
         );
 
         return map.build();
@@ -2399,16 +2455,59 @@ pub const App = struct {
                 },
                 .apply_jj_git_fetch => {
                     defer self.state = .log;
+                    var args = std.ArrayList([]const u8).init(temp);
+                    try args.append("jj");
+                    try args.append("git");
+                    try args.append("fetch");
 
-                    // TODO:
-                    //  support --branch
-                    //  support --remote
+                    if (self.state.git == .fetch) {
+                        const bookmark = try self.bookmarks.get_selected() orelse return;
+                        try args.append("--branch");
+                        try args.append(bookmark.parsed.name);
+                        if (bookmark.parsed.remote) |remote| {
+                            try args.append("--remote");
+                            try args.append(remote);
+                        }
+                    }
+
+                    try self.execute_non_interactive_command(args.items);
+                    try self.jj.requests.send(.log);
+                },
+                .apply_jj_git_push_all => {
+                    defer self.state = .log;
                     try self.execute_non_interactive_command(&[_][]const u8{
                         "jj",
                         "git",
-                        "fetch",
+                        "push",
+                        "--all",
                     });
                     try self.jj.requests.send(.log);
+                },
+                .apply_jj_git_push_selected => |v| {
+                    defer self.state = .log;
+                    const bookmark = try self.bookmarks.get_selected() orelse return;
+
+                    var args = std.ArrayList([]const u8).init(temp);
+                    try args.append("jj");
+                    try args.append("git");
+                    try args.append("push");
+                    try args.append("--bookmark");
+                    try args.append(bookmark.parsed.name);
+                    if (v.allow_new) {
+                        try args.append("--allow-new");
+                    } else if (bookmark.parsed.remote) |remote| {
+                        try args.append("--remote");
+                        try args.append(remote);
+                    }
+
+                    try self.execute_non_interactive_command(args.items);
+                    try self.jj.requests.send(.log);
+                },
+                .switch_state_to_git_fetch => {
+                    self.state = .{ .git = .fetch };
+                },
+                .switch_state_to_git_push => {
+                    self.state = .{ .git = .push };
                 },
             },
             // TODO: handle errors better
@@ -2599,7 +2698,10 @@ pub const App = struct {
                 .split_y(1, false).bottom
                 .border_sub(.{ .x = 2 });
 
-            if (self.state == .bookmark) {
+            if (self.state == .bookmark or
+                std.meta.eql(self.state, .{ .git = .push }) or
+                std.meta.eql(self.state, .{ .git = .fetch }))
+            {
                 const popup_size = Vec2{ .x = 60, .y = 30 };
                 const origin = max_popup_region.origin.add(max_popup_region.size.mul(0.5)).sub(popup_size.mul(0.5));
                 const region = max_popup_region.clamp(.{ .origin = origin, .size = popup_size });

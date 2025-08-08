@@ -30,6 +30,33 @@ pub inline fn cast(typ: type, val: anytype) typ {
     @compileError("can't cast from '" ++ @typeName(@TypeOf(val)) ++ "' to '" ++ @typeName(typ) ++ "'");
 }
 
+pub fn hash_update(hasher: anytype, val: anytype) void {
+    if (comptime std.meta.activeTag(@typeInfo(@TypeOf(hasher))) != .pointer) @compileError("you prob want to pass a pointer to hash_update() :/");
+
+    const T = @TypeOf(val);
+    const Ti = @typeInfo(T);
+    switch (Ti) {
+        inline .float, .int, .bool => hasher.update(&std.mem.toBytes(val)),
+        .array => for (val) |e| hash_update(hasher, e),
+        .@"struct" => |e| {
+            inline for (e.fields) |field| {
+                hash_update(hasher, @field(val, field.name));
+            }
+        },
+        .@"enum" => hash_update(hasher, @intFromEnum(val)),
+        .@"union" => |e| {
+            hash_update(hasher, std.meta.activeTag(val));
+            inline for (e.fields) |field| {
+                if (std.meta.activeTag(val) == std.meta.stringToEnum(std.meta.Tag(T), field.name)) {
+                    hash_update(hasher, @field(val, field.name));
+                }
+            }
+        },
+        .void => {},
+        else => @compileError("hash_update() for type '" ++ @typeName(T) ++ "' not supported"),
+    }
+}
+
 pub const FileLogger = struct {
     path: []const u8 = "./zig-out/log.log",
     file: ?std.fs.File = null,

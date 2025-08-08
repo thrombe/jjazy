@@ -943,7 +943,8 @@ const Toaster = struct {
             var height = utils_mod.LineIterator.init(e.msg).count_height();
             height += 2;
 
-            toast = try surface.split_y(-height, .gap);
+            toast = try surface.split_y(height, .gap);
+            std.mem.swap(Surface, &toast, surface);
 
             try toast.apply_style(.{ .foreground_color = .from_theme(if (e.err != null) .errors else .dim_text) });
             try toast.clear();

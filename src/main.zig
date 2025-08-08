@@ -1810,52 +1810,25 @@ pub const App = struct {
 
         const tropes: struct {
             global: bool = true,
-            escape_to_log: bool = true,
-            scroll_log: bool = false,
-            scroll_oplog: bool = false,
-            scroll_diff: bool = false,
-            scroll_bookmarks: bool = false,
-            resize_master: bool = false,
-            space_select: bool = false,
             colored_gutter_cursor: bool = false,
-            where_oba: bool = false,
             input_text: bool = false,
         } = switch (self.state) {
-            .log => .{
-                .scroll_log = true,
-                .scroll_diff = true,
-                .resize_master = true,
-            },
             .new, .squash, .abandon => .{
-                .scroll_log = true,
-                .scroll_diff = true,
-                .resize_master = true,
-                .space_select = true,
                 .colored_gutter_cursor = true,
             },
             .duplicate, .rebase => .{
-                .scroll_log = true,
-                .scroll_diff = true,
-                .resize_master = true,
-                .space_select = true,
                 .colored_gutter_cursor = true,
-                .where_oba = true,
-            },
-            .oplog => .{
-                .scroll_oplog = true,
             },
             .command => .{
                 .input_text = true,
             },
             .bookmark => |state| switch (state) {
-                .view => .{
-                    .scroll_bookmarks = true,
-                },
                 .new => .{
                     .input_text = true,
                 },
+                .view => .{},
             },
-            .git, .evlog => .{},
+            .oplog, .log, .git, .evlog => .{},
         };
 
         switch (event) {

@@ -802,24 +802,15 @@ const HelpSlate = struct {
         const temp = app.arena.allocator();
         const cmp = App.InputActionHashCtx{};
 
+        const HelpItem = struct {
+            key: []const u8,
+            desc: []const u8,
+        };
+        var help_items = std.ArrayList(HelpItem).init(temp);
         var scratch = std.ArrayList(u8).init(temp);
 
-        try surface.apply_style(.{ .foreground_color = .from_theme(.default_foreground) });
-        try surface.apply_style(.bold);
-
-        try surface.clear();
-        try surface.draw_border(symbols.thin.rounded);
-        try scratch.writer().print(" Help: {s} ", .{app.state.short_display()});
-        try surface.draw_border_heading(scratch.items);
-        try surface.apply_style(.reset);
-
-        const desc = surface;
-        var keys = try desc.split_x(20, .gap);
-        std.mem.swap(Surface, desc, &keys);
-
         var it = app.input_action_map.iterator();
-        while (!desc.is_full()) {
-            const iam = it.next() orelse break;
+        while (it.next()) |iam| {
             if (!cmp.eql_state(iam.key_ptr.state, app.state)) continue;
             const help = self.action_help_map.get(iam.value_ptr.*) orelse return error.MissingHelpEntry;
             switch (iam.key_ptr.input) {
@@ -827,7 +818,6 @@ const HelpSlate = struct {
                 else => continue,
             }
 
-            scratch.clearRetainingCapacity();
             switch (iam.key_ptr.input) {
                 inline .key, .functional, .mouse => |key| switch (key.action) {
                     .release => try scratch.writer().print("release ", .{}),
@@ -869,8 +859,42 @@ const HelpSlate = struct {
                 else => {},
             }
 
-            try keys.draw_bufln(scratch.items);
-            try desc.draw_bufln(help);
+            try help_items.append(.{ .key = try scratch.toOwnedSlice(), .desc = help });
+        }
+
+        const SortCtx = struct {
+            fn lessThan(_: @This(), lhs: HelpItem, rhs: HelpItem) bool {
+                if (std.mem.eql(u8, lhs.desc, rhs.desc)) {
+                    return std.mem.lessThan(u8, lhs.key, rhs.key);
+                }
+                return std.mem.lessThan(u8, lhs.desc, rhs.desc);
+            }
+        };
+        std.mem.sort(HelpItem, help_items.items, SortCtx{}, SortCtx.lessThan);
+
+        try surface.apply_style(.{ .foreground_color = .from_theme(.default_foreground) });
+        try surface.apply_style(.bold);
+
+        try surface.clear();
+        try surface.draw_border(symbols.thin.rounded);
+        try scratch.writer().print(" Help: {s} ", .{app.state.short_display()});
+        try surface.draw_border_heading(scratch.items);
+        try surface.apply_style(.reset);
+
+        const desc = surface;
+        var keys = try desc.split_x(20, .gap);
+        std.mem.swap(Surface, desc, &keys);
+
+        var i: u32 = 0;
+        while (!desc.is_full()) {
+            defer i += 1;
+            if (i >= help_items.items.len) {
+                break;
+            }
+            const item = help_items.items[i];
+
+            try keys.draw_bufln(item.key);
+            try desc.draw_bufln(item.desc);
         }
     }
 };

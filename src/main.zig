@@ -884,7 +884,7 @@ pub const App = struct {
         apply_jj_duplicate,
         switch_state_to_bookmark_new,
         new_commit_from_bookmark,
-        move_bookmark_to_selected: struct { force: bool },
+        move_bookmark_to_selected: struct { allow_backwards: bool },
         apply_jj_bookmark_delete,
         apply_jj_bookmark_forget: struct { include_remotes: bool },
         apply_jj_bookmark_create_from_input_buffer_on_selected_change,
@@ -1420,11 +1420,11 @@ pub const App = struct {
         try map.put(.{
             .state = .{ .bookmark = .view },
             .input = .{ .key = .{ .key = 'm', .action = .press } },
-        }, .{ .move_bookmark_to_selected = .{ .force = false } });
+        }, .{ .move_bookmark_to_selected = .{ .allow_backwards = false } });
         try map.put(.{
             .state = .{ .bookmark = .view },
             .input = .{ .key = .{ .key = 'M', .action = .press, .mod = .{ .shift = true } } },
-        }, .{ .move_bookmark_to_selected = .{ .force = true } });
+        }, .{ .move_bookmark_to_selected = .{ .allow_backwards = true } });
         try map.put(.{
             .state = .{ .bookmark = .view },
             .input = .{ .key = .{ .key = 'd', .action = .press } },
@@ -1922,7 +1922,7 @@ pub const App = struct {
                     });
                     try self.jj.requests.send(.log);
                 },
-                .move_bookmark_to_selected => |force| {
+                .move_bookmark_to_selected => |v| {
                     defer self.state = .log;
                     const bookmark = try self.bookmarks.get_selected() orelse return;
 
@@ -1933,7 +1933,7 @@ pub const App = struct {
                     try args.append(bookmark.parsed.name);
                     try args.append("--to");
                     try args.append(self.log.focused_change.id[0..]);
-                    if (force.force) {
+                    if (v.allow_backwards) {
                         try args.append("--allow-backwards");
                     }
 

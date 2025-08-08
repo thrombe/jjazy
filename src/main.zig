@@ -576,11 +576,6 @@ const HelpSlate = struct {
     action_help_map: ActionHelpMap,
 
     const ActionHelpMap = std.AutoHashMap(App.Action, []const u8);
-    const HelpEntry = struct {
-        state: App.State,
-        key: term_mod.TermInputIterator.Input,
-        action: App.Action,
-    };
 
     const action_help = [_]struct {
         action: App.Action,
@@ -1060,6 +1055,7 @@ pub const App = struct {
     input_thread: std.Thread,
     input_iterator: term_mod.TermInputIterator,
     events: utils_mod.Channel(Event),
+    input_action_map: InputActionMap,
 
     sleeper: *Sleeper,
     jj: *jj_mod.JujutsuServer,
@@ -1083,8 +1079,6 @@ pub const App = struct {
     rerender_pending_count: u64 = 0,
     render_count: u64 = 0,
     last_hash: u64 = 0,
-
-    input_action_map: InputActionMap,
 
     const InputActionState = struct { state: State, input: term_mod.TermInputIterator.Input };
     const InputActionHashCtx = struct {
@@ -1734,23 +1728,23 @@ pub const App = struct {
         }
         try map.put(.{
             .state = .abandon,
-            .input = .{ .functional = .{ .key = .enter, .action = .press } },
+            .input = .{ .functional = .{ .key = .enter } },
         }, .apply_jj_abandon);
         try map.put(.{
             .state = .squash,
-            .input = .{ .functional = .{ .key = .enter, .action = .press } },
+            .input = .{ .functional = .{ .key = .enter } },
         }, .apply_jj_squash);
         try map.put(.{
             .state = .new,
-            .input = .{ .functional = .{ .key = .enter, .action = .press } },
+            .input = .{ .functional = .{ .key = .enter } },
         }, .apply_jj_new);
         try map.put(.{
             .state = .command,
-            .input = .{ .functional = .{ .key = .enter, .action = .press } },
+            .input = .{ .functional = .{ .key = .enter } },
         }, .execute_command_in_input_buffer);
         try map.put(.{
             .state = .oplog,
-            .input = .{ .key = .{ .key = 'r', .action = .press } },
+            .input = .{ .key = .{ .key = 'r' } },
         }, .apply_jj_op_restore);
         {
             defer states.clearRetainingCapacity();
@@ -1759,45 +1753,45 @@ pub const App = struct {
             try states.append(.{ .duplicate = .before });
 
             for (states.items) |state| try map.put(
-                .{ .state = state, .input = .{ .functional = .{ .key = .enter, .action = .press } } },
+                .{ .state = state, .input = .{ .functional = .{ .key = .enter } } },
                 .apply_jj_duplicate,
             );
         }
         try map.put(.{
             .state = .{ .bookmark = .view },
-            .input = .{ .key = .{ .key = 'n', .action = .press } },
+            .input = .{ .key = .{ .key = 'n' } },
         }, .switch_state_to_bookmark_new);
         try map.put(.{
             .state = .{ .bookmark = .view },
-            .input = .{ .key = .{ .key = 'e', .action = .press } },
+            .input = .{ .key = .{ .key = 'e' } },
         }, .new_commit_from_bookmark);
         try map.put(.{
             .state = .{ .bookmark = .view },
-            .input = .{ .key = .{ .key = 'm', .action = .press } },
+            .input = .{ .key = .{ .key = 'm' } },
         }, .{ .move_bookmark_to_selected = .{ .allow_backwards = false } });
         try map.put(.{
             .state = .{ .bookmark = .view },
-            .input = .{ .key = .{ .key = 'M', .action = .press, .mod = .{ .shift = true } } },
+            .input = .{ .key = .{ .key = 'M', .mod = .{ .shift = true } } },
         }, .{ .move_bookmark_to_selected = .{ .allow_backwards = true } });
         try map.put(.{
             .state = .{ .bookmark = .view },
-            .input = .{ .key = .{ .key = 'd', .action = .press } },
+            .input = .{ .key = .{ .key = 'd' } },
         }, .apply_jj_bookmark_delete);
         try map.put(.{
             .state = .{ .bookmark = .view },
-            .input = .{ .key = .{ .key = 'f', .action = .press } },
+            .input = .{ .key = .{ .key = 'f' } },
         }, .{ .apply_jj_bookmark_forget = .{ .include_remotes = false } });
         try map.put(.{
             .state = .{ .bookmark = .view },
-            .input = .{ .key = .{ .key = 'F', .action = .press, .mod = .{ .shift = true } } },
+            .input = .{ .key = .{ .key = 'F', .mod = .{ .shift = true } } },
         }, .{ .apply_jj_bookmark_forget = .{ .include_remotes = true } });
         try map.put(.{
             .state = .{ .bookmark = .new },
-            .input = .{ .functional = .{ .key = .enter, .action = .press } },
+            .input = .{ .functional = .{ .key = .enter } },
         }, .apply_jj_bookmark_create_from_input_buffer_on_selected_change);
         try map.put(.{
             .state = .{ .git = .none },
-            .input = .{ .key = .{ .key = 'F', .action = .press, .mod = .{ .shift = true } } },
+            .input = .{ .key = .{ .key = 'F', .mod = .{ .shift = true } } },
         }, .apply_jj_git_fetch);
 
         return map;

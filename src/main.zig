@@ -1383,7 +1383,7 @@ pub const App = struct {
             try states.append(.squash);
             try states.append(.abandon);
 
-            for (states.items) |state| try map.put(
+            if (builtin.mode == .Debug) for (states.items) |state| try map.put(
                 .{ .state = state, .input = .{ .functional = .{ .key = .escape, .mod = .{ .ctrl = true } } } },
                 .trigger_breakpoint,
             );
@@ -1414,7 +1414,7 @@ pub const App = struct {
             try states.append(.squash);
             try states.append(.abandon);
 
-            {
+            if (builtin.mode == .Debug) {
                 defer keys.clearRetainingCapacity();
                 try keys.append(.{ .key = .{ .key = '1' } });
                 for (states.items) |state| for (keys.items) |key| try map.put(
@@ -1422,7 +1422,7 @@ pub const App = struct {
                     .{ .fancy_terminal_features_that_break_gdb = .enable },
                 );
             }
-            {
+            if (builtin.mode == .Debug) {
                 defer keys.clearRetainingCapacity();
                 try keys.append(.{ .key = .{ .key = '1', .mod = .{ .ctrl = true } } });
                 for (states.items) |state| for (keys.items) |key| try map.put(

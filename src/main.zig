@@ -857,8 +857,8 @@ pub const App = struct {
         fancy_terminal_features_that_break_gdb: enum { enable, disable },
         trigger_breakpoint,
         refresh_master_content,
-        scroll: struct { target: enum { log, oplog, diff, bookmarks }, offset: i32 },
-        resize_master: f32,
+        scroll: struct { target: enum { log, oplog, diff, bookmarks }, dir: enum { up, down } },
+        resize_master: enum { left, right },
         escape_to_log,
         select_focused_change,
         set_where: Where,
@@ -1162,7 +1162,7 @@ pub const App = struct {
                 try keys.append(.{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .repeat } });
                 for (states.items) |state| for (keys.items) |key| try map.put(
                     .{ .state = state, .input = key },
-                    .{ .scroll = .{ .target = .log, .offset = 1 } },
+                    .{ .scroll = .{ .target = .log, .dir = .down } },
                 );
             }
             {
@@ -1173,7 +1173,7 @@ pub const App = struct {
                 try keys.append(.{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .repeat } });
                 for (states.items) |state| for (keys.items) |key| try map.put(
                     .{ .state = state, .input = key },
-                    .{ .scroll = .{ .target = .log, .offset = -1 } },
+                    .{ .scroll = .{ .target = .log, .dir = .up } },
                 );
             }
             {
@@ -1182,7 +1182,7 @@ pub const App = struct {
                 try keys.append(.{ .key = .{ .key = 'j', .action = .repeat, .mod = .{ .ctrl = true } } });
                 for (states.items) |state| for (keys.items) |key| try map.put(
                     .{ .state = state, .input = key },
-                    .{ .scroll = .{ .target = .diff, .offset = 10 } },
+                    .{ .scroll = .{ .target = .diff, .dir = .down } },
                 );
             }
             {
@@ -1191,7 +1191,7 @@ pub const App = struct {
                 try keys.append(.{ .key = .{ .key = 'k', .action = .repeat, .mod = .{ .ctrl = true } } });
                 for (states.items) |state| for (keys.items) |key| try map.put(
                     .{ .state = state, .input = key },
-                    .{ .scroll = .{ .target = .diff, .offset = -10 } },
+                    .{ .scroll = .{ .target = .diff, .dir = .up } },
                 );
             }
             {
@@ -1200,7 +1200,7 @@ pub const App = struct {
                 try keys.append(.{ .key = .{ .key = 'h', .action = .repeat, .mod = .{ .ctrl = true } } });
                 for (states.items) |state| for (keys.items) |key| try map.put(
                     .{ .state = state, .input = key },
-                    .{ .resize_master = -0.05 },
+                    .{ .resize_master = .left },
                 );
             }
             {
@@ -1209,7 +1209,7 @@ pub const App = struct {
                 try keys.append(.{ .key = .{ .key = 'l', .action = .repeat, .mod = .{ .ctrl = true } } });
                 for (states.items) |state| for (keys.items) |key| try map.put(
                     .{ .state = state, .input = key },
-                    .{ .resize_master = 0.05 },
+                    .{ .resize_master = .right },
                 );
             }
         }
@@ -1225,7 +1225,7 @@ pub const App = struct {
                 try keys.append(.{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .repeat } });
                 for (states.items) |state| for (keys.items) |key| try map.put(
                     .{ .state = state, .input = key },
-                    .{ .scroll = .{ .target = .oplog, .offset = 1 } },
+                    .{ .scroll = .{ .target = .oplog, .dir = .down } },
                 );
             }
             {
@@ -1236,7 +1236,7 @@ pub const App = struct {
                 try keys.append(.{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .repeat } });
                 for (states.items) |state| for (keys.items) |key| try map.put(
                     .{ .state = state, .input = key },
-                    .{ .scroll = .{ .target = .oplog, .offset = -1 } },
+                    .{ .scroll = .{ .target = .oplog, .dir = .up } },
                 );
             }
         }
@@ -1306,7 +1306,7 @@ pub const App = struct {
                 try keys.append(.{ .key = .{ .key = 'j', .action = .repeat } });
                 for (states.items) |state| for (keys.items) |key| try map.put(
                     .{ .state = state, .input = key },
-                    .{ .scroll = .{ .target = .bookmarks, .offset = 1 } },
+                    .{ .scroll = .{ .target = .bookmarks, .dir = .down } },
                 );
             }
             {
@@ -1315,7 +1315,7 @@ pub const App = struct {
                 try keys.append(.{ .key = .{ .key = 'k', .action = .repeat } });
                 for (states.items) |state| for (keys.items) |key| try map.put(
                     .{ .state = state, .input = key },
-                    .{ .scroll = .{ .target = .bookmarks, .offset = -1 } },
+                    .{ .scroll = .{ .target = .bookmarks, .dir = .up } },
                 );
             }
         }
@@ -1628,28 +1628,37 @@ pub const App = struct {
                 },
                 .scroll => |target| switch (target.target) {
                     .log => {
-                        self.log.y += target.offset;
+                        switch (target.dir) {
+                            .up => self.log.y -= 1,
+                            .down => self.log.y += 1,
+                        }
                         try self._send_event(.diff_update);
                     },
                     .oplog => {
-                        self.oplog.y += target.offset;
+                        switch (target.dir) {
+                            .up => self.oplog.y -= 1,
+                            .down => self.oplog.y += 1,
+                        }
                         try self._send_event(.op_update);
                     },
                     .diff => {
                         if (self.diff.diffcache.getPtr(self.log.focused_change.hash)) |diff| {
-                            diff.y += target.offset;
+                            switch (target.dir) {
+                                .up => diff.y -= 10,
+                                .down => diff.y += 10,
+                            }
                         }
                     },
                     .bookmarks => {
-                        if (target.offset < 0) {
-                            self.bookmarks.index -|= cast(u32, -target.offset);
-                        } else {
-                            self.bookmarks.index += cast(u32, target.offset);
+                        switch (target.dir) {
+                            .up => self.bookmarks.index -|= 1,
+                            .down => self.bookmarks.index += 1,
                         }
                     },
                 },
-                .resize_master => |offset| {
-                    self.x_split += offset;
+                .resize_master => |dir| switch (dir) {
+                    .left => self.x_split -= 0.05,
+                    .right => self.x_split += 0.05,
                 },
                 .escape_to_log => {
                     self.log.selected_changes.clearRetainingCapacity();

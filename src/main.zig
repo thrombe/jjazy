@@ -643,7 +643,7 @@ const HelpSlate = struct {
             .help = "Increase master area",
         },
         .{
-            .action = .escape_to_log,
+            .action = .switch_state_to_log,
             .help = "Return to default mode",
         },
         .{
@@ -673,6 +673,10 @@ const HelpSlate = struct {
         .{
             .action = .jj_edit,
             .help = "jj edit",
+        },
+        .{
+            .action = .switch_state_to_git,
+            .help = "Git commands",
         },
         .{
             .action = .switch_state_to_rebase_onto,
@@ -816,6 +820,10 @@ const HelpSlate = struct {
             switch (iam.key_ptr.input) {
                 inline .key, .functional, .mouse => |key| if (key.action == .repeat) continue,
                 else => continue,
+            }
+            switch (iam.value_ptr.*) {
+                .show_help => continue,
+                else => {},
             }
 
             switch (iam.key_ptr.input) {
@@ -1139,6 +1147,7 @@ pub const App = struct {
             new,
         },
         git: enum {
+            none,
             fetch,
             push,
         },
@@ -1151,11 +1160,15 @@ pub const App = struct {
 
         inline fn short_display(self: @This()) []const u8 {
             return switch (self) {
-                inline .rebase, .git, .duplicate => |_p, t| switch (_p) {
+                inline .rebase, .duplicate => |_p, t| switch (_p) {
                     inline else => |p| @tagName(t) ++ "." ++ @tagName(p),
                 },
                 inline .bookmark => |_p, t| switch (_p) {
                     inline .view => @tagName(t),
+                    inline else => |p| @tagName(t) ++ "." ++ @tagName(p),
+                },
+                inline .git => |_p, t| switch (_p) {
+                    inline .none => @tagName(t),
                     inline else => |p| @tagName(t) ++ "." ++ @tagName(p),
                 },
                 inline else => |_, t| @tagName(t),
@@ -1189,12 +1202,13 @@ pub const App = struct {
         refresh_master_content,
         scroll: struct { target: enum { log, oplog, diff, bookmarks }, dir: enum { up, down } },
         resize_master: enum { left, right },
-        escape_to_log,
+        switch_state_to_log,
         select_focused_change,
         set_where: Where,
         send_quit_event,
         switch_state_to_new,
         jj_edit,
+        switch_state_to_git,
         switch_state_to_rebase_onto,
         switch_state_to_squash,
         switch_state_to_abandon,
@@ -1407,6 +1421,7 @@ pub const App = struct {
             try states.append(.command);
             try states.append(.{ .bookmark = .view });
             try states.append(.{ .bookmark = .new });
+            try states.append(.{ .git = .none });
             try states.append(.{ .git = .fetch });
             try states.append(.{ .git = .push });
             try states.append(.{ .rebase = .onto });
@@ -1429,7 +1444,7 @@ pub const App = struct {
             );
             for (states.items) |state| try map.put(
                 .{ .state = state, .input = .{ .functional = .{ .key = .escape } } },
-                .escape_to_log,
+                .switch_state_to_log,
             );
         }
         {
@@ -1438,6 +1453,7 @@ pub const App = struct {
             try states.append(.oplog);
             try states.append(.{ .evlog = .{} });
             try states.append(.{ .bookmark = .view });
+            try states.append(.{ .git = .none });
             try states.append(.{ .git = .fetch });
             try states.append(.{ .git = .push });
             try states.append(.{ .rebase = .onto });
@@ -1667,6 +1683,10 @@ pub const App = struct {
         }, .jj_edit);
         try map.put(.{
             .state = .log,
+            .input = .{ .key = .{ .key = 'g' } },
+        }, .switch_state_to_git);
+        try map.put(.{
+            .state = .log,
             .input = .{ .key = .{ .key = 'r' } },
         }, .switch_state_to_rebase_onto);
         try map.put(.{
@@ -1776,8 +1796,8 @@ pub const App = struct {
             .input = .{ .functional = .{ .key = .enter, .action = .press } },
         }, .apply_jj_bookmark_create_from_input_buffer_on_selected_change);
         try map.put(.{
-            .state = .{ .git = .fetch },
-            .input = .{ .functional = .{ .key = .enter, .action = .press } },
+            .state = .{ .git = .none },
+            .input = .{ .key = .{ .key = 'F', .action = .press, .mod = .{ .shift = true } } },
         }, .apply_jj_git_fetch);
 
         return map;
@@ -1967,7 +1987,7 @@ pub const App = struct {
                     .left => self.x_split -= 0.05,
                     .right => self.x_split += 0.05,
                 },
-                .escape_to_log => {
+                .switch_state_to_log => {
                     self.log.selected_changes.clearRetainingCapacity();
                     self.state = .log;
                     self.show_help = false;
@@ -1999,6 +2019,10 @@ pub const App = struct {
                         self.log.focused_change.id[0..],
                     });
                     try self.jj.requests.send(.log);
+                },
+                .switch_state_to_git => {
+                    self.state = .{ .git = .none };
+                    // self.show_help = true;
                 },
                 .switch_state_to_rebase_onto => {
                     self.state = .{ .rebase = .onto };

@@ -822,8 +822,19 @@ const HelpSlate = struct {
             const iam = it.next() orelse break;
             if (!cmp.eql_state(iam.key_ptr.state, app.state)) continue;
             const help = self.action_help_map.get(iam.value_ptr.*) orelse return error.MissingHelpEntry;
+            switch (iam.key_ptr.input) {
+                inline .key, .functional, .mouse => |key| if (key.action == .repeat) continue,
+                else => continue,
+            }
 
             scratch.clearRetainingCapacity();
+            switch (iam.key_ptr.input) {
+                inline .key, .functional, .mouse => |key| switch (key.action) {
+                    .release => try scratch.writer().print("release ", .{}),
+                    .repeat, .none, .press => {},
+                },
+                else => {},
+            }
             switch (iam.key_ptr.input) {
                 .key => |key| {
                     inline for (std.meta.fields(@TypeOf(key.mod))) |field| {
@@ -855,7 +866,7 @@ const HelpSlate = struct {
                 .mouse => |key| {
                     try scratch.writer().print("mouse {s}", .{@tagName(key.key)});
                 },
-                else => continue,
+                else => {},
             }
 
             try keys.draw_bufln(scratch.items);

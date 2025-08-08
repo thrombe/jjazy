@@ -771,47 +771,59 @@ pub const App = struct {
     input_action_map: InputActionMap,
 
     const InputActionState = struct { state: State, input: term_mod.TermInputIterator.Input };
-    const InputActionMap = std.HashMap(InputActionState, Action, struct {
+    const InputActionHashCtx = struct {
+        fn hash_input(hasher: anytype, input: term_mod.TermInputIterator.Input) void {
+            switch (input) {
+                .mouse => |key| {
+                    utils_mod.hash_update(hasher, key.key);
+                    utils_mod.hash_update(hasher, key.mod);
+                    utils_mod.hash_update(hasher, key.action);
+                },
+                else => utils_mod.hash_update(hasher, input),
+            }
+        }
+        fn hash_state(hasher: anytype, state: State) void {
+            switch (state) {
+                inline .oplog => |_, t| utils_mod.hash_update(hasher, t),
+                else => |t| utils_mod.hash_update(hasher, t),
+            }
+        }
+        fn eql_input(a: term_mod.TermInputIterator.Input, b: @TypeOf(a)) bool {
+            if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
+            switch (a) {
+                .mouse => {
+                    // TODO: mouse pos can't be handled in InputActionMap :/
+                    // a.mouse.pos;
+
+                    if (!std.meta.eql(a.mouse.key, b.mouse.key)) return false;
+                    if (!std.meta.eql(a.mouse.mod, b.mouse.mod)) return false;
+                    if (!std.meta.eql(a.mouse.action, b.mouse.action)) return false;
+                    return true;
+                },
+                else => return std.meta.eql(a, b),
+            }
+        }
+        fn eql_state(a: State, b: @TypeOf(a)) bool {
+            switch (a) {
+                inline .oplog => return std.meta.activeTag(a) == std.meta.activeTag(b),
+                else => return std.meta.eql(a, b),
+            }
+        }
+
         pub fn hash(self: @This(), input: InputActionState) u64 {
             _ = self;
 
             var hasher = std.hash.Wyhash.init(0);
-
-            utils_mod.hash_update(&hasher, input);
-
-            switch (input.state) {
-                inline .oplog => |_, t| utils_mod.hash_update(&hasher, t),
-                else => |t| utils_mod.hash_update(&hasher, t),
-            }
-            switch (input.input) {
-                .mouse => |key| {
-                    utils_mod.hash_update(&hasher, key.key);
-                    utils_mod.hash_update(&hasher, key.mod);
-                    utils_mod.hash_update(&hasher, key.action);
-                },
-                else => utils_mod.hash_update(&hasher, input.input),
-            }
-
+            hash_input(&hasher, input.input);
+            hash_state(&hasher, input.state);
             return hasher.final();
         }
         pub fn eql(self: @This(), a: InputActionState, b: InputActionState) bool {
             _ = self;
-            switch (a.state) {
-                inline .oplog => return std.meta.activeTag(a.state) == std.meta.activeTag(b.state),
-                else => return std.meta.eql(a.state, b.state),
-            }
-            switch (a.input) {
-                .mouse => {
-                    if (!std.meta.activeTag(a.input) == std.meta.activeTag(b.input)) return false;
-                    if (!std.meta.eql(a.input.mouse.key, b.input.mouse.key)) return false;
-                    if (!std.meta.eql(a.input.mouse.mod, b.input.mouse.mod)) return false;
-                    if (!std.meta.eql(a.input.mouse.action, b.input.mouse.action)) return false;
-                    return true;
-                },
-                else => std.meta.eql(a.input, b.input),
-            }
+            return eql_input(a.input, b.input) and eql_state(a.state, b.state);
         }
-    }, std.hash_map.default_max_load_percentage);
+    };
+    const InputActionMap = std.HashMap(InputActionState, Action, InputActionHashCtx, std.hash_map.default_max_load_percentage);
 
     pub const State = union(enum(u8)) {
         log,

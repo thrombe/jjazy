@@ -777,21 +777,38 @@ pub const App = struct {
 
             var hasher = std.hash.Wyhash.init(0);
 
+            utils_mod.hash_update(&hasher, input);
+
             switch (input.state) {
-                inline .oplog => |_, t| hasher.update(&std.mem.toBytes(t)),
-                else => |t| hasher.update(&std.mem.toBytes(t)),
+                inline .oplog => |_, t| utils_mod.hash_update(&hasher, t),
+                else => |t| utils_mod.hash_update(&hasher, t),
             }
-            hasher.update(&std.mem.toBytes(input.input));
+            switch (input.input) {
+                .mouse => |key| {
+                    utils_mod.hash_update(&hasher, key.key);
+                    utils_mod.hash_update(&hasher, key.mod);
+                    utils_mod.hash_update(&hasher, key.action);
+                },
+                else => utils_mod.hash_update(&hasher, input.input),
+            }
 
             return hasher.final();
         }
         pub fn eql(self: @This(), a: InputActionState, b: InputActionState) bool {
             _ = self;
-            if (!std.meta.eql(a.input, b.input)) return false;
-
             switch (a.state) {
-                .oplog => return b.state == .oplog,
+                inline .oplog => return std.meta.activeTag(a.state) == std.meta.activeTag(b.state),
                 else => return std.meta.eql(a.state, b.state),
+            }
+            switch (a.input) {
+                .mouse => {
+                    if (!std.meta.activeTag(a.input) == std.meta.activeTag(b.input)) return false;
+                    if (!std.meta.eql(a.input.mouse.key, b.input.mouse.key)) return false;
+                    if (!std.meta.eql(a.input.mouse.mod, b.input.mouse.mod)) return false;
+                    if (!std.meta.eql(a.input.mouse.action, b.input.mouse.action)) return false;
+                    return true;
+                },
+                else => std.meta.eql(a.input, b.input),
             }
         }
     }, std.hash_map.default_max_load_percentage);
@@ -1161,10 +1178,8 @@ pub const App = struct {
             }
             {
                 defer keys.clearRetainingCapacity();
-                try keys.append(.{ .key = .{ .key = 'j', .action = .press } });
-                try keys.append(.{ .key = .{ .key = 'j', .action = .repeat } });
-                try keys.append(.{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .press } });
-                try keys.append(.{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .repeat } });
+                try keys.append(.{ .key = .{ .key = 'j', .action = .press, .mod = .{ .ctrl = true } } });
+                try keys.append(.{ .key = .{ .key = 'j', .action = .repeat, .mod = .{ .ctrl = true } } });
                 for (states.items) |state| for (keys.items) |key| try map.put(
                     .{ .state = state, .input = key },
                     .{ .scroll = .{ .target = .diff, .offset = 10 } },
@@ -1172,10 +1187,8 @@ pub const App = struct {
             }
             {
                 defer keys.clearRetainingCapacity();
-                try keys.append(.{ .key = .{ .key = 'k', .action = .press } });
-                try keys.append(.{ .key = .{ .key = 'k', .action = .repeat } });
-                try keys.append(.{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .press } });
-                try keys.append(.{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .repeat } });
+                try keys.append(.{ .key = .{ .key = 'k', .action = .press, .mod = .{ .ctrl = true } } });
+                try keys.append(.{ .key = .{ .key = 'k', .action = .repeat, .mod = .{ .ctrl = true } } });
                 for (states.items) |state| for (keys.items) |key| try map.put(
                     .{ .state = state, .input = key },
                     .{ .scroll = .{ .target = .diff, .offset = -10 } },

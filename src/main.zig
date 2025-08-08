@@ -742,7 +742,7 @@ const HelpSlate = struct {
             .help = "apply jj duplicate",
         },
         .{
-            .action = .switch_state_to_bookmark_new,
+            .action = .switch_state_to_bookmark_create,
             .help = "Create new bookmark",
         },
         .{
@@ -1138,7 +1138,7 @@ pub const App = struct {
         evlog: jj_mod.Change,
         bookmark: enum {
             view,
-            new,
+            create,
         },
         git: enum {
             none,
@@ -1220,7 +1220,7 @@ pub const App = struct {
         execute_command_in_input_buffer,
         apply_jj_op_restore,
         apply_jj_duplicate,
-        switch_state_to_bookmark_new,
+        switch_state_to_bookmark_create,
         new_commit_from_bookmark,
         move_bookmark_to_selected: struct { allow_backwards: bool },
         apply_jj_bookmark_delete,
@@ -1414,7 +1414,7 @@ pub const App = struct {
             try states.append(.{ .evlog = .{} });
             try states.append(.command);
             try states.append(.{ .bookmark = .view });
-            try states.append(.{ .bookmark = .new });
+            try states.append(.{ .bookmark = .create });
             try states.append(.{ .git = .none });
             try states.append(.{ .git = .fetch });
             try states.append(.{ .git = .push });
@@ -1760,11 +1760,11 @@ pub const App = struct {
         }
         try map.put(.{
             .state = .{ .bookmark = .view },
-            .input = .{ .key = .{ .key = 'n' } },
-        }, .switch_state_to_bookmark_new);
+            .input = .{ .key = .{ .key = 'c' } },
+        }, .switch_state_to_bookmark_create);
         try map.put(.{
             .state = .{ .bookmark = .view },
-            .input = .{ .key = .{ .key = 'e' } },
+            .input = .{ .key = .{ .key = 'n' } },
         }, .new_commit_from_bookmark);
         try map.put(.{
             .state = .{ .bookmark = .view },
@@ -1787,7 +1787,7 @@ pub const App = struct {
             .input = .{ .key = .{ .key = 'F', .mod = .{ .shift = true } } },
         }, .{ .apply_jj_bookmark_forget = .{ .include_remotes = true } });
         try map.put(.{
-            .state = .{ .bookmark = .new },
+            .state = .{ .bookmark = .create },
             .input = .{ .functional = .{ .key = .enter } },
         }, .apply_jj_bookmark_create_from_input_buffer_on_selected_change);
         try map.put(.{
@@ -1839,7 +1839,7 @@ pub const App = struct {
                 .input_text = true,
             },
             .bookmark => |state| switch (state) {
-                .new => .{
+                .create => .{
                     .input_text = true,
                 },
                 .view => .{},
@@ -2223,8 +2223,8 @@ pub const App = struct {
 
                     try self.jj.requests.send(.log);
                 },
-                .switch_state_to_bookmark_new => {
-                    self.state = .{ .bookmark = .new };
+                .switch_state_to_bookmark_create => {
+                    self.state = .{ .bookmark = .create };
                 },
                 .new_commit_from_bookmark => {
                     defer {
@@ -2548,7 +2548,7 @@ pub const App = struct {
                 try self.bookmarks.render(&surface);
             }
 
-            if (self.state == .command or (self.state == .bookmark and self.state.bookmark == .new)) {
+            if (self.state == .command or (self.state == .bookmark and self.state.bookmark == .create)) {
                 const popup_size = Vec2{ .x = 55, .y = 5 };
                 const origin = max_popup_region.origin.add(max_popup_region.size.mul(0.5)).sub(popup_size.mul(0.5));
                 const region = max_popup_region.clamp(.{ .origin = origin, .size = popup_size });

@@ -1479,6 +1479,7 @@ pub const App = struct {
             {
                 defer keys.clearRetainingCapacity();
                 try keys.append(.{ .key = .{ .key = '?', .mod = .{ .shift = true } } });
+                try keys.append(.{ .key = .{ .key = '?' } }); // zellij does not pass .shift = true with '?'
                 for (states.items) |state| for (keys.items) |key| try map.put(
                     .{ .state = state, .input = key },
                     .show_help,

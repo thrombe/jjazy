@@ -984,6 +984,7 @@ pub const App = struct {
         defer self.diff.deinit();
         defer self.bookmarks.deinit();
         defer self.help.deinit();
+        defer self.toaster.deinit();
         defer self.text_input.deinit();
         defer self.input_action_map.deinit();
         defer self.arena.deinit();

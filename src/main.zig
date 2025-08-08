@@ -2594,11 +2594,12 @@ pub const App = struct {
     }
 
     fn execute_non_interactive_command(self: *@This(), args: []const []const u8) !void {
-        // const _err_buf = try self._execute_non_interactive_command(args);
-        // if (_err_buf) |err_buf| try self._err_toast(error.CommandExecutionError, err_buf);
+        const _err_buf = try self._execute_non_interactive_command(args);
+        if (_err_buf) |err_buf| try self._err_toast(error.CommandExecutionError, err_buf);
 
         // better error messages. nothing bad. so i just do this for now :|
-        try self.execute_interactive_command(args);
+        // OOF: some jj commands print output when successful. so this mode will dump output in real stdout :/
+        // try self.execute_interactive_command(args);
     }
 
     fn _execute_non_interactive_command(self: *@This(), args: []const []const u8) !?[]const u8 {

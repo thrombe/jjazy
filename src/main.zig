@@ -572,23 +572,295 @@ const BookmarkSlate = struct {
 };
 
 const HelpSlate = struct {
+    alloc: std.mem.Allocator,
+    action_help_map: ActionHelpMap,
+
+    const ActionHelpMap = std.AutoHashMap(App.Action, []const u8);
+    const HelpEntry = struct {
+        state: App.State,
+        key: term_mod.TermInputIterator.Input,
+        action: App.Action,
+    };
+
+    const action_help = [_]struct {
+        action: App.Action,
+        help: []const u8,
+    }{
+        .{
+            .action = .{ .fancy_terminal_features_that_break_gdb = .enable },
+            .help = "Enable fancy features that break gdb",
+        },
+        .{
+            .action = .{ .fancy_terminal_features_that_break_gdb = .disable },
+            .help = "Disable fancy features that break gdb",
+        },
+        .{
+            .action = .trigger_breakpoint,
+            .help = "Trigger breakpoint",
+        },
+        .{
+            .action = .refresh_master_content,
+            .help = "Refresh Master Content",
+        },
+        .{
+            .action = .{ .scroll = .{ .target = .log, .dir = .up } },
+            .help = "Scroll up logs",
+        },
+        .{
+            .action = .{ .scroll = .{ .target = .log, .dir = .down } },
+            .help = "Scroll down logs",
+        },
+        .{
+            .action = .{ .scroll = .{ .target = .oplog, .dir = .up } },
+            .help = "Scroll up operation logs",
+        },
+        .{
+            .action = .{ .scroll = .{ .target = .oplog, .dir = .down } },
+            .help = "Scroll down operation logs",
+        },
+        .{
+            .action = .{ .scroll = .{ .target = .bookmarks, .dir = .up } },
+            .help = "Scroll up bookmarks",
+        },
+        .{
+            .action = .{ .scroll = .{ .target = .bookmarks, .dir = .down } },
+            .help = "Scroll down bookmarks",
+        },
+        .{
+            .action = .{ .scroll = .{ .target = .diff, .dir = .up } },
+            .help = "Scroll up diff",
+        },
+        .{
+            .action = .{ .scroll = .{ .target = .diff, .dir = .down } },
+            .help = "Scroll up diff",
+        },
+        .{
+            .action = .{ .resize_master = .left },
+            .help = "Decrease master area",
+        },
+        .{
+            .action = .{ .resize_master = .right },
+            .help = "Increase master area",
+        },
+        .{
+            .action = .escape_to_log,
+            .help = "Return to default mode",
+        },
+        .{
+            .action = .select_focused_change,
+            .help = "Select focused change",
+        },
+        .{
+            .action = .{ .set_where = .onto },
+            .help = "Apply current action Onto selected change",
+        },
+        .{
+            .action = .{ .set_where = .after },
+            .help = "Apply current action After selected change",
+        },
+        .{
+            .action = .{ .set_where = .before },
+            .help = "Apply current action Before selected change",
+        },
+        .{
+            .action = .send_quit_event,
+            .help = "Quit jjazy",
+        },
+        .{
+            .action = .switch_state_to_new,
+            .help = "Start jj new",
+        },
+        .{
+            .action = .jj_edit,
+            .help = "jj edit",
+        },
+        .{
+            .action = .switch_state_to_rebase_onto,
+            .help = "Start jj rebase",
+        },
+        .{
+            .action = .switch_state_to_squash,
+            .help = "Start jj squash",
+        },
+        .{
+            .action = .switch_state_to_abandon,
+            .help = "Start jj abandon",
+        },
+        .{
+            .action = .switch_state_to_oplog,
+            .help = "View Operation logs",
+        },
+        .{
+            .action = .switch_state_to_duplicate,
+            .help = "Start jj duplicate",
+        },
+        .{
+            .action = .switch_state_to_bookmarks_view,
+            .help = "View bookmarks",
+        },
+        .{
+            .action = .show_help,
+            .help = "Show Help",
+        },
+        .{
+            .action = .jj_split,
+            .help = "jj split",
+        },
+        .{
+            .action = .jj_describe,
+            .help = "jj describe",
+        },
+        .{
+            .action = .switch_state_to_command,
+            .help = "Execute arbitary command",
+        },
+        .{
+            .action = .apply_jj_rebase,
+            .help = "Apply jj rebase",
+        },
+        .{
+            .action = .apply_jj_abandon,
+            .help = "Apply jj abandon",
+        },
+        .{
+            .action = .apply_jj_squash,
+            .help = "Apply jj squash",
+        },
+        .{
+            .action = .apply_jj_new,
+            .help = "Apply jj new",
+        },
+        .{
+            .action = .execute_command_in_input_buffer,
+            .help = "Execute entered command",
+        },
+        .{
+            .action = .apply_jj_op_restore,
+            .help = "jj op restore",
+        },
+        .{
+            .action = .apply_jj_duplicate,
+            .help = "apply jj duplicate",
+        },
+        .{
+            .action = .switch_state_to_bookmark_new,
+            .help = "Create new bookmark",
+        },
+        .{
+            .action = .new_commit_from_bookmark,
+            .help = "jj new on selected bookmark",
+        },
+        .{
+            .action = .{ .move_bookmark_to_selected = .{ .allow_backwards = false } },
+            .help = "Move selected bookmark to selected change",
+        },
+        .{
+            .action = .{ .move_bookmark_to_selected = .{ .allow_backwards = true } },
+            .help = "Move selected bookmark to selected change (force)",
+        },
+        .{
+            .action = .apply_jj_bookmark_delete,
+            .help = "Delete selected bookmark",
+        },
+        .{
+            .action = .{ .apply_jj_bookmark_forget = .{ .include_remotes = false } },
+            .help = "Forget selected bookmark",
+        },
+        .{
+            .action = .{ .apply_jj_bookmark_forget = .{ .include_remotes = true } },
+            .help = "Forget selected bookmark (include remotes)",
+        },
+        .{
+            .action = .apply_jj_bookmark_create_from_input_buffer_on_selected_change,
+            .help = "Create new bookmark on selected change",
+        },
+        .{
+            .action = .apply_jj_git_fetch,
+            .help = "Git fetch",
+        },
+    };
+
+    fn init(alloc: std.mem.Allocator) !@This() {
+        var map = ActionHelpMap.init(alloc);
+        errdefer map.deinit();
+
+        for (action_help) |help| {
+            try map.put(help.action, help.help);
+        }
+
+        return .{
+            .alloc = alloc,
+            .action_help_map = map,
+        };
+    }
+
     fn deinit(self: *@This()) void {
-        _ = self;
+        self.action_help_map.deinit();
     }
 
     fn render(self: *@This(), surface: *Surface, app: *App) !void {
-        _ = self;
-        _ = app;
+        const temp = app.arena.allocator();
+        const cmp = App.InputActionHashCtx{};
 
-        try surface.apply_style(.{ .background_color = .from_theme(.default_background) });
+        var scratch = std.ArrayList(u8).init(temp);
+
         try surface.apply_style(.{ .foreground_color = .from_theme(.default_foreground) });
         try surface.apply_style(.bold);
 
         try surface.clear();
         try surface.draw_border(symbols.thin.rounded);
-        try surface.draw_border_heading(" Help ");
-
+        try scratch.writer().print(" Help: {s} ", .{app.state.short_display()});
+        try surface.draw_border_heading(scratch.items);
         try surface.apply_style(.reset);
+
+        const desc = surface;
+        var keys = try desc.split_x(20, .gap);
+        std.mem.swap(Surface, desc, &keys);
+
+        var it = app.input_action_map.iterator();
+        while (!desc.is_full()) {
+            const iam = it.next() orelse break;
+            if (!cmp.eql_state(iam.key_ptr.state, app.state)) continue;
+            const help = self.action_help_map.get(iam.value_ptr.*) orelse return error.MissingHelpEntry;
+
+            scratch.clearRetainingCapacity();
+            switch (iam.key_ptr.input) {
+                .key => |key| {
+                    inline for (std.meta.fields(@TypeOf(key.mod))) |field| {
+                        if (comptime std.mem.eql(u8, field.name, "shift")) continue;
+                        if (@field(key.mod, field.name)) {
+                            try scratch.writer().print("{s} + ", .{field.name});
+                        }
+                    }
+                },
+                .functional => |key| {
+                    inline for (std.meta.fields(@TypeOf(key.mod))) |field| {
+                        if (@field(key.mod, field.name)) {
+                            try scratch.writer().print("{s} + ", .{field.name});
+                        }
+                    }
+                },
+                else => {},
+            }
+            switch (iam.key_ptr.input) {
+                .key => |key| {
+                    switch (key.key) {
+                        ' ' => try scratch.writer().print("space", .{}),
+                        else => try scratch.writer().print("{c}", .{key.key}),
+                    }
+                },
+                .functional => |key| {
+                    try scratch.writer().print("{s}", .{@tagName(key.key)});
+                },
+                .mouse => |key| {
+                    try scratch.writer().print("mouse {s}", .{@tagName(key.key)});
+                },
+                else => continue,
+            }
+
+            try keys.draw_bufln(scratch.items);
+            try desc.draw_bufln(help);
+        }
     }
 };
 
@@ -772,7 +1044,7 @@ pub const App = struct {
 
     const InputActionState = struct { state: State, input: term_mod.TermInputIterator.Input };
     const InputActionHashCtx = struct {
-        fn hash_input(hasher: anytype, input: term_mod.TermInputIterator.Input) void {
+        fn hash_input(_: @This(), hasher: anytype, input: term_mod.TermInputIterator.Input) void {
             switch (input) {
                 .mouse => |key| {
                     utils_mod.hash_update(hasher, key.key);
@@ -782,13 +1054,13 @@ pub const App = struct {
                 else => utils_mod.hash_update(hasher, input),
             }
         }
-        fn hash_state(hasher: anytype, state: State) void {
+        fn hash_state(_: @This(), hasher: anytype, state: State) void {
             switch (state) {
                 inline .oplog => |_, t| utils_mod.hash_update(hasher, t),
                 else => |t| utils_mod.hash_update(hasher, t),
             }
         }
-        fn eql_input(a: term_mod.TermInputIterator.Input, b: @TypeOf(a)) bool {
+        fn eql_input(_: @This(), a: term_mod.TermInputIterator.Input, b: @TypeOf(a)) bool {
             if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
             switch (a) {
                 .mouse => {
@@ -803,7 +1075,7 @@ pub const App = struct {
                 else => return std.meta.eql(a, b),
             }
         }
-        fn eql_state(a: State, b: @TypeOf(a)) bool {
+        fn eql_state(_: @This(), a: State, b: @TypeOf(a)) bool {
             switch (a) {
                 inline .oplog => return std.meta.activeTag(a) == std.meta.activeTag(b),
                 else => return std.meta.eql(a, b),
@@ -811,16 +1083,13 @@ pub const App = struct {
         }
 
         pub fn hash(self: @This(), input: InputActionState) u64 {
-            _ = self;
-
             var hasher = std.hash.Wyhash.init(0);
-            hash_input(&hasher, input.input);
-            hash_state(&hasher, input.state);
+            self.hash_input(&hasher, input.input);
+            self.hash_state(&hasher, input.state);
             return hasher.final();
         }
         pub fn eql(self: @This(), a: InputActionState, b: InputActionState) bool {
-            _ = self;
-            return eql_input(a.input, b.input) and eql_state(a.state, b.state);
+            return self.eql_input(a.input, b.input) and self.eql_state(a.state, b.state);
         }
     };
     const InputActionMap = std.HashMap(InputActionState, Action, InputActionHashCtx, std.hash_map.default_max_load_percentage);
@@ -843,6 +1112,19 @@ pub const App = struct {
         new,
         squash,
         abandon,
+
+        inline fn short_display(self: @This()) []const u8 {
+            return switch (self) {
+                inline .rebase, .git, .duplicate => |_p, t| switch (_p) {
+                    inline else => |p| @tagName(t) ++ "." ++ @tagName(p),
+                },
+                inline .bookmark => |_p, t| switch (_p) {
+                    inline .view => @tagName(t),
+                    inline else => |p| @tagName(t) ++ "." ++ @tagName(p),
+                },
+                inline else => |_, t| @tagName(t),
+            };
+        }
     };
 
     pub const Where = enum(u8) {
@@ -928,6 +1210,9 @@ pub const App = struct {
         var input_action_map = try init_input_action_map(alloc);
         errdefer input_action_map.deinit();
 
+        var help = try HelpSlate.init(alloc);
+        errdefer help.deinit();
+
         const sleeper = try Sleeper.init(alloc, events);
         errdefer sleeper.deinit();
 
@@ -965,7 +1250,7 @@ pub const App = struct {
                 .buf = &.{},
                 .it = .init(alloc, &[_]u8{}),
             },
-            .help = .{},
+            .help = help,
             .toaster = .{
                 .alloc = alloc,
                 .toasts = .init(alloc),
@@ -1147,7 +1432,7 @@ pub const App = struct {
             }
             {
                 defer keys.clearRetainingCapacity();
-                try keys.append(.{ .key = .{ .key = '?' } });
+                try keys.append(.{ .key = .{ .key = '?', .mod = .{ .shift = true } } });
                 for (states.items) |state| for (keys.items) |key| try map.put(
                     .{ .state = state, .input = key },
                     .show_help,
@@ -2183,16 +2468,9 @@ pub const App = struct {
             try surface.apply_style(.{ .background_color = .from_theme(.default_foreground) });
             try surface.apply_style(.{ .foreground_color = .from_theme(.default_background) });
             try surface.apply_style(.bold);
-            try surface.draw_buf(switch (self.state) {
-                inline .rebase, .git, .duplicate => |_p, t| switch (_p) {
-                    inline else => |p| " " ++ @tagName(t) ++ "." ++ @tagName(p) ++ " ",
-                },
-                inline .bookmark => |_p, t| switch (_p) {
-                    inline .view => " " ++ @tagName(t) ++ " ",
-                    inline else => |p| " " ++ @tagName(t) ++ "." ++ @tagName(p) ++ " ",
-                },
-                inline else => |_, t| " " ++ @tagName(t) ++ " ",
-            });
+            try surface.draw_buf(" ");
+            try surface.draw_buf(self.state.short_display());
+            try surface.draw_buf(" ");
             try surface.apply_style(.reset);
 
             if (builtin.mode == .Debug) {
@@ -2268,8 +2546,8 @@ pub const App = struct {
             if (self.show_help) {
                 const screen = self.screen.term.screen;
                 const r0 = screen.border_sub(.{ .x = 3, .y = 2 });
-                const r1 = r0.split_x(-50, false).right;
-                const r2 = r1.split_y(-25, false).bottom;
+                const r1 = r0.split_x(-80, false).right;
+                const r2 = r1.split_y(-30, false).bottom;
                 var help = try Surface.init(&self.screen, .{
                     .origin = r2.origin,
                     .size = r2.size,

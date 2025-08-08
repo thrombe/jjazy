@@ -583,7 +583,7 @@ pub const TermInputIterator = struct {
     input: utils_mod.Deque(u8),
 
     pub const Input = union(enum) {
-        key: struct { key: u16, mod: Modifiers = .{}, action: Action = .press },
+        key: struct { key: u8, mod: Modifiers = .{}, action: Action = .press },
         functional: struct { key: FunctionalKey, mod: Modifiers = .{}, action: Action = .press },
         mouse: struct { pos: Vec2, key: MouseKey, mod: Modifiers = .{}, action: Action = .press },
         focus: enum { in, out },
@@ -871,7 +871,7 @@ pub const TermInputIterator = struct {
                             58...64, // :;<=>?@
                             91...96, // [\]^_
                             123...126, // {|}~
-                            => return Input{ .key = .{ .key = cast(u16, shifted_keycode orelse unicode_keycode), .mod = mod, .action = action } },
+                            => return Input{ .key = .{ .key = cast(u8, shifted_keycode orelse unicode_keycode), .mod = mod, .action = action } },
                             else => return Input{ .functional = .{ .key = try std.meta.intToEnum(FunctionalKey, unicode_keycode), .mod = mod, .action = action } },
                         },
                         '~' => switch (unicode_keycode) {
@@ -918,7 +918,7 @@ pub const TermInputIterator = struct {
                     58...64, // :;<=>?@
                     91...96, // [\]^_
                     123...126, // {|}~
-                    => return Input{ .key = .{ .key = cast(u16, c) } },
+                    => return Input{ .key = .{ .key = cast(u8, c) } },
                     127 => return Input{ .functional = .{ .key = .backspace } },
                     '\t' => return Input{ .functional = .{ .key = .tab } },
                     '\r' => return Input{ .functional = .{ .key = .enter } }, // more useful as enter

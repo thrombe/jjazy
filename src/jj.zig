@@ -296,9 +296,13 @@ pub const Formatted = struct {
 };
 
 const template_sep = struct {
-    const seed = "JJAZY";
-    const sep = "-" ++ std.fmt.comptimePrint("{d}", .{hash(seed)}) ++ "-";
-    const escaped = escape(sep);
+    // OOF: too much noise in oplog
+    // const seed = "JJAZY";
+    // const sep = "-" ++ std.fmt.comptimePrint("{d}", .{hash(seed)}) ++ "-";
+    // const escaped = escape(sep);
+
+    const sep = "-JJaZY-";
+    const escaped = sep[0..3] ++ escape(sep[3..4]) ++ sep[4..];
 
     fn escape(comptime str: []const u8) [str.len * 4]u8 {
         comptime {

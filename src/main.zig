@@ -2549,57 +2549,58 @@ pub const App = struct {
                     try self.jj.requests.send(.bookmark);
                 },
             },
-            // TODO: handle errors better
             .jj => |res| switch (res.req) {
                 .log => {
-                    self.alloc.free(self.log.status);
                     switch (res.res) {
                         .ok => |buf| {
+                            self.alloc.free(self.log.status);
                             self.log.status = buf;
                             self.log.changes.reset(buf);
                             try self._send_event(.scroll_update);
                         },
-                        .err => |buf| {
-                            self.log.status = buf;
-                        },
+                        .err => |buf| try self._toast(.{ .err = error.JJLogFailed }, buf),
                     }
 
                     try self._send_event(.rerender);
                 },
                 .diff => |req| {
                     switch (res.res) {
-                        .ok, .err => |buf| {
+                        .ok => |buf| {
                             self.diff.diffcache.getPtr(req.hash).?.diff = buf;
                         },
+                        .err => |buf| try self._toast(.{ .err = error.JJDiffFailed }, buf),
                     }
                     try self._send_event(.rerender);
                 },
                 .oplog => {
-                    self.alloc.free(self.oplog.oplog);
                     switch (res.res) {
-                        .ok, .err => |buf| {
+                        .ok => |buf| {
+                            self.alloc.free(self.oplog.oplog);
                             self.oplog.oplog = buf;
                             self.oplog.ops.reset(buf);
                             try self._send_event(.rerender);
                         },
+                        .err => |buf| try self._toast(.{ .err = error.JJOpLogFailed }, buf),
                     }
                 },
                 .evolog => |req| {
                     _ = req;
                     switch (res.res) {
-                        .ok, .err => |buf| {
+                        .ok => |buf| {
                             self.alloc.free(buf);
                         },
+                        .err => |buf| try self._toast(.{ .err = error.JJEvLogFailed }, buf),
                     }
                 },
                 .bookmark => {
                     switch (res.res) {
-                        .err, .ok => |buf| {
+                        .ok => |buf| {
                             self.alloc.free(self.bookmarks.buf);
                             self.bookmarks.buf = buf;
                             self.bookmarks.reset();
                             try self._send_event(.rerender);
                         },
+                        .err => |buf| try self._toast(.{ .err = error.JJBookmarkFailed }, buf),
                     }
                 },
             },

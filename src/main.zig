@@ -289,7 +289,7 @@ const LogSlate = struct {
         self: *@This(),
         surface: *Surface,
         app: *App,
-        state: App.State,
+        state: State,
         tropes: anytype,
     ) !void {
         self.y = @max(0, self.y);
@@ -575,10 +575,10 @@ const HelpSlate = struct {
     alloc: std.mem.Allocator,
     action_help_map: ActionHelpMap,
 
-    const ActionHelpMap = std.AutoHashMap(App.Action, []const u8);
+    const ActionHelpMap = std.AutoHashMap(Action, []const u8);
 
     const action_help = [_]struct {
-        action: App.Action,
+        action: Action,
         help: []const u8,
     }{
         .{
@@ -799,7 +799,7 @@ const HelpSlate = struct {
 
     fn render(self: *@This(), surface: *Surface, app: *App) !void {
         const temp = app.arena.allocator();
-        const cmp = App.InputActionHashCtx{};
+        const cmp = InputActionMap.InputActionState.HashCtx{};
 
         const HelpItem = struct {
             key: []const u8,
@@ -808,7 +808,7 @@ const HelpSlate = struct {
         var help_items = std.ArrayList(HelpItem).init(temp);
         var scratch = std.ArrayList(u8).init(temp);
 
-        var it = app.input_action_map.iterator();
+        var it = app.input_action_map.map.iterator();
         while (it.next()) |iam| {
             if (!cmp.eql_state(iam.key_ptr.state, app.state)) continue;
             const help = self.action_help_map.get(iam.value_ptr.*) orelse return error.MissingHelpEntry;
@@ -976,11 +976,11 @@ pub const Sleeper = struct {
     sleeps: std.ArrayList(Request),
 
     // not owned
-    events: utils_mod.Channel(App.Event),
+    events: utils_mod.Channel(Event),
 
-    const Request = struct { target_ts: i128, event: App.Event };
+    const Request = struct { target_ts: i128, event: Event };
 
-    pub fn init(alloc: std.mem.Allocator, events: utils_mod.Channel(App.Event)) !*@This() {
+    pub fn init(alloc: std.mem.Allocator, events: utils_mod.Channel(Event)) !*@This() {
         const self = try alloc.create(@This());
         errdefer alloc.destroy(self);
 
@@ -1009,7 +1009,7 @@ pub const Sleeper = struct {
         _ = self.requests.close();
     }
 
-    pub fn delay_event(self: *@This(), time_ms: i128, event: App.Event) !void {
+    pub fn delay_event(self: *@This(), time_ms: i128, event: Event) !void {
         const time = std.time.nanoTimestamp();
         const del: i128 = std.time.ns_per_ms * time_ms;
         const target = time + del;
@@ -1047,6 +1047,219 @@ pub const Sleeper = struct {
     }
 };
 
+pub const State = union(enum(u8)) {
+    log,
+    oplog,
+    evlog: jj_mod.Change,
+    bookmark: enum {
+        view,
+        create,
+    },
+    git: enum {
+        none,
+        fetch,
+        push,
+    },
+    command,
+    rebase: Where,
+    duplicate: Where,
+    new,
+    squash,
+    abandon,
+
+    inline fn short_display(self: @This()) []const u8 {
+        return switch (self) {
+            inline .rebase, .duplicate => |_p, t| switch (_p) {
+                inline else => |p| @tagName(t) ++ "." ++ @tagName(p),
+            },
+            inline .bookmark => |_p, t| switch (_p) {
+                inline .view => @tagName(t),
+                inline else => |p| @tagName(t) ++ "." ++ @tagName(p),
+            },
+            inline .git => |_p, t| switch (_p) {
+                inline .none => @tagName(t),
+                inline else => |p| @tagName(t) ++ "." ++ @tagName(p),
+            },
+            inline else => |_, t| @tagName(t),
+        };
+    }
+};
+
+pub const Where = enum(u8) {
+    onto,
+    after,
+    before,
+};
+
+pub const Event = union(enum) {
+    sigwinch,
+    rerender,
+    scroll_update,
+    diff_update: jj_mod.Change,
+    op_update,
+    quit,
+    input: term_mod.TermInputIterator.Input,
+    jj: jj_mod.JujutsuServer.Response,
+    err: anyerror,
+    toast: Toaster.Toast,
+    pop_toast: Toaster.Id,
+    action: Action,
+};
+
+pub const Action = union(enum) {
+    fancy_terminal_features_that_break_gdb: enum { enable, disable },
+    trigger_breakpoint,
+    refresh_master_content,
+    scroll: struct { target: enum { log, oplog, diff, bookmarks }, dir: enum { up, down } },
+    resize_master: enum { left, right },
+    switch_state_to_log,
+    select_focused_change,
+    set_where: Where,
+    send_quit_event,
+    switch_state_to_new,
+    jj_edit,
+    switch_state_to_git,
+    switch_state_to_rebase_onto,
+    switch_state_to_squash,
+    switch_state_to_abandon,
+    switch_state_to_oplog,
+    switch_state_to_duplicate,
+    switch_state_to_bookmarks_view,
+    show_help,
+    jj_split,
+    jj_describe,
+    switch_state_to_command,
+    apply_jj_rebase,
+    apply_jj_abandon,
+    apply_jj_squash,
+    apply_jj_new,
+    execute_command_in_input_buffer,
+    apply_jj_op_restore,
+    apply_jj_duplicate,
+    switch_state_to_bookmark_create,
+    new_commit_from_bookmark,
+    move_bookmark_to_selected: struct { allow_backwards: bool },
+    apply_jj_bookmark_delete,
+    apply_jj_bookmark_forget: struct { include_remotes: bool },
+    apply_jj_bookmark_create_from_input_buffer_on_selected_change,
+    apply_jj_git_fetch,
+};
+
+pub const InputActionMap = struct {
+    map: Map,
+
+    fn builder(alloc: std.mem.Allocator) Builder {
+        return .{
+            .map = .init(alloc),
+            .states = .init(alloc),
+        };
+    }
+
+    fn deinit(self: *@This()) void {
+        self.map.deinit();
+    }
+
+    fn get(self: *const @This(), state: State, key: Input) ?Action {
+        return self.map.get(.{ .state = state, .input = key });
+    }
+
+    const Input = term_mod.TermInputIterator.Input;
+    const InputActionState = struct {
+        state: State,
+        input: Input,
+
+        const HashCtx = struct {
+            fn hash_input(_: @This(), hasher: anytype, input: Input) void {
+                switch (input) {
+                    .mouse => |key| {
+                        utils_mod.hash_update(hasher, key.key);
+                        utils_mod.hash_update(hasher, key.mod);
+                        utils_mod.hash_update(hasher, key.action);
+                    },
+                    else => utils_mod.hash_update(hasher, input),
+                }
+            }
+            fn hash_state(_: @This(), hasher: anytype, state: State) void {
+                switch (state) {
+                    inline .oplog => |_, t| utils_mod.hash_update(hasher, t),
+                    else => |t| utils_mod.hash_update(hasher, t),
+                }
+            }
+            fn eql_input(_: @This(), a: Input, b: @TypeOf(a)) bool {
+                if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
+                switch (a) {
+                    .mouse => {
+                        // TODO: mouse pos can't be handled in InputActionMap :/
+                        // a.mouse.pos;
+
+                        if (!std.meta.eql(a.mouse.key, b.mouse.key)) return false;
+                        if (!std.meta.eql(a.mouse.mod, b.mouse.mod)) return false;
+                        if (!std.meta.eql(a.mouse.action, b.mouse.action)) return false;
+                        return true;
+                    },
+                    else => return std.meta.eql(a, b),
+                }
+            }
+            fn eql_state(_: @This(), a: State, b: @TypeOf(a)) bool {
+                switch (a) {
+                    inline .oplog => return std.meta.activeTag(a) == std.meta.activeTag(b),
+                    else => return std.meta.eql(a, b),
+                }
+            }
+
+            pub fn hash(self: @This(), input: InputActionState) u64 {
+                var hasher = std.hash.Wyhash.init(0);
+                self.hash_input(&hasher, input.input);
+                self.hash_state(&hasher, input.state);
+                return hasher.final();
+            }
+            pub fn eql(self: @This(), a: InputActionState, b: InputActionState) bool {
+                return self.eql_input(a.input, b.input) and self.eql_state(a.state, b.state);
+            }
+        };
+    };
+    const Map = std.HashMap(InputActionState, Action, InputActionState.HashCtx, std.hash_map.default_max_load_percentage);
+
+    const Builder = struct {
+        map: Map,
+        states: std.ArrayList(State),
+
+        fn build(self: *@This()) InputActionMap {
+            defer self.states.deinit();
+            return .{ .map = self.map };
+        }
+
+        fn deinit(self: *@This()) void {
+            self.map.deinit();
+            self.states.deinit();
+        }
+
+        fn for_state(self: *@This(), state: State) !void {
+            try self.states.append(state);
+        }
+
+        fn for_states(self: *@This(), states: []const State) !void {
+            try self.states.appendSlice(states);
+        }
+
+        fn add_one(self: *@This(), key: Input, action: Action) !void {
+            for (self.states.items) |state| try self.map.put(.{ .state = state, .input = key }, action);
+        }
+
+        fn add_many(self: *@This(), keys: []const Input, action: Action) !void {
+            for (self.states.items) |state| for (keys) |key| try self.map.put(.{ .state = state, .input = key }, action);
+        }
+
+        fn add_one_for_state(self: *@This(), state: State, key: Input, action: Action) !void {
+            try self.map.put(.{ .state = state, .input = key }, action);
+        }
+
+        fn reset(self: *@This()) void {
+            self.states.clearRetainingCapacity();
+        }
+    };
+};
+
 pub const App = struct {
     screen: term_mod.Screen,
 
@@ -1079,156 +1292,6 @@ pub const App = struct {
     rerender_pending_count: u64 = 0,
     render_count: u64 = 0,
     last_hash: u64 = 0,
-
-    const InputActionState = struct { state: State, input: term_mod.TermInputIterator.Input };
-    const InputActionHashCtx = struct {
-        fn hash_input(_: @This(), hasher: anytype, input: term_mod.TermInputIterator.Input) void {
-            switch (input) {
-                .mouse => |key| {
-                    utils_mod.hash_update(hasher, key.key);
-                    utils_mod.hash_update(hasher, key.mod);
-                    utils_mod.hash_update(hasher, key.action);
-                },
-                else => utils_mod.hash_update(hasher, input),
-            }
-        }
-        fn hash_state(_: @This(), hasher: anytype, state: State) void {
-            switch (state) {
-                inline .oplog => |_, t| utils_mod.hash_update(hasher, t),
-                else => |t| utils_mod.hash_update(hasher, t),
-            }
-        }
-        fn eql_input(_: @This(), a: term_mod.TermInputIterator.Input, b: @TypeOf(a)) bool {
-            if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
-            switch (a) {
-                .mouse => {
-                    // TODO: mouse pos can't be handled in InputActionMap :/
-                    // a.mouse.pos;
-
-                    if (!std.meta.eql(a.mouse.key, b.mouse.key)) return false;
-                    if (!std.meta.eql(a.mouse.mod, b.mouse.mod)) return false;
-                    if (!std.meta.eql(a.mouse.action, b.mouse.action)) return false;
-                    return true;
-                },
-                else => return std.meta.eql(a, b),
-            }
-        }
-        fn eql_state(_: @This(), a: State, b: @TypeOf(a)) bool {
-            switch (a) {
-                inline .oplog => return std.meta.activeTag(a) == std.meta.activeTag(b),
-                else => return std.meta.eql(a, b),
-            }
-        }
-
-        pub fn hash(self: @This(), input: InputActionState) u64 {
-            var hasher = std.hash.Wyhash.init(0);
-            self.hash_input(&hasher, input.input);
-            self.hash_state(&hasher, input.state);
-            return hasher.final();
-        }
-        pub fn eql(self: @This(), a: InputActionState, b: InputActionState) bool {
-            return self.eql_input(a.input, b.input) and self.eql_state(a.state, b.state);
-        }
-    };
-    const InputActionMap = std.HashMap(InputActionState, Action, InputActionHashCtx, std.hash_map.default_max_load_percentage);
-
-    pub const State = union(enum(u8)) {
-        log,
-        oplog,
-        evlog: jj_mod.Change,
-        bookmark: enum {
-            view,
-            create,
-        },
-        git: enum {
-            none,
-            fetch,
-            push,
-        },
-        command,
-        rebase: Where,
-        duplicate: Where,
-        new,
-        squash,
-        abandon,
-
-        inline fn short_display(self: @This()) []const u8 {
-            return switch (self) {
-                inline .rebase, .duplicate => |_p, t| switch (_p) {
-                    inline else => |p| @tagName(t) ++ "." ++ @tagName(p),
-                },
-                inline .bookmark => |_p, t| switch (_p) {
-                    inline .view => @tagName(t),
-                    inline else => |p| @tagName(t) ++ "." ++ @tagName(p),
-                },
-                inline .git => |_p, t| switch (_p) {
-                    inline .none => @tagName(t),
-                    inline else => |p| @tagName(t) ++ "." ++ @tagName(p),
-                },
-                inline else => |_, t| @tagName(t),
-            };
-        }
-    };
-
-    pub const Where = enum(u8) {
-        onto,
-        after,
-        before,
-    };
-
-    pub const Event = union(enum) {
-        sigwinch,
-        rerender,
-        scroll_update,
-        diff_update: jj_mod.Change,
-        op_update,
-        quit,
-        input: term_mod.TermInputIterator.Input,
-        jj: jj_mod.JujutsuServer.Response,
-        err: anyerror,
-        toast: Toaster.Toast,
-        pop_toast: Toaster.Id,
-        action: Action,
-    };
-
-    pub const Action = union(enum) {
-        fancy_terminal_features_that_break_gdb: enum { enable, disable },
-        trigger_breakpoint,
-        refresh_master_content,
-        scroll: struct { target: enum { log, oplog, diff, bookmarks }, dir: enum { up, down } },
-        resize_master: enum { left, right },
-        switch_state_to_log,
-        select_focused_change,
-        set_where: Where,
-        send_quit_event,
-        switch_state_to_new,
-        jj_edit,
-        switch_state_to_git,
-        switch_state_to_rebase_onto,
-        switch_state_to_squash,
-        switch_state_to_abandon,
-        switch_state_to_oplog,
-        switch_state_to_duplicate,
-        switch_state_to_bookmarks_view,
-        show_help,
-        jj_split,
-        jj_describe,
-        switch_state_to_command,
-        apply_jj_rebase,
-        apply_jj_abandon,
-        apply_jj_squash,
-        apply_jj_new,
-        execute_command_in_input_buffer,
-        apply_jj_op_restore,
-        apply_jj_duplicate,
-        switch_state_to_bookmark_create,
-        new_commit_from_bookmark,
-        move_bookmark_to_selected: struct { allow_backwards: bool },
-        apply_jj_bookmark_delete,
-        apply_jj_bookmark_forget: struct { include_remotes: bool },
-        apply_jj_bookmark_create_from_input_buffer_on_selected_change,
-        apply_jj_git_fetch,
-    };
 
     var app: *@This() = undefined;
 
@@ -1399,410 +1462,397 @@ pub const App = struct {
     }
 
     fn init_input_action_map(alloc: std.mem.Allocator) !InputActionMap {
-        var map = InputActionMap.init(alloc);
+        var map = InputActionMap.builder(alloc);
         errdefer map.deinit();
-
-        var keys = std.ArrayList(term_mod.TermInputIterator.Input).init(alloc);
-        defer keys.deinit();
-
-        var states = std.ArrayList(State).init(alloc);
-        defer states.deinit();
+        const Input = InputActionMap.Input;
 
         {
-            defer states.clearRetainingCapacity();
-            try states.append(.log);
-            try states.append(.oplog);
-            try states.append(.{ .evlog = .{} });
-            try states.append(.command);
-            try states.append(.{ .bookmark = .view });
-            try states.append(.{ .bookmark = .create });
-            try states.append(.{ .git = .none });
-            try states.append(.{ .git = .fetch });
-            try states.append(.{ .git = .push });
-            try states.append(.{ .rebase = .onto });
-            try states.append(.{ .rebase = .after });
-            try states.append(.{ .rebase = .before });
-            try states.append(.{ .duplicate = .onto });
-            try states.append(.{ .duplicate = .after });
-            try states.append(.{ .duplicate = .before });
-            try states.append(.new);
-            try states.append(.squash);
-            try states.append(.abandon);
-
-            if (builtin.mode == .Debug) for (states.items) |state| try map.put(
-                .{ .state = state, .input = .{ .functional = .{ .key = .escape, .mod = .{ .ctrl = true } } } },
+            defer map.reset();
+            try map.for_states(&[_]State{
+                .log,
+                .oplog,
+                .{ .evlog = .{} },
+                .command,
+                .{ .bookmark = .view },
+                .{ .bookmark = .create },
+                .{ .git = .none },
+                .{ .git = .fetch },
+                .{ .git = .push },
+                .{ .rebase = .onto },
+                .{ .rebase = .after },
+                .{ .rebase = .before },
+                .{ .duplicate = .onto },
+                .{ .duplicate = .after },
+                .{ .duplicate = .before },
+                .new,
+                .squash,
+                .abandon,
+            });
+            if (builtin.mode == .Debug) try map.add_one(
+                .{ .functional = .{ .key = .escape, .mod = .{ .ctrl = true } } },
                 .trigger_breakpoint,
             );
-            for (states.items) |state| try map.put(
-                .{ .state = state, .input = .{ .focus = .in } },
+            try map.add_one(
+                .{ .focus = .in },
                 .refresh_master_content,
             );
-            for (states.items) |state| try map.put(
-                .{ .state = state, .input = .{ .functional = .{ .key = .escape } } },
+            try map.add_one(
+                .{ .functional = .{ .key = .escape } },
                 .switch_state_to_log,
             );
         }
         {
-            defer states.clearRetainingCapacity();
-            try states.append(.log);
-            try states.append(.oplog);
-            try states.append(.{ .evlog = .{} });
-            try states.append(.{ .bookmark = .view });
-            try states.append(.{ .git = .none });
-            try states.append(.{ .git = .fetch });
-            try states.append(.{ .git = .push });
-            try states.append(.{ .rebase = .onto });
-            try states.append(.{ .rebase = .after });
-            try states.append(.{ .rebase = .before });
-            try states.append(.{ .duplicate = .onto });
-            try states.append(.{ .duplicate = .after });
-            try states.append(.{ .duplicate = .before });
-            try states.append(.new);
-            try states.append(.squash);
-            try states.append(.abandon);
-
-            if (builtin.mode == .Debug) {
-                defer keys.clearRetainingCapacity();
-                try keys.append(.{ .key = .{ .key = '1' } });
-                for (states.items) |state| for (keys.items) |key| try map.put(
-                    .{ .state = state, .input = key },
-                    .{ .fancy_terminal_features_that_break_gdb = .enable },
-                );
-            }
-            if (builtin.mode == .Debug) {
-                defer keys.clearRetainingCapacity();
-                try keys.append(.{ .key = .{ .key = '1', .mod = .{ .ctrl = true } } });
-                for (states.items) |state| for (keys.items) |key| try map.put(
-                    .{ .state = state, .input = key },
-                    .{ .fancy_terminal_features_that_break_gdb = .disable },
-                );
-            }
-            {
-                defer keys.clearRetainingCapacity();
-                try keys.append(.{ .key = .{ .key = '?', .mod = .{ .shift = true } } });
-                try keys.append(.{ .key = .{ .key = '?' } }); // zellij does not pass .shift = true with '?'
-                for (states.items) |state| for (keys.items) |key| try map.put(
-                    .{ .state = state, .input = key },
-                    .show_help,
-                );
-            }
+            defer map.reset();
+            try map.for_states(&[_]State{
+                .log,
+                .oplog,
+                .{ .evlog = .{} },
+                .{ .bookmark = .view },
+                .{ .git = .none },
+                .{ .git = .fetch },
+                .{ .git = .push },
+                .{ .rebase = .onto },
+                .{ .rebase = .after },
+                .{ .rebase = .before },
+                .{ .duplicate = .onto },
+                .{ .duplicate = .after },
+                .{ .duplicate = .before },
+                .new,
+                .squash,
+                .abandon,
+            });
+            if (builtin.mode == .Debug) try map.add_one(
+                .{ .key = .{ .key = '1' } },
+                .{ .fancy_terminal_features_that_break_gdb = .enable },
+            );
+            if (builtin.mode == .Debug) try map.add_one(
+                .{ .key = .{ .key = '1', .mod = .{ .ctrl = true } } },
+                .{ .fancy_terminal_features_that_break_gdb = .disable },
+            );
+            try map.add_many(
+                &[_]Input{
+                    .{ .key = .{ .key = '?', .mod = .{ .shift = true } } },
+                    .{ .key = .{ .key = '?' } }, // zellij does not pass .shift = true with '?'
+                },
+                .show_help,
+            );
         }
         {
-            defer states.clearRetainingCapacity();
-            try states.append(.log);
-            try states.append(.{ .rebase = .onto });
-            try states.append(.{ .rebase = .after });
-            try states.append(.{ .rebase = .before });
-            try states.append(.{ .duplicate = .onto });
-            try states.append(.{ .duplicate = .after });
-            try states.append(.{ .duplicate = .before });
-            try states.append(.new);
-            try states.append(.squash);
-            try states.append(.abandon);
-
-            {
-                defer keys.clearRetainingCapacity();
-                try keys.append(.{ .key = .{ .key = 'j', .action = .press } });
-                try keys.append(.{ .key = .{ .key = 'j', .action = .repeat } });
-                try keys.append(.{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .press } });
-                try keys.append(.{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .repeat } });
-                for (states.items) |state| for (keys.items) |key| try map.put(
-                    .{ .state = state, .input = key },
-                    .{ .scroll = .{ .target = .log, .dir = .down } },
-                );
-            }
-            {
-                defer keys.clearRetainingCapacity();
-                try keys.append(.{ .key = .{ .key = 'k', .action = .press } });
-                try keys.append(.{ .key = .{ .key = 'k', .action = .repeat } });
-                try keys.append(.{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .press } });
-                try keys.append(.{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .repeat } });
-                for (states.items) |state| for (keys.items) |key| try map.put(
-                    .{ .state = state, .input = key },
-                    .{ .scroll = .{ .target = .log, .dir = .up } },
-                );
-            }
-            {
-                defer keys.clearRetainingCapacity();
-                try keys.append(.{ .key = .{ .key = 'j', .action = .press, .mod = .{ .ctrl = true } } });
-                try keys.append(.{ .key = .{ .key = 'j', .action = .repeat, .mod = .{ .ctrl = true } } });
-                for (states.items) |state| for (keys.items) |key| try map.put(
-                    .{ .state = state, .input = key },
-                    .{ .scroll = .{ .target = .diff, .dir = .down } },
-                );
-            }
-            {
-                defer keys.clearRetainingCapacity();
-                try keys.append(.{ .key = .{ .key = 'k', .action = .press, .mod = .{ .ctrl = true } } });
-                try keys.append(.{ .key = .{ .key = 'k', .action = .repeat, .mod = .{ .ctrl = true } } });
-                for (states.items) |state| for (keys.items) |key| try map.put(
-                    .{ .state = state, .input = key },
-                    .{ .scroll = .{ .target = .diff, .dir = .up } },
-                );
-            }
-            {
-                defer keys.clearRetainingCapacity();
-                try keys.append(.{ .key = .{ .key = 'h', .action = .press, .mod = .{ .ctrl = true } } });
-                try keys.append(.{ .key = .{ .key = 'h', .action = .repeat, .mod = .{ .ctrl = true } } });
-                for (states.items) |state| for (keys.items) |key| try map.put(
-                    .{ .state = state, .input = key },
-                    .{ .resize_master = .left },
-                );
-            }
-            {
-                defer keys.clearRetainingCapacity();
-                try keys.append(.{ .key = .{ .key = 'l', .action = .press, .mod = .{ .ctrl = true } } });
-                try keys.append(.{ .key = .{ .key = 'l', .action = .repeat, .mod = .{ .ctrl = true } } });
-                for (states.items) |state| for (keys.items) |key| try map.put(
-                    .{ .state = state, .input = key },
-                    .{ .resize_master = .right },
-                );
-            }
+            defer map.reset();
+            try map.for_states(&[_]State{
+                .log,
+                .{ .rebase = .onto },
+                .{ .rebase = .after },
+                .{ .rebase = .before },
+                .{ .duplicate = .onto },
+                .{ .duplicate = .after },
+                .{ .duplicate = .before },
+                .new,
+                .squash,
+                .abandon,
+            });
+            try map.add_many(
+                &[_]Input{
+                    .{ .key = .{ .key = 'j', .action = .press } },
+                    .{ .key = .{ .key = 'j', .action = .repeat } },
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .press } },
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .repeat } },
+                },
+                .{ .scroll = .{ .target = .log, .dir = .down } },
+            );
+            try map.add_many(
+                &[_]Input{
+                    .{ .key = .{ .key = 'k', .action = .press } },
+                    .{ .key = .{ .key = 'k', .action = .repeat } },
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .press } },
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .repeat } },
+                },
+                .{ .scroll = .{ .target = .log, .dir = .up } },
+            );
+            try map.add_many(
+                &[_]Input{
+                    .{ .key = .{ .key = 'j', .action = .press, .mod = .{ .ctrl = true } } },
+                    .{ .key = .{ .key = 'j', .action = .repeat, .mod = .{ .ctrl = true } } },
+                },
+                .{ .scroll = .{ .target = .diff, .dir = .down } },
+            );
+            try map.add_many(
+                &[_]Input{
+                    .{ .key = .{ .key = 'k', .action = .press, .mod = .{ .ctrl = true } } },
+                    .{ .key = .{ .key = 'k', .action = .repeat, .mod = .{ .ctrl = true } } },
+                },
+                .{ .scroll = .{ .target = .diff, .dir = .up } },
+            );
+            try map.add_many(
+                &[_]Input{
+                    .{ .key = .{ .key = 'h', .action = .press, .mod = .{ .ctrl = true } } },
+                    .{ .key = .{ .key = 'h', .action = .repeat, .mod = .{ .ctrl = true } } },
+                },
+                .{ .resize_master = .left },
+            );
+            try map.add_many(
+                &[_]Input{
+                    .{ .key = .{ .key = 'l', .action = .press, .mod = .{ .ctrl = true } } },
+                    .{ .key = .{ .key = 'l', .action = .repeat, .mod = .{ .ctrl = true } } },
+                },
+                .{ .resize_master = .right },
+            );
         }
         {
-            defer states.clearRetainingCapacity();
-            try states.append(.oplog);
-
-            {
-                defer keys.clearRetainingCapacity();
-                try keys.append(.{ .key = .{ .key = 'j', .action = .press } });
-                try keys.append(.{ .key = .{ .key = 'j', .action = .repeat } });
-                try keys.append(.{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .press } });
-                try keys.append(.{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .repeat } });
-                for (states.items) |state| for (keys.items) |key| try map.put(
-                    .{ .state = state, .input = key },
-                    .{ .scroll = .{ .target = .oplog, .dir = .down } },
-                );
-            }
-            {
-                defer keys.clearRetainingCapacity();
-                try keys.append(.{ .key = .{ .key = 'k', .action = .press } });
-                try keys.append(.{ .key = .{ .key = 'k', .action = .repeat } });
-                try keys.append(.{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .press } });
-                try keys.append(.{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .repeat } });
-                for (states.items) |state| for (keys.items) |key| try map.put(
-                    .{ .state = state, .input = key },
-                    .{ .scroll = .{ .target = .oplog, .dir = .up } },
-                );
-            }
+            defer map.reset();
+            try map.for_states(&[_]State{
+                .oplog,
+            });
+            try map.add_many(
+                &[_]Input{
+                    .{ .key = .{ .key = 'j', .action = .press } },
+                    .{ .key = .{ .key = 'j', .action = .repeat } },
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .press } },
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .repeat } },
+                },
+                .{ .scroll = .{ .target = .oplog, .dir = .down } },
+            );
+            try map.add_many(
+                &[_]Input{
+                    .{ .key = .{ .key = 'k', .action = .press } },
+                    .{ .key = .{ .key = 'k', .action = .repeat } },
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .press } },
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .repeat } },
+                },
+                .{ .scroll = .{ .target = .oplog, .dir = .up } },
+            );
         }
         {
-            defer states.clearRetainingCapacity();
-            try states.append(.{ .rebase = .onto });
-            try states.append(.{ .rebase = .after });
-            try states.append(.{ .rebase = .before });
-            try states.append(.{ .duplicate = .onto });
-            try states.append(.{ .duplicate = .after });
-            try states.append(.{ .duplicate = .before });
-            try states.append(.new);
-            try states.append(.squash);
-            try states.append(.abandon);
-
-            {
-                defer keys.clearRetainingCapacity();
-                try keys.append(.{ .key = .{ .key = ' ', .action = .press } });
-                try keys.append(.{ .key = .{ .key = ' ', .action = .repeat } });
-                for (states.items) |state| for (keys.items) |key| try map.put(
-                    .{ .state = state, .input = key },
-                    .select_focused_change,
-                );
-            }
+            defer map.reset();
+            try map.for_states(&[_]State{
+                .{ .rebase = .onto },
+                .{ .rebase = .after },
+                .{ .rebase = .before },
+                .{ .duplicate = .onto },
+                .{ .duplicate = .after },
+                .{ .duplicate = .before },
+                .new,
+                .squash,
+                .abandon,
+            });
+            try map.add_many(
+                &[_]Input{
+                    .{ .key = .{ .key = ' ', .action = .press } },
+                    .{ .key = .{ .key = ' ', .action = .repeat } },
+                },
+                .select_focused_change,
+            );
         }
         {
-            defer states.clearRetainingCapacity();
-            try states.append(.{ .rebase = .onto });
-            try states.append(.{ .rebase = .after });
-            try states.append(.{ .rebase = .before });
-            try states.append(.{ .duplicate = .onto });
-            try states.append(.{ .duplicate = .after });
-            try states.append(.{ .duplicate = .before });
-
-            {
-                defer keys.clearRetainingCapacity();
-                try keys.append(.{ .key = .{ .key = 'o' } });
-                for (states.items) |state| for (keys.items) |key| try map.put(
-                    .{ .state = state, .input = key },
-                    .{ .set_where = .onto },
-                );
-            }
-            {
-                defer keys.clearRetainingCapacity();
-                try keys.append(.{ .key = .{ .key = 'b' } });
-                for (states.items) |state| for (keys.items) |key| try map.put(
-                    .{ .state = state, .input = key },
-                    .{ .set_where = .before },
-                );
-            }
-            {
-                defer keys.clearRetainingCapacity();
-                try keys.append(.{ .key = .{ .key = 'a' } });
-                for (states.items) |state| for (keys.items) |key| try map.put(
-                    .{ .state = state, .input = key },
-                    .{ .set_where = .after },
-                );
-            }
+            defer map.reset();
+            try map.for_states(&[_]State{
+                .{ .rebase = .onto },
+                .{ .rebase = .after },
+                .{ .rebase = .before },
+                .{ .duplicate = .onto },
+                .{ .duplicate = .after },
+                .{ .duplicate = .before },
+            });
+            try map.add_one(
+                .{ .key = .{ .key = 'o' } },
+                .{ .set_where = .onto },
+            );
+            try map.add_one(
+                .{ .key = .{ .key = 'b' } },
+                .{ .set_where = .before },
+            );
+            try map.add_one(
+                .{ .key = .{ .key = 'a' } },
+                .{ .set_where = .after },
+            );
         }
         {
-            defer states.clearRetainingCapacity();
-            try states.append(.{ .bookmark = .view });
-
-            {
-                defer keys.clearRetainingCapacity();
-                try keys.append(.{ .key = .{ .key = 'j', .action = .press } });
-                try keys.append(.{ .key = .{ .key = 'j', .action = .repeat } });
-                for (states.items) |state| for (keys.items) |key| try map.put(
-                    .{ .state = state, .input = key },
-                    .{ .scroll = .{ .target = .bookmarks, .dir = .down } },
-                );
-            }
-            {
-                defer keys.clearRetainingCapacity();
-                try keys.append(.{ .key = .{ .key = 'k', .action = .press } });
-                try keys.append(.{ .key = .{ .key = 'k', .action = .repeat } });
-                for (states.items) |state| for (keys.items) |key| try map.put(
-                    .{ .state = state, .input = key },
-                    .{ .scroll = .{ .target = .bookmarks, .dir = .up } },
-                );
-            }
+            defer map.reset();
+            try map.for_states(&[_]State{
+                .{ .bookmark = .view },
+            });
+            try map.add_many(
+                &[_]Input{
+                    .{ .key = .{ .key = 'j', .action = .press } },
+                    .{ .key = .{ .key = 'j', .action = .repeat } },
+                },
+                .{ .scroll = .{ .target = .bookmarks, .dir = .down } },
+            );
+            try map.add_many(
+                &[_]Input{
+                    .{ .key = .{ .key = 'k', .action = .press } },
+                    .{ .key = .{ .key = 'k', .action = .repeat } },
+                },
+                .{ .scroll = .{ .target = .bookmarks, .dir = .up } },
+            );
         }
-        try map.put(.{
-            .state = .log,
-            .input = .{ .key = .{ .key = 'q' } },
-        }, .send_quit_event);
-        try map.put(.{
-            .state = .log,
-            .input = .{ .key = .{ .key = 'n' } },
-        }, .switch_state_to_new);
-        try map.put(.{
-            .state = .log,
-            .input = .{ .key = .{ .key = 'e' } },
-        }, .jj_edit);
-        try map.put(.{
-            .state = .log,
-            .input = .{ .key = .{ .key = 'g' } },
-        }, .switch_state_to_git);
-        try map.put(.{
-            .state = .log,
-            .input = .{ .key = .{ .key = 'r' } },
-        }, .switch_state_to_rebase_onto);
-        try map.put(.{
-            .state = .log,
-            .input = .{ .key = .{ .key = 'S', .mod = .{ .shift = true } } },
-        }, .switch_state_to_squash);
-        try map.put(.{
-            .state = .log,
-            .input = .{ .key = .{ .key = 'a' } },
-        }, .switch_state_to_abandon);
-        try map.put(.{
-            .state = .log,
-            .input = .{ .key = .{ .key = 'o' } },
-        }, .switch_state_to_oplog);
-        try map.put(.{
-            .state = .log,
-            .input = .{ .key = .{ .key = 'd' } },
-        }, .switch_state_to_duplicate);
-        try map.put(.{
-            .state = .log,
-            .input = .{ .key = .{ .key = 'b' } },
-        }, .switch_state_to_bookmarks_view);
-        try map.put(.{
-            .state = .log,
-            .input = .{ .key = .{ .key = 's' } },
-        }, .jj_split);
-        try map.put(.{
-            .state = .log,
-            .input = .{ .key = .{ .key = 'D', .mod = .{ .shift = true } } },
-        }, .jj_describe);
+        try map.add_one_for_state(
+            .log,
+            .{ .key = .{ .key = 'q' } },
+            .send_quit_event,
+        );
+        try map.add_one_for_state(
+            .log,
+            .{ .key = .{ .key = 'n' } },
+            .switch_state_to_new,
+        );
+        try map.add_one_for_state(
+            .log,
+            .{ .key = .{ .key = 'e' } },
+            .jj_edit,
+        );
+        try map.add_one_for_state(
+            .log,
+            .{ .key = .{ .key = 'g' } },
+            .switch_state_to_git,
+        );
+        try map.add_one_for_state(
+            .log,
+            .{ .key = .{ .key = 'r' } },
+            .switch_state_to_rebase_onto,
+        );
+        try map.add_one_for_state(
+            .log,
+            .{ .key = .{ .key = 'S', .mod = .{ .shift = true } } },
+            .switch_state_to_squash,
+        );
+        try map.add_one_for_state(
+            .log,
+            .{ .key = .{ .key = 'a' } },
+            .switch_state_to_abandon,
+        );
+        try map.add_one_for_state(
+            .log,
+            .{ .key = .{ .key = 'o' } },
+            .switch_state_to_oplog,
+        );
+        try map.add_one_for_state(
+            .log,
+            .{ .key = .{ .key = 'd' } },
+            .switch_state_to_duplicate,
+        );
+        try map.add_one_for_state(
+            .log,
+            .{ .key = .{ .key = 'b' } },
+            .switch_state_to_bookmarks_view,
+        );
+        try map.add_one_for_state(
+            .log,
+            .{ .key = .{ .key = 's' } },
+            .jj_split,
+        );
+        try map.add_one_for_state(
+            .log,
+            .{ .key = .{ .key = 'D', .mod = .{ .shift = true } } },
+            .jj_describe,
+        );
         {
-            defer keys.clearRetainingCapacity();
-            try keys.append(.{ .key = .{ .key = ':', .mod = .{ .shift = true } } });
-            try keys.append(.{ .key = .{ .key = ':' } }); // zellij does not pass .shift = true :/
-
-            for (keys.items) |key| try map.put(.{
-                .state = .log,
-                .input = key,
-            }, .switch_state_to_command);
+            defer map.reset();
+            try map.for_state(.log);
+            try map.add_many(
+                &[_]Input{
+                    .{ .key = .{ .key = ':', .mod = .{ .shift = true } } },
+                    .{ .key = .{ .key = ':' } }, // zellij does not pass .shift = true :/
+                },
+                .switch_state_to_command,
+            );
         }
         {
-            defer states.clearRetainingCapacity();
-            try states.append(.{ .rebase = .onto });
-            try states.append(.{ .rebase = .after });
-            try states.append(.{ .rebase = .before });
-
-            for (states.items) |state| try map.put(
-                .{ .state = state, .input = .{ .functional = .{ .key = .enter } } },
+            defer map.reset();
+            try map.for_states(&[_]State{
+                .{ .rebase = .onto },
+                .{ .rebase = .after },
+                .{ .rebase = .before },
+            });
+            try map.add_one(
+                .{ .functional = .{ .key = .enter } },
                 .apply_jj_rebase,
             );
         }
-        try map.put(.{
-            .state = .abandon,
-            .input = .{ .functional = .{ .key = .enter } },
-        }, .apply_jj_abandon);
-        try map.put(.{
-            .state = .squash,
-            .input = .{ .functional = .{ .key = .enter } },
-        }, .apply_jj_squash);
-        try map.put(.{
-            .state = .new,
-            .input = .{ .functional = .{ .key = .enter } },
-        }, .apply_jj_new);
-        try map.put(.{
-            .state = .command,
-            .input = .{ .functional = .{ .key = .enter } },
-        }, .execute_command_in_input_buffer);
-        try map.put(.{
-            .state = .oplog,
-            .input = .{ .key = .{ .key = 'r' } },
-        }, .apply_jj_op_restore);
+        try map.add_one_for_state(
+            .abandon,
+            .{ .functional = .{ .key = .enter } },
+            .apply_jj_abandon,
+        );
+        try map.add_one_for_state(
+            .squash,
+            .{ .functional = .{ .key = .enter } },
+            .apply_jj_squash,
+        );
+        try map.add_one_for_state(
+            .new,
+            .{ .functional = .{ .key = .enter } },
+            .apply_jj_new,
+        );
+        try map.add_one_for_state(
+            .command,
+            .{ .functional = .{ .key = .enter } },
+            .execute_command_in_input_buffer,
+        );
+        try map.add_one_for_state(
+            .oplog,
+            .{ .key = .{ .key = 'r' } },
+            .apply_jj_op_restore,
+        );
         {
-            defer states.clearRetainingCapacity();
-            try states.append(.{ .duplicate = .onto });
-            try states.append(.{ .duplicate = .after });
-            try states.append(.{ .duplicate = .before });
-
-            for (states.items) |state| try map.put(
-                .{ .state = state, .input = .{ .functional = .{ .key = .enter } } },
+            defer map.reset();
+            try map.for_states(&[_]State{
+                .{ .duplicate = .onto },
+                .{ .duplicate = .after },
+                .{ .duplicate = .before },
+            });
+            try map.add_one(
+                .{ .functional = .{ .key = .enter } },
                 .apply_jj_duplicate,
             );
         }
-        try map.put(.{
-            .state = .{ .bookmark = .view },
-            .input = .{ .key = .{ .key = 'c' } },
-        }, .switch_state_to_bookmark_create);
-        try map.put(.{
-            .state = .{ .bookmark = .view },
-            .input = .{ .key = .{ .key = 'n' } },
-        }, .new_commit_from_bookmark);
-        try map.put(.{
-            .state = .{ .bookmark = .view },
-            .input = .{ .key = .{ .key = 'm' } },
-        }, .{ .move_bookmark_to_selected = .{ .allow_backwards = false } });
-        try map.put(.{
-            .state = .{ .bookmark = .view },
-            .input = .{ .key = .{ .key = 'M', .mod = .{ .shift = true } } },
-        }, .{ .move_bookmark_to_selected = .{ .allow_backwards = true } });
-        try map.put(.{
-            .state = .{ .bookmark = .view },
-            .input = .{ .key = .{ .key = 'd' } },
-        }, .apply_jj_bookmark_delete);
-        try map.put(.{
-            .state = .{ .bookmark = .view },
-            .input = .{ .key = .{ .key = 'f' } },
-        }, .{ .apply_jj_bookmark_forget = .{ .include_remotes = false } });
-        try map.put(.{
-            .state = .{ .bookmark = .view },
-            .input = .{ .key = .{ .key = 'F', .mod = .{ .shift = true } } },
-        }, .{ .apply_jj_bookmark_forget = .{ .include_remotes = true } });
-        try map.put(.{
-            .state = .{ .bookmark = .create },
-            .input = .{ .functional = .{ .key = .enter } },
-        }, .apply_jj_bookmark_create_from_input_buffer_on_selected_change);
-        try map.put(.{
-            .state = .{ .git = .none },
-            .input = .{ .key = .{ .key = 'F', .mod = .{ .shift = true } } },
-        }, .apply_jj_git_fetch);
+        try map.add_one_for_state(
+            .{ .bookmark = .view },
+            .{ .key = .{ .key = 'c' } },
+            .switch_state_to_bookmark_create,
+        );
+        try map.add_one_for_state(
+            .{ .bookmark = .view },
+            .{ .key = .{ .key = 'n' } },
+            .new_commit_from_bookmark,
+        );
+        try map.add_one_for_state(
+            .{ .bookmark = .view },
+            .{ .key = .{ .key = 'm' } },
+            .{ .move_bookmark_to_selected = .{ .allow_backwards = false } },
+        );
+        try map.add_one_for_state(
+            .{ .bookmark = .view },
+            .{ .key = .{ .key = 'M', .mod = .{ .shift = true } } },
+            .{ .move_bookmark_to_selected = .{ .allow_backwards = true } },
+        );
+        try map.add_one_for_state(
+            .{ .bookmark = .view },
+            .{ .key = .{ .key = 'd' } },
+            .apply_jj_bookmark_delete,
+        );
+        try map.add_one_for_state(
+            .{ .bookmark = .view },
+            .{ .key = .{ .key = 'f' } },
+            .{ .apply_jj_bookmark_forget = .{ .include_remotes = false } },
+        );
+        try map.add_one_for_state(
+            .{ .bookmark = .view },
+            .{ .key = .{ .key = 'F', .mod = .{ .shift = true } } },
+            .{ .apply_jj_bookmark_forget = .{ .include_remotes = true } },
+        );
+        try map.add_one_for_state(
+            .{ .bookmark = .create },
+            .{ .functional = .{ .key = .enter } },
+            .apply_jj_bookmark_create_from_input_buffer_on_selected_change,
+        );
+        try map.add_one_for_state(
+            .{ .git = .none },
+            .{ .key = .{ .key = 'F', .mod = .{ .shift = true } } },
+            .apply_jj_git_fetch,
+        );
 
-        return map;
+        return map.build();
     }
 
     // thread safety: do not use from other threads
@@ -1972,7 +2022,7 @@ pub const App = struct {
                     else => {},
                 };
 
-                const action = self.input_action_map.get(.{ .state = self.state, .input = input }) orelse return;
+                const action = self.input_action_map.get(self.state, input) orelse return;
                 try self._handle_event(.{ .action = action });
             },
             .action => |action| switch (action) {

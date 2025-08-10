@@ -5,7 +5,7 @@ const utils_mod = @import("utils.zig");
 const term_mod = @import("term.zig");
 
 const main_mod = @import("main.zig");
-const App = main_mod.App;
+const Event = main_mod.Event;
 
 pub const Schema = struct {
     pub const Author = struct {
@@ -60,7 +60,7 @@ pub const JujutsuServer = struct {
     requests: utils_mod.Channel(Request),
 
     // not owned
-    events: utils_mod.Channel(App.Event),
+    events: utils_mod.Channel(Event),
 
     pub const Request = union(enum) {
         log,
@@ -80,7 +80,7 @@ pub const JujutsuServer = struct {
         res: Result,
     };
 
-    pub fn init(alloc: std.mem.Allocator, events: utils_mod.Channel(App.Event)) !*@This() {
+    pub fn init(alloc: std.mem.Allocator, events: utils_mod.Channel(Event)) !*@This() {
         const self = try alloc.create(@This());
         errdefer alloc.destroy(self);
 

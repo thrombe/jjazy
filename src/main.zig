@@ -1106,7 +1106,6 @@ pub const Sleeper = struct {
 pub const State = union(enum(u8)) {
     log,
     oplog,
-    evlog: jj_mod.Change,
     bookmark: enum {
         view,
         create,
@@ -1241,7 +1240,6 @@ pub const InputActionMap = struct {
             }
             fn hash_state(_: @This(), hasher: anytype, state: State) void {
                 switch (state) {
-                    inline .oplog => |_, t| utils_mod.hash_update(hasher, t),
                     else => |t| utils_mod.hash_update(hasher, t),
                 }
             }
@@ -1262,7 +1260,6 @@ pub const InputActionMap = struct {
             }
             fn eql_state(_: @This(), a: State, b: @TypeOf(a)) bool {
                 switch (a) {
-                    inline .oplog => return std.meta.activeTag(a) == std.meta.activeTag(b),
                     else => return std.meta.eql(a, b),
                 }
             }
@@ -1537,7 +1534,6 @@ pub const App = struct {
             try map.for_states(&[_]State{
                 .log,
                 .oplog,
-                .{ .evlog = .{} },
                 .command,
                 .{ .bookmark = .view },
                 .{ .bookmark = .create },
@@ -1572,7 +1568,6 @@ pub const App = struct {
             try map.for_states(&[_]State{
                 .log,
                 .oplog,
-                .{ .evlog = .{} },
                 .{ .bookmark = .view },
                 .{ .git = .none },
                 .{ .git = .fetch },
@@ -1999,7 +1994,7 @@ pub const App = struct {
                 },
                 .view => .{},
             },
-            .oplog, .log, .git, .evlog => .{},
+            .oplog, .log, .git => .{},
         };
 
         switch (event) {

@@ -1317,6 +1317,12 @@ pub const App = struct {
     render_count: u64 = 0,
     last_hash: u64 = 0,
 
+    const CommandResult = struct {
+        errored: bool,
+        err: []const u8,
+        out: []const u8,
+    };
+
     var app: *@This() = undefined;
 
     fn init(alloc: std.mem.Allocator) !*@This() {
@@ -2766,11 +2772,7 @@ pub const App = struct {
         // try self.execute_interactive_command(args);
     }
 
-    fn _execute_non_interactive_command(self: *@This(), args: []const []const u8) !struct {
-        errored: bool,
-        err: []const u8,
-        out: []const u8,
-    } {
+    fn _execute_non_interactive_command(self: *@This(), args: []const []const u8) !CommandResult {
         const alloc = self.alloc;
 
         var child = std.process.Child.init(args, alloc);
@@ -2859,16 +2861,26 @@ pub const App = struct {
         // try self.screen.term.tty.writeAll(codes.sync_set);
         try self.restore_terminal_for_command();
 
-        const _err_buf = self._execute_command(args) catch |e| switch (e) {
-            error.FileNotFound => try std.fmt.allocPrint(self.alloc, "Executable not found", .{}),
+        const res = self._execute_command(args) catch |e| switch (e) {
+            error.FileNotFound => CommandResult{
+                .errored = true,
+                .err = try std.fmt.allocPrint(self.alloc, "Executable not found", .{}),
+                .out = &.{},
+            },
             else => return e,
         };
-        if (_err_buf) |err_buf| try self._err_toast(error.CommandExecutionError, err_buf);
+        if (res.errored) {
+            try self._err_toast(error.CommandExecutionError, res.err);
+        } else {
+            if (res.err.len > 0) {
+                try self._err_toast(null, res.err);
+            }
+        }
 
         try self.uncook_terminal();
     }
 
-    fn _execute_command(self: *@This(), args: []const []const u8) !?[]const u8 {
+    fn _execute_command(self: *@This(), args: []const []const u8) !CommandResult {
         const alloc = self.alloc;
         var child = std.process.Child.init(args, alloc);
         child.stderr_behavior = .Pipe;
@@ -2922,12 +2934,11 @@ pub const App = struct {
             },
         }
 
-        if (errored) {
-            return try err_buf.toOwnedSlice();
-        }
-
-        err_buf.deinit();
-        return null;
+        return .{
+            .errored = errored,
+            .err = try err_buf.toOwnedSlice(),
+            .out = &.{},
+        };
     }
 };
 

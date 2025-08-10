@@ -2542,9 +2542,11 @@ pub const App = struct {
                 },
                 .switch_state_to_git_fetch => {
                     self.state = .{ .git = .fetch };
+                    try self.jj.requests.send(.bookmark);
                 },
                 .switch_state_to_git_push => {
                     self.state = .{ .git = .push };
+                    try self.jj.requests.send(.bookmark);
                 },
             },
             // TODO: handle errors better

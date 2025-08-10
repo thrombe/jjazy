@@ -554,14 +554,23 @@ const BookmarkSlate = struct {
             if (!include.remotes and bookmark.parsed.remote != null) continue;
             if (!include.git_as_remote and std.mem.eql(u8, bookmark.parsed.remote orelse &.{}, "git")) continue;
 
+            try surface.apply_style(.{ .foreground_color = .from_theme(.info) });
             try surface.draw_buf(bookmark.parsed.name);
+            try surface.apply_style(.reset);
+
             for (bookmark.parsed.target) |t| {
                 try surface.draw_buf(" ");
+
+                try surface.apply_style(.{ .foreground_color = .from_theme(.default_foreground) });
                 try surface.draw_buf(t[0..8]);
+                try surface.apply_style(.reset);
             }
+
             if (bookmark.parsed.remote) |remote| {
+                try surface.apply_style(.{ .foreground_color = .from_theme(.alt_info) });
                 try surface.draw_buf(" @");
                 try surface.draw_buf(remote);
+                try surface.apply_style(.reset);
             }
             try surface.new_line();
 

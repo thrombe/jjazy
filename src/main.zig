@@ -532,7 +532,11 @@ const BookmarkSlate = struct {
         return null;
     }
 
-    fn render(self: *@This(), surface: *Surface) !void {
+    fn render(self: *@This(), surface: *Surface, include: struct {
+        local_only: bool = true,
+        remotes: bool = true,
+        git_as_remote: bool = false,
+    }) !void {
         try surface.clear();
 
         try surface.apply_style(.bold);
@@ -546,6 +550,10 @@ const BookmarkSlate = struct {
         var i: u32 = 0;
         self.it.reset(self.buf);
         while (try self.it.next()) |bookmark| {
+            if (!include.local_only and bookmark.parsed.remote == null) continue;
+            if (!include.remotes and bookmark.parsed.remote != null) continue;
+            if (!include.git_as_remote and std.mem.eql(u8, bookmark.parsed.remote orelse &.{}, "git")) continue;
+
             try surface.draw_buf(bookmark.parsed.name);
             for (bookmark.parsed.target) |t| {
                 try surface.draw_buf(" ");
@@ -2713,7 +2721,15 @@ pub const App = struct {
                 const region = max_popup_region.clamp(.{ .origin = origin, .size = popup_size });
                 var surface = try Surface.init(&self.screen, .{ .origin = region.origin, .size = region.size });
 
-                try self.bookmarks.render(&surface);
+                if (self.state == .bookmark) {
+                    try self.bookmarks.render(&surface, .{});
+                } else if (std.meta.eql(self.state, .{ .git = .push })) {
+                    try self.bookmarks.render(&surface, .{
+                        // .remotes = false,
+                    });
+                } else if (std.meta.eql(self.state, .{ .git = .fetch })) {
+                    try self.bookmarks.render(&surface, .{ .local_only = false });
+                } else unreachable;
             }
 
             if (self.state == .command or (self.state == .bookmark and self.state.bookmark == .create)) {

@@ -971,7 +971,7 @@ const Toaster = struct {
         self.alloc.free(toast.value.msg);
     }
 
-    fn render(self: *@This(), surface: *Surface, app: *App) !void {
+    fn render(self: *@This(), surface: *Surface, app: *App, dir: enum { down, up }) !void {
         const temp = app.arena.allocator();
         var buf = std.ArrayList(Toaster.Toast).init(temp);
 
@@ -983,8 +983,15 @@ const Toaster = struct {
             var height = utils_mod.LineIterator.init(e.msg).count_height();
             height += 2;
 
-            toast = try surface.split_y(height, .gap);
-            std.mem.swap(Surface, &toast, surface);
+            switch (dir) {
+                .up => {
+                    toast = try surface.split_y(height, .gap);
+                    std.mem.swap(Surface, &toast, surface);
+                },
+                .down => {
+                    toast = try surface.split_y(-height, .gap);
+                },
+            }
 
             try toast.apply_style(.{ .foreground_color = .from_theme(if (e.err != null) .errors else .dim_text) });
             try toast.clear();
@@ -2761,7 +2768,7 @@ pub const App = struct {
             {
                 const region = max_popup_region.split_x(-100, false).right;
                 var surface = try Surface.init(&self.screen, .{ .origin = region.origin, .size = region.size });
-                try self.toaster.render(&surface, self);
+                try self.toaster.render(&surface, self, if (self.show_help) .up else .down);
             }
 
             if (self.show_help) {

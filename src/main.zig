@@ -799,7 +799,7 @@ const HelpSlate = struct {
 
     fn render(self: *@This(), surface: *Surface, app: *App) !void {
         const temp = app.arena.allocator();
-        const cmp = InputActionMap.InputActionState.HashCtx{};
+        const cmp = InputActionMap.Input.HashCtx{};
 
         const HelpItem = struct {
             key: []const u8,
@@ -1159,17 +1159,17 @@ pub const InputActionMap = struct {
         self.map.deinit();
     }
 
-    fn get(self: *const @This(), state: State, key: Input) ?Action {
+    fn get(self: *const @This(), state: State, key: Key) ?Action {
         return self.map.get(.{ .state = state, .input = key });
     }
 
-    const Input = term_mod.TermInputIterator.Input;
-    const InputActionState = struct {
+    const Key = term_mod.TermInputIterator.Input;
+    const Input = struct {
         state: State,
-        input: Input,
+        input: Key,
 
         const HashCtx = struct {
-            fn hash_input(_: @This(), hasher: anytype, input: Input) void {
+            fn hash_input(_: @This(), hasher: anytype, input: Key) void {
                 switch (input) {
                     .mouse => |key| {
                         utils_mod.hash_update(hasher, key.key);
@@ -1185,7 +1185,7 @@ pub const InputActionMap = struct {
                     else => |t| utils_mod.hash_update(hasher, t),
                 }
             }
-            fn eql_input(_: @This(), a: Input, b: @TypeOf(a)) bool {
+            fn eql_input(_: @This(), a: Key, b: @TypeOf(a)) bool {
                 if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
                 switch (a) {
                     .mouse => {
@@ -1207,18 +1207,18 @@ pub const InputActionMap = struct {
                 }
             }
 
-            pub fn hash(self: @This(), input: InputActionState) u64 {
+            pub fn hash(self: @This(), input: Input) u64 {
                 var hasher = std.hash.Wyhash.init(0);
                 self.hash_input(&hasher, input.input);
                 self.hash_state(&hasher, input.state);
                 return hasher.final();
             }
-            pub fn eql(self: @This(), a: InputActionState, b: InputActionState) bool {
+            pub fn eql(self: @This(), a: Input, b: Input) bool {
                 return self.eql_input(a.input, b.input) and self.eql_state(a.state, b.state);
             }
         };
     };
-    const Map = std.HashMap(InputActionState, Action, InputActionState.HashCtx, std.hash_map.default_max_load_percentage);
+    const Map = std.HashMap(Input, Action, Input.HashCtx, std.hash_map.default_max_load_percentage);
 
     const Builder = struct {
         map: Map,
@@ -1242,15 +1242,15 @@ pub const InputActionMap = struct {
             try self.states.appendSlice(states);
         }
 
-        fn add_one(self: *@This(), key: Input, action: Action) !void {
+        fn add_one(self: *@This(), key: Key, action: Action) !void {
             for (self.states.items) |state| try self.map.put(.{ .state = state, .input = key }, action);
         }
 
-        fn add_many(self: *@This(), keys: []const Input, action: Action) !void {
+        fn add_many(self: *@This(), keys: []const Key, action: Action) !void {
             for (self.states.items) |state| for (keys) |key| try self.map.put(.{ .state = state, .input = key }, action);
         }
 
-        fn add_one_for_state(self: *@This(), state: State, key: Input, action: Action) !void {
+        fn add_one_for_state(self: *@This(), state: State, key: Key, action: Action) !void {
             try self.map.put(.{ .state = state, .input = key }, action);
         }
 
@@ -1464,7 +1464,7 @@ pub const App = struct {
     fn init_input_action_map(alloc: std.mem.Allocator) !InputActionMap {
         var map = InputActionMap.builder(alloc);
         errdefer map.deinit();
-        const Input = InputActionMap.Input;
+        const Key = InputActionMap.Key;
 
         {
             defer map.reset();
@@ -1530,7 +1530,7 @@ pub const App = struct {
                 .{ .fancy_terminal_features_that_break_gdb = .disable },
             );
             try map.add_many(
-                &[_]Input{
+                &[_]Key{
                     .{ .key = .{ .key = '?', .mod = .{ .shift = true } } },
                     .{ .key = .{ .key = '?' } }, // zellij does not pass .shift = true with '?'
                 },
@@ -1552,7 +1552,7 @@ pub const App = struct {
                 .abandon,
             });
             try map.add_many(
-                &[_]Input{
+                &[_]Key{
                     .{ .key = .{ .key = 'j', .action = .press } },
                     .{ .key = .{ .key = 'j', .action = .repeat } },
                     .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .press } },
@@ -1561,7 +1561,7 @@ pub const App = struct {
                 .{ .scroll = .{ .target = .log, .dir = .down } },
             );
             try map.add_many(
-                &[_]Input{
+                &[_]Key{
                     .{ .key = .{ .key = 'k', .action = .press } },
                     .{ .key = .{ .key = 'k', .action = .repeat } },
                     .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .press } },
@@ -1570,28 +1570,28 @@ pub const App = struct {
                 .{ .scroll = .{ .target = .log, .dir = .up } },
             );
             try map.add_many(
-                &[_]Input{
+                &[_]Key{
                     .{ .key = .{ .key = 'j', .action = .press, .mod = .{ .ctrl = true } } },
                     .{ .key = .{ .key = 'j', .action = .repeat, .mod = .{ .ctrl = true } } },
                 },
                 .{ .scroll = .{ .target = .diff, .dir = .down } },
             );
             try map.add_many(
-                &[_]Input{
+                &[_]Key{
                     .{ .key = .{ .key = 'k', .action = .press, .mod = .{ .ctrl = true } } },
                     .{ .key = .{ .key = 'k', .action = .repeat, .mod = .{ .ctrl = true } } },
                 },
                 .{ .scroll = .{ .target = .diff, .dir = .up } },
             );
             try map.add_many(
-                &[_]Input{
+                &[_]Key{
                     .{ .key = .{ .key = 'h', .action = .press, .mod = .{ .ctrl = true } } },
                     .{ .key = .{ .key = 'h', .action = .repeat, .mod = .{ .ctrl = true } } },
                 },
                 .{ .resize_master = .left },
             );
             try map.add_many(
-                &[_]Input{
+                &[_]Key{
                     .{ .key = .{ .key = 'l', .action = .press, .mod = .{ .ctrl = true } } },
                     .{ .key = .{ .key = 'l', .action = .repeat, .mod = .{ .ctrl = true } } },
                 },
@@ -1604,7 +1604,7 @@ pub const App = struct {
                 .oplog,
             });
             try map.add_many(
-                &[_]Input{
+                &[_]Key{
                     .{ .key = .{ .key = 'j', .action = .press } },
                     .{ .key = .{ .key = 'j', .action = .repeat } },
                     .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .press } },
@@ -1613,7 +1613,7 @@ pub const App = struct {
                 .{ .scroll = .{ .target = .oplog, .dir = .down } },
             );
             try map.add_many(
-                &[_]Input{
+                &[_]Key{
                     .{ .key = .{ .key = 'k', .action = .press } },
                     .{ .key = .{ .key = 'k', .action = .repeat } },
                     .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .press } },
@@ -1636,7 +1636,7 @@ pub const App = struct {
                 .abandon,
             });
             try map.add_many(
-                &[_]Input{
+                &[_]Key{
                     .{ .key = .{ .key = ' ', .action = .press } },
                     .{ .key = .{ .key = ' ', .action = .repeat } },
                 },
@@ -1672,14 +1672,14 @@ pub const App = struct {
                 .{ .bookmark = .view },
             });
             try map.add_many(
-                &[_]Input{
+                &[_]Key{
                     .{ .key = .{ .key = 'j', .action = .press } },
                     .{ .key = .{ .key = 'j', .action = .repeat } },
                 },
                 .{ .scroll = .{ .target = .bookmarks, .dir = .down } },
             );
             try map.add_many(
-                &[_]Input{
+                &[_]Key{
                     .{ .key = .{ .key = 'k', .action = .press } },
                     .{ .key = .{ .key = 'k', .action = .repeat } },
                 },
@@ -1750,7 +1750,7 @@ pub const App = struct {
             defer map.reset();
             try map.for_state(.log);
             try map.add_many(
-                &[_]Input{
+                &[_]Key{
                     .{ .key = .{ .key = ':', .mod = .{ .shift = true } } },
                     .{ .key = .{ .key = ':' } }, // zellij does not pass .shift = true :/
                 },

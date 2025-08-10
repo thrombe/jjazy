@@ -44,6 +44,24 @@
         inherit overlays;
       };
 
+      jjazy = stdenv.mkDerivation {
+        name = "jjazy";
+        src = pkgs.lib.cleanSource ./.;
+
+        nativeBuildInputs = with pkgs; [
+          zig
+          zig.hook
+        ];
+
+        buildPhase = ''
+          zig build -Doptimize=ReleaseFast
+        '';
+        installPhase = ''
+          mkdir -p $out/bin
+          cp ./zig-out/bin/jjazy $out/bin/.
+        '';
+      };
+
       fhs = pkgs.buildFHSEnv {
         name = "fhs-shell";
         targetPkgs = p: (env-packages p) ++ (custom-commands p);
@@ -77,7 +95,10 @@
 
       stdenv = pkgs.clangStdenv;
     in {
-      packages = {};
+      packages = {
+        inherit jjazy;
+        default = jjazy;
+      };
       overlays = {};
 
       devShells.default =

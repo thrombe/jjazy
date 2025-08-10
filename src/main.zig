@@ -2749,15 +2749,28 @@ pub const App = struct {
     }
 
     fn execute_non_interactive_command(self: *@This(), args: []const []const u8) !void {
-        const _err_buf = try self._execute_non_interactive_command(args);
-        if (_err_buf) |err_buf| try self._err_toast(error.CommandExecutionError, err_buf);
+        const res = try self._execute_non_interactive_command(args);
+        if (res.errored) {
+            try self._err_toast(error.CommandExecutionError, res.err);
+        } else {
+            if (res.err.len > 0) {
+                try self._err_toast(null, res.err);
+            }
+            if (res.out.len > 0) {
+                try self._err_toast(null, res.out);
+            }
+        }
 
         // better error messages. nothing bad. so i just do this for now :|
         // OOF: some jj commands print output when successful. so this mode will dump output in real stdout :/
         // try self.execute_interactive_command(args);
     }
 
-    fn _execute_non_interactive_command(self: *@This(), args: []const []const u8) !?[]const u8 {
+    fn _execute_non_interactive_command(self: *@This(), args: []const []const u8) !struct {
+        errored: bool,
+        err: []const u8,
+        out: []const u8,
+    } {
         const alloc = self.alloc;
 
         var child = std.process.Child.init(args, alloc);
@@ -2823,17 +2836,21 @@ pub const App = struct {
             },
         }
 
-        if (errored) {
-            return try err_buf.toOwnedSlice();
-        }
-
         const out_fifo = poller.fifo(.stdout);
+        const out_out = out_fifo.buf[out_fifo.head..][0..out_fifo.count];
+
+        var out_buf = std.ArrayList(u8).init(alloc);
+        errdefer out_buf.deinit();
         if (out_fifo.count > 0) {
-            std.log.debug("{s}", .{out_fifo.buf[out_fifo.head..][0..out_fifo.count]});
+            std.log.debug("{s}", .{out_out});
+            try out_buf.appendSlice(out_out);
         }
 
-        err_buf.deinit();
-        return null;
+        return .{
+            .errored = errored,
+            .err = try err_buf.toOwnedSlice(),
+            .out = try out_buf.toOwnedSlice(),
+        };
     }
 
     fn execute_interactive_command(self: *@This(), args: []const []const u8) !void {

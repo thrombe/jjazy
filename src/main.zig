@@ -1042,7 +1042,7 @@ pub const Sleeper = struct {
                 }
             }
 
-            std.Thread.sleep(std.time.ns_per_ms * 50);
+            std.Thread.sleep(std.time.ns_per_ms * 2);
         }
     }
 };
@@ -1179,7 +1179,8 @@ pub const App = struct {
     pub const Event = union(enum) {
         sigwinch,
         rerender,
-        diff_update,
+        scroll_update,
+        diff_update: jj_mod.Change,
         op_update,
         quit,
         input: term_mod.TermInputIterator.Input,
@@ -1867,7 +1868,40 @@ pub const App = struct {
                 try self.screen.term.update_size();
                 try self._send_event(.rerender);
             },
-            .diff_update => try self.request_jj_diff(),
+            .scroll_update => {
+                self.log.changes.reset(self.log.status);
+                var i: i32 = 0;
+                while (try self.log.changes.next()) |parsed| {
+                    const change = jj_mod.Change.from_parsed(&parsed);
+
+                    // const n: i32 = 3;
+                    const n: i32 = 0;
+                    if (self.log.y == i) {
+                        self.log.focused_change = change;
+                    } else if (@abs(self.log.y - i) < n) {
+                        if (self.diff.diffcache.get(change.hash) == null) {
+                            try self.diff.diffcache.put(change.hash, .{});
+                            try self.jj.requests.send(.{ .diff = change });
+                        }
+                    } else if (self.log.y + n < i) {
+                        break;
+                    }
+                    i += 1;
+                }
+
+                if (self.diff.diffcache.get(self.log.focused_change.hash)) |_| {
+                    try self._send_event(.rerender);
+                } else {
+                    // debounce diff requests
+                    try self.sleeper.delay_event(20, .{ .diff_update = self.log.focused_change });
+                }
+            },
+            .diff_update => |change| {
+                if (std.mem.eql(u8, change.hash[0..], self.log.focused_change.hash[0..])) {
+                    try self.diff.diffcache.put(change.hash, .{});
+                    try self.jj.requests.send(.{ .diff = change });
+                }
+            },
             .op_update => try self.request_jj_op(),
             .toast => |toast| {
                 const id = try self.toaster.add(toast);
@@ -1954,7 +1988,7 @@ pub const App = struct {
                             .up => self.log.y -= 1,
                             .down => self.log.y += 1,
                         }
-                        try self._send_event(.diff_update);
+                        try self._send_event(.scroll_update);
                     },
                     .oplog => {
                         switch (target.dir) {
@@ -2329,7 +2363,7 @@ pub const App = struct {
                         .ok => |buf| {
                             self.log.status = buf;
                             self.log.changes.reset(buf);
-                            try self._send_event(.diff_update);
+                            try self._send_event(.scroll_update);
                         },
                         .err => |buf| {
                             self.log.status = buf;
@@ -2423,36 +2457,6 @@ pub const App = struct {
     fn _err_toast(self: *@This(), err: ?anyerror, msg: []const u8) !void {
         const id = try self.toaster.add(.{ .err = err, .msg = msg });
         try self.sleeper.delay_event(5000, .{ .pop_toast = id });
-    }
-
-    fn request_jj_diff(self: *@This()) !void {
-        self.log.changes.reset(self.log.status);
-        var i: i32 = 0;
-        while (try self.log.changes.next()) |parsed| {
-            const change = jj_mod.Change.from_parsed(&parsed);
-
-            // const n: i32 = 3;
-            const n: i32 = 0;
-            if (self.log.y == i) {
-                self.log.focused_change = change;
-            } else if (@abs(self.log.y - i) < n) {
-                if (self.diff.diffcache.get(change.hash) == null) {
-                    try self.diff.diffcache.put(change.hash, .{});
-                    try self.jj.requests.send(.{ .diff = change });
-                }
-            } else if (self.log.y + n < i) {
-                break;
-            }
-            i += 1;
-        }
-
-        if (self.diff.diffcache.get(self.log.focused_change.hash)) |_| {
-            try self._send_event(.rerender);
-        } else {
-            try self.diff.diffcache.put(self.log.focused_change.hash, .{});
-            // somehow debounce diff requests
-            try self.jj.requests.send(.{ .diff = self.log.focused_change });
-        }
     }
 
     fn request_jj_op(self: *@This()) !void {

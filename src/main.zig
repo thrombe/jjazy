@@ -948,7 +948,15 @@ const Toaster = struct {
     const Id = u32;
     const Toast = struct {
         msg: []const u8,
-        err: ?anyerror,
+        mode: Mode,
+
+        const Mode = union(enum) {
+            err: anyerror,
+            success,
+            info,
+            warn,
+            none,
+        };
     };
 
     fn deinit(self: *@This()) void {
@@ -993,18 +1001,22 @@ const Toaster = struct {
                 },
             }
 
-            try toast.apply_style(.{ .foreground_color = .from_theme(if (e.err != null) .errors else .dim_text) });
+            try toast.apply_style(.{ .foreground_color = switch (e.mode) {
+                .err => .from_theme(.errors),
+                .warn => .from_theme(.warnings),
+                .info => .from_theme(.info),
+                .success => .from_theme(.success),
+                .none => .from_theme(.dim_text),
+            } });
             try toast.clear();
             try toast.draw_border(symbols.thin.square);
-            if (e.err) |err| {
+            if (e.mode == .err) {
                 try toast.apply_style(.{ .foreground_color = .from_theme(.max_contrast) });
                 try toast.apply_style(.bold);
-                try toast.draw_border_heading(try std.fmt.allocPrint(temp, " {any} ", .{err}));
-
-                try toast.apply_style(.reset);
-                try toast.apply_style(.{ .foreground_color = .from_theme(if (e.err != null) .errors else .dim_text) });
+                try toast.draw_border_heading(try std.fmt.allocPrint(temp, " {any} ", .{e.mode.err}));
             }
             try toast.apply_style(.reset);
+
             try toast.draw_buf(e.msg);
         }
     }
@@ -2259,7 +2271,7 @@ pub const App = struct {
                         try args.append(e.key_ptr.id[0..]);
 
                         if (std.meta.eql(e.key_ptr.*, self.log.focused_change)) {
-                            try self._err_toast(error.RebaseOnSelected, try self.alloc.dupe(u8, "Cannot rebase on selected change"));
+                            try self._toast(.{ .err = error.RebaseOnSelected }, try self.alloc.dupe(u8, "Cannot rebase on selected change"));
                             return;
                         }
                     }
@@ -2312,7 +2324,7 @@ pub const App = struct {
                         try args.append(e.key_ptr.id[0..]);
 
                         if (std.meta.eql(e.key_ptr.*, self.log.focused_change)) {
-                            try self._err_toast(error.SquashOnSelected, try self.alloc.dupe(u8, "Cannot squash on selected change"));
+                            try self._toast(.{ .err = error.SquashOnSelected }, try self.alloc.dupe(u8, "Cannot squash on selected change"));
                             return;
                         }
                     }
@@ -2382,7 +2394,7 @@ pub const App = struct {
                         try args.append(e.key_ptr.id[0..]);
 
                         if (std.meta.eql(e.key_ptr.*, self.log.focused_change)) {
-                            try self._err_toast(error.DuplicateOnSelected, try self.alloc.dupe(u8, "Cannot duplicate on selected change"));
+                            try self._toast(.{ .err = error.DuplicateOnSelected }, try self.alloc.dupe(u8, "Cannot duplicate on selected change"));
                             return;
                         }
                     }
@@ -2412,7 +2424,7 @@ pub const App = struct {
 
                     // TODO: why multiple targets?
                     if (bookmark.parsed.target.len != 1) {
-                        try self._err_toast(error.MultipleTargetsFound, try self.alloc.dupe(u8, "Error executing command"));
+                        try self._toast(.{ .err = error.MultipleTargetsFound }, try self.alloc.dupe(u8, "Error executing command"));
                         return;
                     }
 
@@ -2639,8 +2651,8 @@ pub const App = struct {
         }
     }
 
-    fn _err_toast(self: *@This(), err: ?anyerror, msg: []const u8) !void {
-        const id = try self.toaster.add(.{ .err = err, .msg = msg });
+    fn _toast(self: *@This(), mode: Toaster.Toast.Mode, msg: []const u8) !void {
+        const id = try self.toaster.add(.{ .mode = mode, .msg = msg });
         try self.sleeper.delay_event(5000, .{ .pop_toast = id });
     }
 
@@ -2789,13 +2801,24 @@ pub const App = struct {
     fn execute_non_interactive_command(self: *@This(), args: []const []const u8) !void {
         const res = try self._execute_non_interactive_command(args);
         if (res.errored) {
-            try self._err_toast(error.CommandExecutionError, res.err);
+            try self._toast(.{ .err = error.CommandExecutionError }, res.err);
+            if (res.out.len > 0) {
+                try self._toast(.none, res.out);
+            }
         } else {
             if (res.err.len > 0) {
-                try self._err_toast(null, res.err);
+                if (res.out.len > 0) {
+                    try self._toast(.warn, res.err);
+                } else {
+                    try self._toast(.info, res.err);
+                }
             }
             if (res.out.len > 0) {
-                try self._err_toast(null, res.out);
+                if (res.err.len > 0) {
+                    try self._toast(.none, res.out);
+                } else {
+                    try self._toast(.success, res.out);
+                }
             }
         }
 
@@ -2902,10 +2925,10 @@ pub const App = struct {
             else => return e,
         };
         if (res.errored) {
-            try self._err_toast(error.CommandExecutionError, res.err);
+            try self._toast(.{ .err = error.CommandExecutionError }, res.err);
         } else {
             if (res.err.len > 0) {
-                try self._err_toast(null, res.err);
+                try self._toast(.info, res.err);
             }
         }
 

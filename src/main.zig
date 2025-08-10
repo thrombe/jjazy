@@ -1713,10 +1713,16 @@ pub const App = struct {
             .state = .log,
             .input = .{ .key = .{ .key = 'D', .mod = .{ .shift = true } } },
         }, .jj_describe);
-        try map.put(.{
-            .state = .log,
-            .input = .{ .key = .{ .key = ':', .mod = .{ .shift = true } } },
-        }, .switch_state_to_command);
+        {
+            defer keys.clearRetainingCapacity();
+            try keys.append(.{ .key = .{ .key = ':', .mod = .{ .shift = true } } });
+            try keys.append(.{ .key = .{ .key = ':' } }); // zellij does not pass .shift = true :/
+
+            for (keys.items) |key| try map.put(.{
+                .state = .log,
+                .input = key,
+            }, .switch_state_to_command);
+        }
         {
             defer states.clearRetainingCapacity();
             try states.append(.{ .rebase = .onto });

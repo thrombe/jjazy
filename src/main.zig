@@ -1618,6 +1618,8 @@ pub const App = struct {
                     .{ .key = .{ .key = 'j', .action = .repeat } },
                     .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .press } },
                     .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .repeat } },
+                    .{ .functional = .{ .key = .down, .action = .press } },
+                    .{ .functional = .{ .key = .down, .action = .repeat } },
                 },
                 .{ .scroll = .{ .target = .log, .dir = .down } },
             );
@@ -1627,6 +1629,8 @@ pub const App = struct {
                     .{ .key = .{ .key = 'k', .action = .repeat } },
                     .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .press } },
                     .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .repeat } },
+                    .{ .functional = .{ .key = .up, .action = .press } },
+                    .{ .functional = .{ .key = .up, .action = .repeat } },
                 },
                 .{ .scroll = .{ .target = .log, .dir = .up } },
             );
@@ -1670,6 +1674,8 @@ pub const App = struct {
                     .{ .key = .{ .key = 'j', .action = .repeat } },
                     .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .press } },
                     .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .repeat } },
+                    .{ .functional = .{ .key = .down, .action = .press } },
+                    .{ .functional = .{ .key = .down, .action = .repeat } },
                 },
                 .{ .scroll = .{ .target = .oplog, .dir = .down } },
             );
@@ -1679,6 +1685,8 @@ pub const App = struct {
                     .{ .key = .{ .key = 'k', .action = .repeat } },
                     .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .press } },
                     .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .repeat } },
+                    .{ .functional = .{ .key = .up, .action = .press } },
+                    .{ .functional = .{ .key = .up, .action = .repeat } },
                 },
                 .{ .scroll = .{ .target = .oplog, .dir = .up } },
             );
@@ -1738,6 +1746,8 @@ pub const App = struct {
                 &[_]Key{
                     .{ .key = .{ .key = 'j', .action = .press } },
                     .{ .key = .{ .key = 'j', .action = .repeat } },
+                    .{ .functional = .{ .key = .down, .action = .press } },
+                    .{ .functional = .{ .key = .down, .action = .repeat } },
                 },
                 .{ .scroll = .{ .target = .bookmarks, .dir = .down } },
             );
@@ -1745,6 +1755,8 @@ pub const App = struct {
                 &[_]Key{
                     .{ .key = .{ .key = 'k', .action = .press } },
                     .{ .key = .{ .key = 'k', .action = .repeat } },
+                    .{ .functional = .{ .key = .up, .action = .press } },
+                    .{ .functional = .{ .key = .up, .action = .repeat } },
                 },
                 .{ .scroll = .{ .target = .bookmarks, .dir = .up } },
             );

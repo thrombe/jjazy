@@ -912,6 +912,8 @@ const HelpSlate = struct {
         };
         std.mem.sort(HelpItem, help_items.items, SortCtx{}, SortCtx.lessThan);
 
+        surface.region = surface.region.split_y(-cast(i32, help_items.items.len), false).bottom;
+
         try surface.apply_style(.{ .foreground_color = .from_theme(.default_foreground) });
         try surface.apply_style(.bold);
 
@@ -2805,10 +2807,9 @@ pub const App = struct {
                 const screen = self.screen.term.screen;
                 const r0 = screen.border_sub(.{ .x = 3, .y = 2 });
                 const r1 = r0.split_x(-80, false).right;
-                const r2 = r1.split_y(-30, false).bottom;
                 var help = try Surface.init(&self.screen, .{
-                    .origin = r2.origin,
-                    .size = r2.size,
+                    .origin = r1.origin,
+                    .size = r1.size,
                 });
                 try self.help.render(&help, self);
             }

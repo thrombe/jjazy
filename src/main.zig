@@ -1990,6 +1990,7 @@ pub const App = struct {
             global: bool = true,
             colored_gutter_cursor: bool = false,
             input_text: bool = false,
+            show_help: bool = false,
         } = switch (self.state) {
             .new, .squash, .abandon => .{
                 .colored_gutter_cursor = true,
@@ -2006,7 +2007,14 @@ pub const App = struct {
                 },
                 .view => .{},
             },
-            .oplog, .log, .git => .{},
+            .git => |state| switch (state) {
+                .none => .{
+                    .show_help = true,
+                },
+                .fetch => .{},
+                .push => .{},
+            },
+            .oplog, .log => .{},
         };
 
         switch (event) {
@@ -2790,10 +2798,10 @@ pub const App = struct {
             {
                 const region = max_popup_region.split_x(-100, false).right;
                 var surface = try Surface.init(&self.screen, .{ .origin = region.origin, .size = region.size });
-                try self.toaster.render(&surface, self, if (self.show_help) .up else .down);
+                try self.toaster.render(&surface, self, if (self.show_help or tropes.show_help) .up else .down);
             }
 
-            if (self.show_help) {
+            if (self.show_help or tropes.show_help) {
                 const screen = self.screen.term.screen;
                 const r0 = screen.border_sub(.{ .x = 3, .y = 2 });
                 const r1 = r0.split_x(-80, false).right;

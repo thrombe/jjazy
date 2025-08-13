@@ -715,8 +715,8 @@ const HelpSlate = struct {
             .help = "View bookmarks",
         },
         .{
-            .action = .show_help,
-            .help = "Show Help",
+            .action = .toggle_help,
+            .help = "Toggle help menu",
         },
         .{
             .action = .jj_split,
@@ -854,7 +854,7 @@ const HelpSlate = struct {
                 else => continue,
             }
             switch (iam.value_ptr.*) {
-                .show_help => continue,
+                .toggle_help => continue,
                 else => {},
             }
 
@@ -1182,7 +1182,7 @@ pub const Action = union(enum) {
     switch_state_to_oplog,
     switch_state_to_duplicate,
     switch_state_to_bookmarks_view,
-    show_help,
+    toggle_help,
     jj_split,
     jj_describe,
     switch_state_to_command,
@@ -1597,7 +1597,7 @@ pub const App = struct {
                     .{ .key = .{ .key = '?', .mod = .{ .shift = true } } },
                     .{ .key = .{ .key = '?' } }, // zellij does not pass .shift = true with '?'
                 },
-                .show_help,
+                .toggle_help,
             );
         }
         {
@@ -2249,8 +2249,8 @@ pub const App = struct {
                     self.state = .{ .bookmark = .view };
                     try self.jj.requests.send(.bookmark);
                 },
-                .show_help => {
-                    self.show_help = true;
+                .toggle_help => {
+                    self.show_help = !self.show_help;
                 },
                 .jj_split => {
                     try self.execute_interactive_command(&[_][]const u8{

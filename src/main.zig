@@ -2395,6 +2395,7 @@ pub const App = struct {
                     });
                     self.oplog.y = 0;
                     try self.jj.requests.send(.oplog);
+                    try self.jj.requests.send(.log);
                 },
                 .apply_jj_duplicate => {
                     defer {

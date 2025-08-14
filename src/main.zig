@@ -508,7 +508,8 @@ const BookmarkSlate = struct {
     alloc: std.mem.Allocator,
     buf: []const u8,
     it: jj_mod.Bookmark.Parsed.Iterator,
-    index: u32 = 0,
+    index: i32 = 0,
+    skip_y: i32 = 0,
 
     fn deinit(self: *@This()) void {
         self.alloc.free(self.buf);
@@ -532,11 +533,48 @@ const BookmarkSlate = struct {
         return null;
     }
 
-    fn render(self: *@This(), surface: *Surface, include: struct {
+    // TODO: make window width dynamic with a min size
+    fn render(self: *@This(), surface: *Surface, app: *App, include: struct {
         local_only: bool = true,
         remotes: bool = true,
         git_as_remote: bool = false,
     }) !void {
+        const temp = app.arena.allocator();
+        // ArrayXar prevents memory wastage through realloc in arena allocators
+        const Targets = []const u8;
+        var bookmarks_hash_order = utils_mod.ArrayXar(Targets, 5).init(temp);
+        var bookmarks = utils_mod.AutoHashMap(
+            Targets,
+            struct { name: []const u8, remotes: utils_mod.ArrayXar([]const u8, 2) },
+            .{ .pointer_hashing = .follow },
+        ).init(temp);
+
+        self.it.reset(self.buf);
+        while (try self.it.next()) |bookmark| {
+            if (!include.local_only and bookmark.parsed.remote == null) continue;
+            if (!include.remotes and bookmark.parsed.remote != null) continue;
+            if (!include.git_as_remote and std.mem.eql(u8, bookmark.parsed.remote orelse &.{}, "git")) continue;
+            if (bookmark.parsed.target.len > 1) {
+                try app._toast(.{ .err = error.ManyTargets }, try std.fmt.allocPrint(
+                    app.alloc,
+                    "bookmark {s} has {d} targets. but jjazy can only handle 1 at the moment",
+                    .{ bookmark.parsed.name, bookmark.parsed.target.len },
+                ));
+                continue;
+            }
+
+            const target = bookmark.parsed.target[0];
+            const b = try bookmarks.getOrPut(target);
+            if (!b.found_existing) {
+                b.value_ptr.name = bookmark.parsed.name;
+                b.value_ptr.remotes = .init(temp);
+                try bookmarks_hash_order.append(target);
+            }
+            if (bookmark.parsed.remote) |remote| {
+                try b.value_ptr.remotes.append(remote);
+            }
+        }
+
         try surface.clear();
 
         try surface.apply_style(.bold);
@@ -547,29 +585,34 @@ const BookmarkSlate = struct {
         var gutter = try surface.split_x(2, .gap);
         std.mem.swap(Surface, surface, &gutter);
 
-        var i: u32 = 0;
-        self.it.reset(self.buf);
-        while (try self.it.next()) |bookmark| {
-            if (!include.local_only and bookmark.parsed.remote == null) continue;
-            if (!include.remotes and bookmark.parsed.remote != null) continue;
-            if (!include.git_as_remote and std.mem.eql(u8, bookmark.parsed.remote orelse &.{}, "git")) continue;
+        self.index = @max(0, self.index);
+        if (self.skip_y > self.index) {
+            self.skip_y = self.index;
+        }
 
-            try surface.apply_style(.{ .foreground_color = .from_theme(.info) });
-            try surface.draw_buf(bookmark.parsed.name);
-            try surface.apply_style(.reset);
-
-            for (bookmark.parsed.target) |t| {
-                try surface.draw_buf(" ");
-
-                try surface.apply_style(.{ .foreground_color = .from_theme(.default_foreground) });
-                try surface.draw_buf(t[0..8]);
-                try surface.apply_style(.reset);
+        var i: i32 = 0;
+        var it = bookmarks_hash_order.iterator(.{});
+        while (it.next()) |e| {
+            defer i += 1;
+            if (self.skip_y > i) {
+                continue;
             }
 
-            if (bookmark.parsed.remote) |remote| {
+            const bookmark = bookmarks.get(e.*).?;
+            try surface.apply_style(.{ .foreground_color = .from_theme(.info) });
+            try surface.draw_buf(bookmark.name);
+            try surface.apply_style(.reset);
+
+            try surface.draw_buf(" ");
+            try surface.apply_style(.{ .foreground_color = .from_theme(.default_foreground) });
+            try surface.draw_buf(e.*[0..8]);
+            try surface.apply_style(.reset);
+
+            var remotes = bookmark.remotes.iterator(.{});
+            while (remotes.next()) |remote| {
                 try surface.apply_style(.{ .foreground_color = .from_theme(.alt_info) });
                 try surface.draw_buf(" @");
-                try surface.draw_buf(remote);
+                try surface.draw_buf(remote.*);
                 try surface.apply_style(.reset);
             }
             try surface.new_line();
@@ -579,11 +622,17 @@ const BookmarkSlate = struct {
             } else {
                 try gutter.new_line();
             }
-            i += 1;
+
+            if (surface.is_full()) break;
         }
 
-        if (self.index >= i) {
-            self.index = i -| 1;
+        if (it.ended() and self.index >= i and i > 0) {
+            self.index = i - 1;
+        }
+
+        if (self.index >= i and !it.ended()) {
+            self.skip_y += 1;
+            try app._send_event(.rerender);
         }
     }
 };
@@ -838,6 +887,7 @@ const HelpSlate = struct {
         self.action_help_map.deinit();
     }
 
+    // TODO: make window width dynamic with a min size
     fn render(self: *@This(), surface: *Surface, app: *App) !void {
         const temp = app.arena.allocator();
         const cmp = InputActionMap.Input.HashCtx{};
@@ -2194,7 +2244,7 @@ pub const App = struct {
                     },
                     .bookmarks => {
                         switch (target.dir) {
-                            .up => self.bookmarks.index -|= 1,
+                            .up => self.bookmarks.index -= 1,
                             .down => self.bookmarks.index += 1,
                         }
                     },
@@ -2796,13 +2846,13 @@ pub const App = struct {
                 var surface = try Surface.init(&self.screen, .{ .origin = region.origin, .size = region.size });
 
                 if (self.state == .bookmark) {
-                    try self.bookmarks.render(&surface, .{});
+                    try self.bookmarks.render(&surface, self, .{});
                 } else if (std.meta.eql(self.state, .{ .git = .push })) {
-                    try self.bookmarks.render(&surface, .{
+                    try self.bookmarks.render(&surface, self, .{
                         // .remotes = false,
                     });
                 } else if (std.meta.eql(self.state, .{ .git = .fetch })) {
-                    try self.bookmarks.render(&surface, .{ .local_only = false });
+                    try self.bookmarks.render(&surface, self, .{ .local_only = false });
                 } else unreachable;
             }
 

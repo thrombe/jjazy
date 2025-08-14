@@ -469,6 +469,10 @@ pub fn ArrayXar(T: type, base_chunk_size_log2: comptime_int) type {
             };
         }
 
+        pub fn clearRetainingCapacity(self: *@This()) void {
+            self.size = 0;
+        }
+
         pub fn deinit(self: *@This()) void {
             self.size = 0;
             for (&self.chunks, 0..) |*_chunk, i| if (_chunk.*) |chunk| {
@@ -537,7 +541,28 @@ pub fn ArrayXar(T: type, base_chunk_size_log2: comptime_int) type {
             }
         }
 
-        pub fn chunk_iterator(self: *@This(), v: struct { start: ?usize = null, size: ?usize = null }) ChunkIterator {
+        pub fn ownedSlice(self: *@This(), v: struct {
+            alloc: ?std.mem.Allocator = null,
+            reset: enum { none, deinit, clear_retaining_capacity } = .none,
+        }) ![]T {
+            const alloc = v.alloc orelse self.alloc;
+            const buffer = try alloc.alloc(T, self.size);
+            errdefer alloc.free(buffer);
+
+            var it = self.chunkIterator(.{});
+            while (it.next()) |e| {
+                @memcpy(buffer[e.offset..][0..e.chunk.len], e.chunk);
+            }
+
+            switch (v.reset) {
+                .none => {},
+                .deinit => self.deinit(),
+                .clear_retaining_capacity => self.clearRetainingCapacity(),
+            }
+            return buffer;
+        }
+
+        pub fn chunkIterator(self: *@This(), v: struct { start: ?usize = null, size: ?usize = null }) ChunkIterator {
             const start = v.start orelse 0;
             const chunk_index = chunkIndex(start);
 
@@ -551,7 +576,7 @@ pub fn ArrayXar(T: type, base_chunk_size_log2: comptime_int) type {
         }
 
         pub fn iterator(self: *@This(), v: struct { start: ?usize = null, size: ?usize = null }) Iterator {
-            var it = self.chunk_iterator(.{ .start = v.start, .size = v.size });
+            var it = self.chunkIterator(.{ .start = v.start, .size = v.size });
             const start = v.start orelse 0;
             const chunk_index = chunkIndex(start);
             const chunk_size = chunkSize(chunk_index);
@@ -801,8 +826,13 @@ test "Xar test base 5" {
     try std.testing.expectEqual(1, it.it.remaining);
     try std.testing.expectEqual(0, it.next().?.*);
 
+    const buf = try bytes.ownedSlice(.{});
+    defer alloc.free(buf);
+
     for (0..33) |i| {
-        try std.testing.expectEqual(32 - i, bytes.pop());
+        const b = bytes.pop();
+        try std.testing.expectEqual(32 - i, b);
+        try std.testing.expectEqual(buf[32 - i], b);
     }
     try std.testing.expectEqual(null, bytes.pop());
 }

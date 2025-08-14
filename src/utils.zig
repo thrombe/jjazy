@@ -30,31 +30,41 @@ pub inline fn cast(typ: type, val: anytype) typ {
     @compileError("can't cast from '" ++ @typeName(@TypeOf(val)) ++ "' to '" ++ @typeName(typ) ++ "'");
 }
 
-pub fn hash_update(hasher: anytype, val: anytype) void {
-    if (comptime std.meta.activeTag(@typeInfo(@TypeOf(hasher))) != .pointer) @compileError("you prob want to pass a pointer to hash_update() :/");
+const PtrFollow = enum { disabled, ptr_as_usize, follow };
+const AutoHashArgs = struct {
+    pointer_hashing: PtrFollow = .disabled,
+};
+pub fn hash_update(hasher: anytype, val: anytype, comptime v: AutoHashArgs) void {
+    if (comptime std.meta.activeTag(@typeInfo(@TypeOf(hasher))) != .pointer) @compileError("you prob want to pass a pointer to a hasher in hash_update() :/");
 
     const T = @TypeOf(val);
     const Ti = @typeInfo(T);
     switch (Ti) {
         inline .float, .int, .bool => hasher.update(&std.mem.toBytes(val)),
-        .array => for (val) |e| hash_update(hasher, e),
+        .array => for (val) |e| hash_update(hasher, e, v),
         .@"struct" => |e| {
             inline for (e.fields) |field| {
-                hash_update(hasher, @field(val, field.name));
+                hash_update(hasher, @field(val, field.name), v);
             }
         },
-        .@"enum" => hash_update(hasher, @intFromEnum(val)),
+        .@"enum" => hash_update(hasher, @intFromEnum(val), v),
         .@"union" => |e| {
-            hash_update(hasher, std.meta.activeTag(val));
+            hash_update(hasher, std.meta.activeTag(val), v);
             inline for (e.fields) |field| {
                 if (std.meta.activeTag(val) == std.meta.stringToEnum(std.meta.Tag(T), field.name)) {
-                    hash_update(hasher, @field(val, field.name));
+                    hash_update(hasher, @field(val, field.name), v);
                 }
             }
         },
         .void => {},
+        .pointer => switch (comptime v.pointer_hashing) {
+            .disabled => @compileError("pointer hashing is disabled"),
+            .follow => hash_update(hasher, val.*, v),
+            .ptr_as_usize => hash_update(hasher, @intFromPtr(val), v),
+        },
         else => @compileError("hash_update() for type '" ++ @typeName(T) ++ "' not supported"),
     }
+}
 }
 
 pub const FileLogger = struct {

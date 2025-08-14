@@ -1233,16 +1233,16 @@ pub const InputActionMap = struct {
             fn hash_input(_: @This(), hasher: anytype, input: Key) void {
                 switch (input) {
                     .mouse => |key| {
-                        utils_mod.hash_update(hasher, key.key);
-                        utils_mod.hash_update(hasher, key.mod);
-                        utils_mod.hash_update(hasher, key.action);
+                        utils_mod.hash_update(hasher, key.key, .{});
+                        utils_mod.hash_update(hasher, key.mod, .{});
+                        utils_mod.hash_update(hasher, key.action, .{});
                     },
-                    else => utils_mod.hash_update(hasher, input),
+                    else => utils_mod.hash_update(hasher, input, .{}),
                 }
             }
             fn hash_state(_: @This(), hasher: anytype, state: State) void {
                 switch (state) {
-                    else => |t| utils_mod.hash_update(hasher, t),
+                    else => |t| utils_mod.hash_update(hasher, t, .{}),
                 }
             }
             fn eql_input(_: @This(), a: Key, b: @TypeOf(a)) bool {

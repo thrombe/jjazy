@@ -97,7 +97,7 @@ pub fn auto_eql(a: anytype, b: @TypeOf(a), comptime v: AutoEqArgs) bool {
             return true;
         },
         .void => return true,
-        .pointer => switch (comptime v.pointer_hashing) {
+        .pointer => switch (comptime v.pointer_eq) {
             .disabled => @compileError("pointer hashing is disabled"),
             .follow => return auto_eql(a.*, b.*, v),
             .ptr_as_usize => return auto_eql(@intFromPtr(a), @intFromPtr(b), v),
@@ -105,6 +105,22 @@ pub fn auto_eql(a: anytype, b: @TypeOf(a), comptime v: AutoEqArgs) bool {
         else => @compileError("hash_update() for type '" ++ @typeName(T) ++ "' not supported"),
     }
 }
+
+pub fn AutoHashContext(typ: type, comptime v: AutoHashArgs) type {
+    return struct {
+        pub fn hash(_: @This(), a: typ) u64 {
+            var hasher = std.hash.Wyhash.init(0);
+            hash_update(&hasher, a, v);
+            return hasher.final();
+        }
+        pub fn eql(_: @This(), a: typ, b: typ) bool {
+            return auto_eql(a, b, .{ .pointer_eq = v.pointer_hashing });
+        }
+    };
+}
+
+pub fn AutoHashMap(key: type, val: type, v: AutoHashArgs) type {
+    return std.HashMap(key, val, AutoHashContext(key, v), std.hash_map.default_max_load_percentage);
 }
 
 pub const FileLogger = struct {

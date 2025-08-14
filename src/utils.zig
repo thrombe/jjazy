@@ -65,6 +65,46 @@ pub fn hash_update(hasher: anytype, val: anytype, comptime v: AutoHashArgs) void
         else => @compileError("hash_update() for type '" ++ @typeName(T) ++ "' not supported"),
     }
 }
+
+const AutoEqArgs = struct {
+    pointer_eq: PtrFollow = .disabled,
+};
+pub fn auto_eql(a: anytype, b: @TypeOf(a), comptime v: AutoEqArgs) bool {
+    const T = @TypeOf(a);
+    const Ti = @typeInfo(T);
+    switch (Ti) {
+        inline .@"enum", .float, .int, .bool => return std.meta.eql(a, b),
+        .array => {
+            if (a.len != b.len) return false;
+            for (0..a.len) |i| {
+                if (!auto_eql(a[i], b[i], v)) {
+                    return false;
+                }
+            }
+            return true;
+        },
+        .@"struct" => |e| {
+            inline for (e.fields) |field| {
+                if (!auto_eql(@field(a, field.name), @field(b, field.name), v)) return false;
+            }
+            return true;
+        },
+        .@"union" => |e| {
+            if (!std.meta.eql(std.meta.activeTag(a), std.meta.activeTag(b))) return false;
+            inline for (e.fields) |field| {
+                if (!auto_eql(@field(a, field.name), @field(b, field.name), v)) return false;
+            }
+            return true;
+        },
+        .void => return true,
+        .pointer => switch (comptime v.pointer_hashing) {
+            .disabled => @compileError("pointer hashing is disabled"),
+            .follow => return auto_eql(a.*, b.*, v),
+            .ptr_as_usize => return auto_eql(@intFromPtr(a), @intFromPtr(b), v),
+        },
+        else => @compileError("hash_update() for type '" ++ @typeName(T) ++ "' not supported"),
+    }
+}
 }
 
 pub const FileLogger = struct {

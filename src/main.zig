@@ -511,9 +511,67 @@ const BookmarkSlate = struct {
     y: i32 = 0,
     skip_y: i32 = 0,
 
+    bookmarks_hash_order: std.ArrayList(Targets),
+    bookmarks: utils_mod.AutoHashMap(
+        Targets,
+        struct {
+            name: []const u8,
+            remotes: std.ArrayList([]const u8),
+        },
+        .{ .pointer_hashing = .follow },
+    ),
+
+    const Targets = []const u8;
+
+    fn init(alloc: std.mem.Allocator) @This() {
+        return .{
+            .alloc = alloc,
+            .buf = &.{},
+            .it = .init(alloc, &.{}),
+            .bookmarks_hash_order = .init(alloc),
+            .bookmarks = .init(alloc),
+        };
+    }
+
     fn deinit(self: *@This()) void {
         self.alloc.free(self.buf);
         self.it.deinit();
+    }
+
+    fn update(self: *@This(), buf: []const u8) !void {
+        self.y = 0;
+        self.buf = buf;
+        self._update_cache();
+    }
+
+    fn _update_cache(self: *@This()) !void {
+        self.bookmarks_hash_order.clearRetainingCapacity();
+        self.bookmarks.clearRetainingCapacity();
+        self.it.reset(self.buf);
+        while (try self.it.next()) |bookmark| {
+            // if (!include.local_only and bookmark.parsed.remote == null) continue;
+            // if (!include.remotes and bookmark.parsed.remote != null) continue;
+            // if (!include.git_as_remote and std.mem.eql(u8, bookmark.parsed.remote orelse &.{}, "git")) continue;
+            if (bookmark.parsed.target.len > 1) {
+                try app._toast(.{ .err = error.ManyTargets }, try std.fmt.allocPrint(
+                    app.alloc,
+                    "bookmark {s} has {d} targets. but jjazy can only handle 1 at the moment",
+                    .{ bookmark.parsed.name, bookmark.parsed.target.len },
+                ));
+                continue;
+            }
+
+            const target = bookmark.parsed.target[0];
+            const b = try self.bookmarks.getOrPut(target);
+            if (!b.found_existing) {
+                b.value_ptr.name = bookmark.parsed.name;
+                b.value_ptr.remotes = .init(temp);
+                try self.bookmarks_hash_order.append(target);
+            }
+            if (bookmark.parsed.remote) |remote| {
+                try b.value_ptr.remotes.append(remote);
+            }
+        }
     }
 
     fn reset(self: *@This()) void {

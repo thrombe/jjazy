@@ -508,7 +508,7 @@ const BookmarkSlate = struct {
     alloc: std.mem.Allocator,
     buf: []const u8,
     it: jj_mod.Bookmark.Parsed.Iterator,
-    index: i32 = 0,
+    y: i32 = 0,
     skip_y: i32 = 0,
 
     fn deinit(self: *@This()) void {
@@ -517,12 +517,12 @@ const BookmarkSlate = struct {
     }
 
     fn reset(self: *@This()) void {
-        self.index = 0;
+        self.y = 0;
         self.it.reset(self.buf);
     }
 
     fn get_selected(self: *@This()) !?jj_mod.Bookmark.Parsed {
-        var i = self.index;
+        var i = self.y;
         self.it.reset(self.buf);
         while (try self.it.next()) |b| {
             if (i == 0) {
@@ -585,9 +585,9 @@ const BookmarkSlate = struct {
         var gutter = try surface.split_x(2, .gap);
         std.mem.swap(Surface, surface, &gutter);
 
-        self.index = @max(0, self.index);
-        if (self.skip_y > self.index) {
-            self.skip_y = self.index;
+        self.y = @max(0, self.y);
+        if (self.skip_y > self.y) {
+            self.skip_y = self.y;
         }
 
         var i: i32 = 0;
@@ -617,7 +617,7 @@ const BookmarkSlate = struct {
             }
             try surface.new_line();
 
-            if (i == self.index) {
+            if (i == self.y) {
                 try gutter.draw_bufln("->");
             } else {
                 try gutter.new_line();
@@ -626,11 +626,11 @@ const BookmarkSlate = struct {
             if (surface.is_full()) break;
         }
 
-        if (it.ended() and self.index >= i and i > 0) {
-            self.index = i - 1;
+        if (it.ended() and self.y >= i and i > 0) {
+            self.y = i - 1;
         }
 
-        if (self.index >= i and !it.ended()) {
+        if (self.y >= i and !it.ended()) {
             self.skip_y += 1;
             try app._send_event(.rerender);
         }
@@ -2244,8 +2244,8 @@ pub const App = struct {
                     },
                     .bookmarks => {
                         switch (target.dir) {
-                            .up => self.bookmarks.index -= 1,
-                            .down => self.bookmarks.index += 1,
+                            .up => self.bookmarks.y -= 1,
+                            .down => self.bookmarks.y += 1,
                         }
                     },
                 },
@@ -2730,7 +2730,7 @@ pub const App = struct {
                 }
                 hasher.update(&std.mem.toBytes(self.text_input.text.items.len));
                 hasher.update(&std.mem.toBytes(self.text_input.cursor));
-                hasher.update(&std.mem.toBytes(self.bookmarks.index));
+                hasher.update(&std.mem.toBytes(self.bookmarks.y));
                 // hasher.update(self.log.status); // too much text for hashing on every event
 
                 const final_hash = hasher.final();

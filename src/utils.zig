@@ -533,7 +533,7 @@ pub fn ArrayXar(T: type, base_chunk_size_log2: comptime_int) type {
     const base_chunk_size = 1 << base_chunk_size_log2;
     const chunks = 48 + 1 - base_chunk_size_log2;
     return struct {
-        chunks: [chunks]?[*c]T,
+        chunks: [chunks]?[*]T,
         size: usize = 0,
         alloc: std.mem.Allocator,
         // index chunk_size total_size
@@ -547,7 +547,7 @@ pub fn ArrayXar(T: type, base_chunk_size_log2: comptime_int) type {
         pub fn init(alloc: std.mem.Allocator) @This() {
             return .{
                 .alloc = alloc,
-                .chunks = std.mem.zeroes([chunks]?[*c]T),
+                .chunks = std.mem.zeroes([chunks]?[*]T),
             };
         }
 
@@ -644,7 +644,7 @@ pub fn ArrayXar(T: type, base_chunk_size_log2: comptime_int) type {
             return buffer;
         }
 
-        pub fn chunkIterator(self: *@This(), v: struct { start: ?usize = null, size: ?usize = null }) ChunkIterator {
+        pub fn chunkIterator(self: *const @This(), v: struct { start: ?usize = null, size: ?usize = null }) ChunkIterator {
             const start = v.start orelse 0;
             const chunk_index = chunkIndex(start);
 
@@ -657,7 +657,7 @@ pub fn ArrayXar(T: type, base_chunk_size_log2: comptime_int) type {
             };
         }
 
-        pub fn iterator(self: *@This(), v: struct { start: ?usize = null, size: ?usize = null }) Iterator {
+        pub fn iterator(self: *const @This(), v: struct { start: ?usize = null, size: ?usize = null }) Iterator {
             var it = self.chunkIterator(.{ .start = v.start, .size = v.size });
             const start = v.start orelse 0;
             const chunk_index = chunkIndex(start);
@@ -673,7 +673,7 @@ pub fn ArrayXar(T: type, base_chunk_size_log2: comptime_int) type {
         }
 
         const ChunkIterator = struct {
-            chunks: [chunks]?[*c]T,
+            chunks: [chunks]?[*]T,
             size: usize,
             remaining: usize,
             index: u6 = 0,

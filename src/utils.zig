@@ -63,9 +63,15 @@ pub fn hash_update(hasher: anytype, val: anytype, comptime v: AutoHashArgs) void
                 .follow => hash_update(hasher, val.*, v),
                 .ptr_as_usize => hash_update(hasher, @intFromPtr(val), v),
             },
-            .slice => for (val) |e| hash_update(hasher, e, v),
-            .many => @compileError("hash_update() for type '" ++ @typeName(T) ++ "' not supported"),
-            .c => @compileError("hash_update() for type '" ++ @typeName(T) ++ "' not supported"),
+            .slice => switch (comptime v.pointer_hashing) {
+                .disabled => @compileError("pointer hashing is disabled"),
+                .follow => for (val) |e| hash_update(hasher, e, v),
+                .ptr_as_usize => {
+                    hash_update(hasher, val.len, v);
+                    hash_update(hasher, val.ptr, v);
+                },
+            },
+            .many, .c => @compileError("hash_update() for type '" ++ @typeName(T) ++ "' not supported"),
         },
         else => @compileError("hash_update() for type '" ++ @typeName(T) ++ "' not supported"),
     }
@@ -108,15 +114,18 @@ pub fn auto_eql(a: anytype, b: @TypeOf(a), comptime v: AutoEqArgs) bool {
                 .follow => return auto_eql(a.*, b.*, v),
                 .ptr_as_usize => return auto_eql(@intFromPtr(a), @intFromPtr(b), v),
             },
-            .slice => {
-                if (a.len != b.len) return false;
-                for (a, b) |ae, be| {
-                    if (!auto_eql(ae, be, v)) return false;
-                }
-                return true;
+            .slice => switch (comptime v.pointer_hashing) {
+                .disabled => @compileError("pointer hashing is disabled"),
+                .follow => {
+                    if (a.len != b.len) return false;
+                    for (a, b) |ae, be| {
+                        if (!auto_eql(ae, be, v)) return false;
+                    }
+                    return true;
+                },
+                .ptr_as_usize => return auto_eql(a.len, b.len, v) and auto_eql(a.ptr, b.ptr, v),
             },
-            .many => @compileError("auto_eql() for type '" ++ @typeName(T) ++ "' not supported"),
-            .c => @compileError("auto_eql() for type '" ++ @typeName(T) ++ "' not supported"),
+            .many, .c => @compileError("auto_eql() for type '" ++ @typeName(T) ++ "' not supported"),
         },
         else => @compileError("auto_eql() for type '" ++ @typeName(T) ++ "' not supported"),
     }

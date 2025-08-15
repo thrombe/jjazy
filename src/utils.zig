@@ -57,10 +57,15 @@ pub fn hash_update(hasher: anytype, val: anytype, comptime v: AutoHashArgs) void
             }
         },
         .void => {},
-        .pointer => switch (comptime v.pointer_hashing) {
-            .disabled => @compileError("pointer hashing is disabled"),
-            .follow => hash_update(hasher, val.*, v),
-            .ptr_as_usize => hash_update(hasher, @intFromPtr(val), v),
+        .pointer => |p| switch (p.size) {
+            .one => switch (comptime v.pointer_hashing) {
+                .disabled => @compileError("pointer hashing is disabled"),
+                .follow => hash_update(hasher, val.*, v),
+                .ptr_as_usize => hash_update(hasher, @intFromPtr(val), v),
+            },
+            .slice => for (val) |e| hash_update(hasher, e, v),
+            .many => @compileError("hash_update() for type '" ++ @typeName(T) ++ "' not supported"),
+            .c => @compileError("hash_update() for type '" ++ @typeName(T) ++ "' not supported"),
         },
         else => @compileError("hash_update() for type '" ++ @typeName(T) ++ "' not supported"),
     }
@@ -97,12 +102,23 @@ pub fn auto_eql(a: anytype, b: @TypeOf(a), comptime v: AutoEqArgs) bool {
             return true;
         },
         .void => return true,
-        .pointer => switch (comptime v.pointer_eq) {
-            .disabled => @compileError("pointer hashing is disabled"),
-            .follow => return auto_eql(a.*, b.*, v),
-            .ptr_as_usize => return auto_eql(@intFromPtr(a), @intFromPtr(b), v),
+        .pointer => |p| switch (p.size) {
+            .one => switch (comptime v.pointer_hashing) {
+                .disabled => @compileError("pointer hashing is disabled"),
+                .follow => return auto_eql(a.*, b.*, v),
+                .ptr_as_usize => return auto_eql(@intFromPtr(a), @intFromPtr(b), v),
+            },
+            .slice => {
+                if (a.len != b.len) return false;
+                for (a, b) |ae, be| {
+                    if (!auto_eql(ae, be, v)) return false;
+                }
+                return true;
+            },
+            .many => @compileError("auto_eql() for type '" ++ @typeName(T) ++ "' not supported"),
+            .c => @compileError("auto_eql() for type '" ++ @typeName(T) ++ "' not supported"),
         },
-        else => @compileError("hash_update() for type '" ++ @typeName(T) ++ "' not supported"),
+        else => @compileError("auto_eql() for type '" ++ @typeName(T) ++ "' not supported"),
     }
 }
 

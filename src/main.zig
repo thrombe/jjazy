@@ -538,6 +538,8 @@ const BookmarkSlate = struct {
         local_only: bool = true,
         remotes: bool = true,
         git_as_remote: bool = false,
+    }, show: struct {
+        targets: bool = true,
     }) !void {
         const temp = app.arena.allocator();
         // ArrayXar prevents memory wastage through realloc in arena allocators
@@ -603,10 +605,12 @@ const BookmarkSlate = struct {
             try surface.draw_buf(bookmark.name);
             try surface.apply_style(.reset);
 
-            try surface.draw_buf(" ");
-            try surface.apply_style(.{ .foreground_color = .from_theme(.default_foreground) });
-            try surface.draw_buf(e.*[0..8]);
-            try surface.apply_style(.reset);
+            if (show.targets) {
+                try surface.draw_buf(" ");
+                try surface.apply_style(.{ .foreground_color = .from_theme(.default_foreground) });
+                try surface.draw_buf(e.*[0..8]);
+                try surface.apply_style(.reset);
+            }
 
             var remotes = bookmark.remotes.iterator(.{});
             while (remotes.next()) |remote| {
@@ -2846,13 +2850,13 @@ pub const App = struct {
                 var surface = try Surface.init(&self.screen, .{ .origin = region.origin, .size = region.size });
 
                 if (self.state == .bookmark) {
-                    try self.bookmarks.render(&surface, self, .{});
+                    try self.bookmarks.render(&surface, self, .{}, .{});
                 } else if (std.meta.eql(self.state, .{ .git = .push })) {
                     try self.bookmarks.render(&surface, self, .{
                         // .remotes = false,
-                    });
+                    }, .{ .targets = false });
                 } else if (std.meta.eql(self.state, .{ .git = .fetch })) {
-                    try self.bookmarks.render(&surface, self, .{ .local_only = false });
+                    try self.bookmarks.render(&surface, self, .{ .local_only = false }, .{ .targets = false });
                 } else unreachable;
             }
 

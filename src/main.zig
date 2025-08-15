@@ -747,8 +747,12 @@ const HelpSlate = struct {
             .help = "Apply jj new",
         },
         .{
-            .action = .execute_command_in_input_buffer,
+            .action = .{ .execute_command_in_input_buffer = .{ .interactive = false } },
             .help = "Execute entered command",
+        },
+        .{
+            .action = .{ .execute_command_in_input_buffer = .{ .interactive = true } },
+            .help = "Execute entered interactive command",
         },
         .{
             .action = .apply_jj_op_restore,
@@ -1190,7 +1194,7 @@ pub const Action = union(enum) {
     apply_jj_abandon,
     apply_jj_squash,
     apply_jj_new,
-    execute_command_in_input_buffer,
+    execute_command_in_input_buffer: struct { interactive: bool },
     apply_jj_op_restore,
     apply_jj_duplicate,
     switch_state_to_bookmark_create,
@@ -1864,7 +1868,12 @@ pub const App = struct {
         try map.add_one_for_state(
             .command,
             .{ .functional = .{ .key = .enter } },
-            .execute_command_in_input_buffer,
+            .{ .execute_command_in_input_buffer = .{ .interactive = false } },
+        );
+        try map.add_one_for_state(
+            .command,
+            .{ .functional = .{ .key = .enter, .mod = .{ .ctrl = true } } },
+            .{ .execute_command_in_input_buffer = .{ .interactive = true } },
         );
         try map.add_one_for_state(
             .oplog,
@@ -2002,6 +2011,7 @@ pub const App = struct {
             },
             .command => .{
                 .input_text = true,
+                .show_help = true,
             },
             .bookmark => |state| switch (state) {
                 .create => .{
@@ -2189,6 +2199,7 @@ pub const App = struct {
                 },
                 .switch_state_to_log => {
                     self.log.selected_changes.clearRetainingCapacity();
+                    self.text_input.reset();
                     self.state = .log;
                     self.show_help = false;
                 },
@@ -2373,7 +2384,13 @@ pub const App = struct {
                     try self.jj.requests.send(.log);
                     self.log.y = 0;
                 },
-                .execute_command_in_input_buffer => {
+                .execute_command_in_input_buffer => |e| {
+                    defer {
+                        self.text_input.reset();
+                        self.state = .log;
+                        self.show_help = false;
+                    }
+
                     var args = std.ArrayList([]const u8).init(temp);
 
                     // TODO: support parsing and passing "string" and 'string' with \" \' and spaces properly
@@ -2382,9 +2399,11 @@ pub const App = struct {
                         try args.append(arg);
                     }
 
-                    try self.execute_interactive_command(args.items);
-                    self.text_input.reset();
-                    self.state = .log;
+                    if (e.interactive) {
+                        try self.execute_interactive_command(args.items);
+                    } else {
+                        try self.execute_non_interactive_command(args.items);
+                    }
                 },
                 .apply_jj_op_restore => {
                     try self.execute_non_interactive_command(&[_][]const u8{

@@ -1181,6 +1181,7 @@ pub const Screen = struct {
         // submit and clear cmdbufs
         for (self.cmdbufs.items[0..self.cmdbuf_id]) |*cmdbuf| {
             try self.term.tty.writeAll(cmdbuf.items);
+            try @as(TermStyledGraphemeIterator.Style, .reset).write_to(self.term.tty.writer());
             cmdbuf.clearRetainingCapacity();
         }
 

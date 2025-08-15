@@ -151,8 +151,10 @@ pub const FileLogger = struct {
     pub var writer = Writer{ .context = &logger };
 
     pub fn init(self: *@This(), alloc: std.mem.Allocator, v: struct {
+        path: ?[]const u8 = null,
         allow_fail: bool = false,
     }) !void {
+        if (v.path) |path| self.path = path;
         const file = std.fs.cwd().createFile(self.path, .{}) catch |e| {
             if (v.allow_fail) {
                 self.enabled = false;

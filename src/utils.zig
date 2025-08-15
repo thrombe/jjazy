@@ -699,6 +699,10 @@ pub fn ArrayXar(T: type, base_chunk_size_log2: comptime_int) type {
                     return null;
                 }
             }
+
+            pub fn ended(self: *@This()) bool {
+                return self.remaining == 0;
+            }
         };
 
         const Iterator = struct {
@@ -722,6 +726,10 @@ pub fn ArrayXar(T: type, base_chunk_size_log2: comptime_int) type {
                     }
                 }
                 return &chunk[self.index];
+            }
+
+            pub fn ended(self: *@This()) bool {
+                return self.it.ended() and self.chunk == null;
             }
         };
     };

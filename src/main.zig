@@ -2017,6 +2017,7 @@ pub const App = struct {
             .bookmark => |state| switch (state) {
                 .create => .{
                     .input_text = true,
+                    .show_help = true,
                 },
                 .view => .{},
             },
@@ -2024,8 +2025,12 @@ pub const App = struct {
                 .none => .{
                     .show_help = true,
                 },
-                .fetch => .{},
-                .push => .{},
+                .fetch => .{
+                    .show_help = true,
+                },
+                .push => .{
+                    .show_help = true,
+                },
             },
             .oplog, .log => .{},
         };

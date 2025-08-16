@@ -1309,8 +1309,8 @@ pub const InputActionMap = struct {
         self.map.deinit();
     }
 
-    fn get(self: *const @This(), state: State, key: Key) ?Action {
-        return self.map.get(.{ .state = state, .input = key });
+    fn get(self: *const @This(), state: State, key: Key, mouse_region: ?MouseRegionKind) ?Action {
+        return self.map.get(.{ .state = state, .input = key, .mouse_region = mouse_region });
     }
 
     const Key = term_mod.TermInputIterator.Input;
@@ -2371,10 +2371,10 @@ pub const App = struct {
                     .mouse => |key| {
                         var curr_id: ?i32 = null;
                         var curr_depth: ?f32 = null;
-                        var region_kind: MouseRegionKind = .none;
+                        var region_kind: ?MouseRegionKind = .none;
                         for (self.mouse_regions.items) |region| {
-                            if (region.depth < curr_depth orelse std.math.floatMin(f32)) continue;
-                            if (region.depth == curr_depth orelse std.math.floatMin(f32) and cast(i32, region.surface_id) < curr_id orelse std.math.minInt(i32)) continue;
+                            if (region.depth < curr_depth orelse -std.math.inf(f32)) continue;
+                            if (region.depth == curr_depth orelse -std.math.inf(f32) and cast(i32, region.surface_id) < curr_id orelse std.math.minInt(i32)) continue;
 
                             if (region.region.contains_vec(key.pos)) {
                                 curr_id = cast(i32, region.surface_id);
@@ -2383,13 +2383,39 @@ pub const App = struct {
                             }
                         }
 
-                        if (region_kind == .none) return;
+                        if (region_kind == .none) {
+                            region_kind = null;
+                        }
 
-                        const action = self.input_action_map.get(self.state, input) orelse return;
+                        {
+                            var it = self.input_action_map.map.iterator();
+                            while (it.next()) |e| {
+                                if (e.key_ptr.state != .bookmark) continue;
+                                std.log.debug("{any}\n{any}\n{any}\n{any}\n\n", .{
+                                    e.key_ptr.mouse_region,
+                                    e.key_ptr.state,
+                                    e.key_ptr.input,
+                                    e.value_ptr.*,
+                                });
+                            }
+                        }
+
+                        // TODO: bookmarks not scrolling :/
+                        // TODO: mouse pos is not what i think it is?
+                        // TODO: zellij does not give scrolling events?
+                        // std.log.debug("{any} {d} {any} {any} {any}", .{
+                        //     region_kind,
+                        //     self.mouse_regions.items.len,
+                        //     self.state,
+                        //     input,
+                        //     self.input_action_map.get(self.state, input, region_kind),
+                        // });
+                        const action = self.input_action_map.get(self.state, input, region_kind) orelse return;
+                        // std.log.debug("{any}", .{action});
                         try self._handle_event(.{ .action = action });
                     },
                     else => {
-                        const action = self.input_action_map.get(self.state, input) orelse return;
+                        const action = self.input_action_map.get(self.state, input, null) orelse return;
                         try self._handle_event(.{ .action = action });
                     },
                 }

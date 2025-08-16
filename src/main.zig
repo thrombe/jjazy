@@ -2367,20 +2367,6 @@ pub const App = struct {
                     else => {},
                 };
 
-                {
-                    var it = self.input_action_map.map.iterator();
-                    while (it.next()) |e| {
-                        // if (e.key_ptr.state != .bookmark) continue;
-                        if (e.key_ptr.input != .mouse) continue;
-                        std.log.debug("{any}\n{any}\n{any}\n{any}\n\n", .{
-                            e.key_ptr.mouse_region,
-                            e.key_ptr.state,
-                            e.key_ptr.input,
-                            e.value_ptr.*,
-                        });
-                    }
-                }
-
                 switch (input) {
                     .mouse => |key| {
                         var curr_id: ?i32 = null;
@@ -2401,18 +2387,9 @@ pub const App = struct {
                             region_kind = null;
                         }
 
-                        // TODO: bookmarks not scrolling :/
                         // TODO: mouse pos is not what i think it is?
                         // TODO: zellij does not give scrolling events?
-                        // std.log.debug("{any} {d} {any} {any} {any}", .{
-                        //     region_kind,
-                        //     self.mouse_regions.items.len,
-                        //     self.state,
-                        //     input,
-                        //     self.input_action_map.get(self.state, input, region_kind),
-                        // });
                         const action = self.input_action_map.get(self.state, input, region_kind) orelse return;
-                        // std.log.debug("{any}", .{action});
                         try self._handle_event(.{ .action = action });
                     },
                     else => {

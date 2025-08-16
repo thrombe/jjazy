@@ -2374,9 +2374,10 @@ pub const App = struct {
                         var region_kind: ?MouseRegionKind = .none;
                         for (self.mouse_regions.items) |region| {
                             if (region.depth < curr_depth orelse -std.math.inf(f32)) continue;
-                            if (region.depth == curr_depth orelse -std.math.inf(f32) and cast(i32, region.surface_id) < curr_id orelse std.math.minInt(i32)) continue;
+                            if (region.depth == curr_depth orelse -std.math.inf(f32) and
+                                cast(i32, region.surface_id) < curr_id orelse std.math.minInt(i32)) continue;
 
-                            if (region.region.contains_vec(key.pos)) {
+                            if (region.region.contains_vec(key.pos.sub(.splat(1)))) {
                                 curr_id = cast(i32, region.surface_id);
                                 curr_depth = region.depth;
                                 region_kind = region.kind;
@@ -2387,7 +2388,6 @@ pub const App = struct {
                             region_kind = null;
                         }
 
-                        // TODO: mouse pos is not what i think it is?
                         // TODO: zellij does not give scrolling events?
                         const action = self.input_action_map.get(self.state, input, region_kind) orelse return;
                         try self._handle_event(.{ .action = action });
@@ -3022,7 +3022,7 @@ pub const App = struct {
             // try status.draw_border(symbols.thin.rounded);
 
             var bar = try status.split_y(-1, .none);
-            defer self._register_mouse_region(.none, &bar);
+            // defer self._register_mouse_region(.none, &bar);
             try self.render_status_bar(&bar);
 
             var diffs = try status.split_x(cast(i32, cast(f32, status.size().x) * self.x_split), .border);
@@ -3063,7 +3063,7 @@ pub const App = struct {
                 const origin = max_popup_region.origin.add(max_popup_region.size.mul(0.5)).sub(popup_size.mul(0.5));
                 const region = max_popup_region.clamp(.{ .origin = origin, .size = popup_size });
                 var input_box = try Surface.init(&self.screen, 5, .{ .origin = region.origin, .size = region.size });
-                defer self._register_mouse_region(.none, &input_box);
+                // defer self._register_mouse_region(.none, &input_box);
                 try input_box.clear();
                 try input_box.draw_border(symbols.thin.rounded);
 
@@ -3079,7 +3079,7 @@ pub const App = struct {
             {
                 const region = max_popup_region.split_x(-100, false).right;
                 var surface = try Surface.init(&self.screen, 10, .{ .origin = region.origin, .size = region.size });
-                defer self._register_mouse_region(.none, &surface);
+                // defer self._register_mouse_region(.none, &surface);
                 try self.toaster.render(&surface, self, if (self.show_help or tropes.show_help) .up else .down);
             }
 
@@ -3091,7 +3091,7 @@ pub const App = struct {
                     .origin = r1.origin,
                     .size = r1.size,
                 });
-                defer self._register_mouse_region(.none, &help);
+                // defer self._register_mouse_region(.none, &help);
                 try self.help.render(&help, self);
             }
         }

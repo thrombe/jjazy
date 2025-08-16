@@ -1224,6 +1224,13 @@ pub const State = union(enum(u8)) {
     }
 };
 
+const MouseRegionKind = enum {
+    none,
+    status,
+    bookmarks,
+    diff,
+};
+
 pub const Where = enum(u8) {
     onto,
     after,
@@ -1310,6 +1317,7 @@ pub const InputActionMap = struct {
     const Input = struct {
         state: State,
         input: Key,
+        mouse_region: ?MouseRegionKind = null,
 
         const HashCtx = struct {
             fn hash_input(_: @This(), hasher: anytype, input: Key) void {
@@ -1352,10 +1360,13 @@ pub const InputActionMap = struct {
                 var hasher = std.hash.Wyhash.init(0);
                 self.hash_input(&hasher, input.input);
                 self.hash_state(&hasher, input.state);
+                utils_mod.hash_update(&hasher, input.mouse_region, .{});
                 return hasher.final();
             }
             pub fn eql(self: @This(), a: Input, b: Input) bool {
-                return self.eql_input(a.input, b.input) and self.eql_state(a.state, b.state);
+                return self.eql_input(a.input, b.input) and
+                    self.eql_state(a.state, b.state) and
+                    utils_mod.auto_eql(a.mouse_region, b.mouse_region, .{});
             }
         };
     };
@@ -1383,16 +1394,16 @@ pub const InputActionMap = struct {
             try self.states.appendSlice(states);
         }
 
-        fn add_one(self: *@This(), key: Key, action: Action) !void {
-            for (self.states.items) |state| try self.map.put(.{ .state = state, .input = key }, action);
+        fn add_one(self: *@This(), key: Key, mouse_region: ?MouseRegionKind, action: Action) !void {
+            for (self.states.items) |state| try self.map.put(.{ .state = state, .input = key, .mouse_region = mouse_region }, action);
         }
 
-        fn add_many(self: *@This(), keys: []const Key, action: Action) !void {
-            for (self.states.items) |state| for (keys) |key| try self.map.put(.{ .state = state, .input = key }, action);
+        fn add_many(self: *@This(), keys: []const Key, mouse_region: ?MouseRegionKind, action: Action) !void {
+            for (self.states.items) |state| for (keys) |key| try self.map.put(.{ .state = state, .input = key, .mouse_region = mouse_region }, action);
         }
 
-        fn add_one_for_state(self: *@This(), state: State, key: Key, action: Action) !void {
-            try self.map.put(.{ .state = state, .input = key }, action);
+        fn add_one_for_state(self: *@This(), state: State, key: Key, mouse_region: ?MouseRegionKind, action: Action) !void {
+            try self.map.put(.{ .state = state, .input = key, .mouse_region = mouse_region }, action);
         }
 
         fn reset(self: *@This()) void {
@@ -1435,12 +1446,6 @@ pub const App = struct {
     render_count: u64 = 0,
     last_hash: u64 = 0,
 
-    const MouseRegionKind = enum {
-        none,
-        status,
-        bookmarks,
-        diff,
-    };
     const MouseRegion = struct {
         region: lay_mod.Region,
         depth: f32,
@@ -1648,14 +1653,17 @@ pub const App = struct {
             });
             if (builtin.mode == .Debug) try map.add_one(
                 .{ .functional = .{ .key = .escape, .mod = .{ .ctrl = true } } },
+                null,
                 .trigger_breakpoint,
             );
             try map.add_one(
                 .{ .focus = .in },
+                null,
                 .refresh_master_content,
             );
             try map.add_one(
                 .{ .functional = .{ .key = .escape } },
+                null,
                 .switch_state_to_log,
             );
         }
@@ -1680,10 +1688,12 @@ pub const App = struct {
             });
             if (builtin.mode == .Debug) try map.add_one(
                 .{ .key = .{ .key = '1' } },
+                null,
                 .{ .fancy_terminal_features_that_break_gdb = .enable },
             );
             if (builtin.mode == .Debug) try map.add_one(
                 .{ .key = .{ .key = '1', .mod = .{ .ctrl = true } } },
+                null,
                 .{ .fancy_terminal_features_that_break_gdb = .disable },
             );
             try map.add_many(
@@ -1691,6 +1701,7 @@ pub const App = struct {
                     .{ .key = .{ .key = '?', .mod = .{ .shift = true } } },
                     .{ .key = .{ .key = '?' } }, // zellij does not pass .shift = true with '?'
                 },
+                null,
                 .toggle_help,
             );
         }
@@ -1712,29 +1723,63 @@ pub const App = struct {
                 &[_]Key{
                     .{ .key = .{ .key = 'j', .action = .press } },
                     .{ .key = .{ .key = 'j', .action = .repeat } },
-                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .press } },
-                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .repeat } },
                     .{ .functional = .{ .key = .down, .action = .press } },
                     .{ .functional = .{ .key = .down, .action = .repeat } },
                 },
+                null,
                 .{ .scroll = .{ .target = .log, .dir = .down } },
             );
             try map.add_many(
                 &[_]Key{
                     .{ .key = .{ .key = 'k', .action = .press } },
                     .{ .key = .{ .key = 'k', .action = .repeat } },
-                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .press } },
-                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .repeat } },
                     .{ .functional = .{ .key = .up, .action = .press } },
                     .{ .functional = .{ .key = .up, .action = .repeat } },
                 },
+                null,
                 .{ .scroll = .{ .target = .log, .dir = .up } },
             );
+
+            try map.add_many(
+                &[_]Key{
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .press } },
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .repeat } },
+                },
+                .status,
+                .{ .scroll = .{ .target = .log, .dir = .up } },
+            );
+            try map.add_many(
+                &[_]Key{
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .press } },
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .repeat } },
+                },
+                .status,
+                .{ .scroll = .{ .target = .log, .dir = .down } },
+            );
+
+            try map.add_many(
+                &[_]Key{
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .press } },
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .repeat } },
+                },
+                .diff,
+                .{ .scroll = .{ .target = .diff, .dir = .up } },
+            );
+            try map.add_many(
+                &[_]Key{
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .press } },
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .repeat } },
+                },
+                .diff,
+                .{ .scroll = .{ .target = .diff, .dir = .down } },
+            );
+
             try map.add_many(
                 &[_]Key{
                     .{ .key = .{ .key = 'j', .action = .press, .mod = .{ .ctrl = true } } },
                     .{ .key = .{ .key = 'j', .action = .repeat, .mod = .{ .ctrl = true } } },
                 },
+                null,
                 .{ .scroll = .{ .target = .diff, .dir = .down } },
             );
             try map.add_many(
@@ -1742,6 +1787,7 @@ pub const App = struct {
                     .{ .key = .{ .key = 'k', .action = .press, .mod = .{ .ctrl = true } } },
                     .{ .key = .{ .key = 'k', .action = .repeat, .mod = .{ .ctrl = true } } },
                 },
+                null,
                 .{ .scroll = .{ .target = .diff, .dir = .up } },
             );
             try map.add_many(
@@ -1749,6 +1795,7 @@ pub const App = struct {
                     .{ .key = .{ .key = 'h', .action = .press, .mod = .{ .ctrl = true } } },
                     .{ .key = .{ .key = 'h', .action = .repeat, .mod = .{ .ctrl = true } } },
                 },
+                null,
                 .{ .resize_master = .left },
             );
             try map.add_many(
@@ -1756,6 +1803,7 @@ pub const App = struct {
                     .{ .key = .{ .key = 'l', .action = .press, .mod = .{ .ctrl = true } } },
                     .{ .key = .{ .key = 'l', .action = .repeat, .mod = .{ .ctrl = true } } },
                 },
+                null,
                 .{ .resize_master = .right },
             );
         }
@@ -1768,23 +1816,38 @@ pub const App = struct {
                 &[_]Key{
                     .{ .key = .{ .key = 'j', .action = .press } },
                     .{ .key = .{ .key = 'j', .action = .repeat } },
-                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .press } },
-                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .repeat } },
                     .{ .functional = .{ .key = .down, .action = .press } },
                     .{ .functional = .{ .key = .down, .action = .repeat } },
                 },
+                null,
                 .{ .scroll = .{ .target = .oplog, .dir = .down } },
             );
             try map.add_many(
                 &[_]Key{
                     .{ .key = .{ .key = 'k', .action = .press } },
                     .{ .key = .{ .key = 'k', .action = .repeat } },
-                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .press } },
-                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .repeat } },
                     .{ .functional = .{ .key = .up, .action = .press } },
                     .{ .functional = .{ .key = .up, .action = .repeat } },
                 },
+                null,
                 .{ .scroll = .{ .target = .oplog, .dir = .up } },
+            );
+
+            try map.add_many(
+                &[_]Key{
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .press } },
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .repeat } },
+                },
+                .status,
+                .{ .scroll = .{ .target = .oplog, .dir = .up } },
+            );
+            try map.add_many(
+                &[_]Key{
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .press } },
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .repeat } },
+                },
+                .status,
+                .{ .scroll = .{ .target = .oplog, .dir = .down } },
             );
         }
         {
@@ -1805,6 +1868,7 @@ pub const App = struct {
                     .{ .key = .{ .key = ' ', .action = .press } },
                     .{ .key = .{ .key = ' ', .action = .repeat } },
                 },
+                null,
                 .select_focused_change,
             );
         }
@@ -1820,14 +1884,17 @@ pub const App = struct {
             });
             try map.add_one(
                 .{ .key = .{ .key = 'o' } },
+                null,
                 .{ .set_where = .onto },
             );
             try map.add_one(
                 .{ .key = .{ .key = 'b' } },
+                null,
                 .{ .set_where = .before },
             );
             try map.add_one(
                 .{ .key = .{ .key = 'a' } },
+                null,
                 .{ .set_where = .after },
             );
         }
@@ -1845,6 +1912,7 @@ pub const App = struct {
                     .{ .functional = .{ .key = .down, .action = .press } },
                     .{ .functional = .{ .key = .down, .action = .repeat } },
                 },
+                null,
                 .{ .scroll = .{ .target = .bookmarks, .dir = .down } },
             );
             try map.add_many(
@@ -1854,67 +1922,98 @@ pub const App = struct {
                     .{ .functional = .{ .key = .up, .action = .press } },
                     .{ .functional = .{ .key = .up, .action = .repeat } },
                 },
+                null,
                 .{ .scroll = .{ .target = .bookmarks, .dir = .up } },
             );
         }
+
+        try map.add_many(
+            &[_]Key{
+                .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .press } },
+                .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .repeat } },
+            },
+            .bookmarks,
+            .{ .scroll = .{ .target = .bookmarks, .dir = .up } },
+        );
+        try map.add_many(
+            &[_]Key{
+                .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .press } },
+                .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .repeat } },
+            },
+            .bookmarks,
+            .{ .scroll = .{ .target = .bookmarks, .dir = .down } },
+        );
+
         try map.add_one_for_state(
             .log,
             .{ .key = .{ .key = 'q' } },
+            null,
             .send_quit_event,
         );
         try map.add_one_for_state(
             .log,
             .{ .key = .{ .key = 'n' } },
+            null,
             .switch_state_to_new,
         );
         try map.add_one_for_state(
             .log,
             .{ .key = .{ .key = 'e' } },
+            null,
             .jj_edit,
         );
         try map.add_one_for_state(
             .log,
             .{ .key = .{ .key = 'g' } },
+            null,
             .switch_state_to_git,
         );
         try map.add_one_for_state(
             .log,
             .{ .key = .{ .key = 'r' } },
+            null,
             .switch_state_to_rebase_onto,
         );
         try map.add_one_for_state(
             .log,
             .{ .key = .{ .key = 'S', .mod = .{ .shift = true } } },
+            null,
             .switch_state_to_squash,
         );
         try map.add_one_for_state(
             .log,
             .{ .key = .{ .key = 'a' } },
+            null,
             .switch_state_to_abandon,
         );
         try map.add_one_for_state(
             .log,
             .{ .key = .{ .key = 'o' } },
+            null,
             .switch_state_to_oplog,
         );
         try map.add_one_for_state(
             .log,
             .{ .key = .{ .key = 'd' } },
+            null,
             .switch_state_to_duplicate,
         );
         try map.add_one_for_state(
             .log,
             .{ .key = .{ .key = 'b' } },
+            null,
             .switch_state_to_bookmarks_view,
         );
         try map.add_one_for_state(
             .log,
             .{ .key = .{ .key = 's' } },
+            null,
             .jj_split,
         );
         try map.add_one_for_state(
             .log,
             .{ .key = .{ .key = 'D', .mod = .{ .shift = true } } },
+            null,
             .jj_describe,
         );
         {
@@ -1925,6 +2024,7 @@ pub const App = struct {
                     .{ .key = .{ .key = ':', .mod = .{ .shift = true } } },
                     .{ .key = .{ .key = ':' } }, // zellij does not pass .shift = true :/
                 },
+                null,
                 .switch_state_to_command,
             );
         }
@@ -1937,37 +2037,44 @@ pub const App = struct {
             });
             try map.add_one(
                 .{ .functional = .{ .key = .enter } },
+                null,
                 .apply_jj_rebase,
             );
         }
         try map.add_one_for_state(
             .abandon,
             .{ .functional = .{ .key = .enter } },
+            null,
             .apply_jj_abandon,
         );
         try map.add_one_for_state(
             .squash,
             .{ .functional = .{ .key = .enter } },
+            null,
             .apply_jj_squash,
         );
         try map.add_one_for_state(
             .new,
             .{ .functional = .{ .key = .enter } },
+            null,
             .apply_jj_new,
         );
         try map.add_one_for_state(
             .command,
             .{ .functional = .{ .key = .enter } },
+            null,
             .{ .execute_command_in_input_buffer = .{ .interactive = false } },
         );
         try map.add_one_for_state(
             .command,
             .{ .functional = .{ .key = .enter, .mod = .{ .ctrl = true } } },
+            null,
             .{ .execute_command_in_input_buffer = .{ .interactive = true } },
         );
         try map.add_one_for_state(
             .oplog,
             .{ .key = .{ .key = 'r' } },
+            null,
             .apply_jj_op_restore,
         );
         {
@@ -1979,82 +2086,98 @@ pub const App = struct {
             });
             try map.add_one(
                 .{ .functional = .{ .key = .enter } },
+                null,
                 .apply_jj_duplicate,
             );
         }
         try map.add_one_for_state(
             .{ .bookmark = .view },
             .{ .key = .{ .key = 'c' } },
+            null,
             .switch_state_to_bookmark_create,
         );
         try map.add_one_for_state(
             .{ .bookmark = .view },
             .{ .key = .{ .key = 'n' } },
+            null,
             .new_commit_from_bookmark,
         );
         try map.add_one_for_state(
             .{ .bookmark = .view },
             .{ .key = .{ .key = 'm' } },
+            null,
             .{ .move_bookmark_to_selected = .{ .allow_backwards = false } },
         );
         try map.add_one_for_state(
             .{ .bookmark = .view },
             .{ .key = .{ .key = 'M', .mod = .{ .shift = true } } },
+            null,
             .{ .move_bookmark_to_selected = .{ .allow_backwards = true } },
         );
         try map.add_one_for_state(
             .{ .bookmark = .view },
             .{ .key = .{ .key = 'd' } },
+            null,
             .apply_jj_bookmark_delete,
         );
         try map.add_one_for_state(
             .{ .bookmark = .view },
             .{ .key = .{ .key = 'f' } },
+            null,
             .{ .apply_jj_bookmark_forget = .{ .include_remotes = false } },
         );
         try map.add_one_for_state(
             .{ .bookmark = .view },
             .{ .key = .{ .key = 'F', .mod = .{ .shift = true } } },
+            null,
             .{ .apply_jj_bookmark_forget = .{ .include_remotes = true } },
         );
         try map.add_one_for_state(
             .{ .bookmark = .create },
             .{ .functional = .{ .key = .enter } },
+            null,
             .apply_jj_bookmark_create_from_input_buffer_on_selected_change,
         );
         try map.add_one_for_state(
             .{ .git = .none },
             .{ .key = .{ .key = 'F', .mod = .{ .shift = true } } },
+            null,
             .apply_jj_git_fetch,
         );
         try map.add_one_for_state(
             .{ .git = .none },
             .{ .key = .{ .key = 'P', .mod = .{ .shift = true } } },
+            null,
             .apply_jj_git_push_all,
         );
         try map.add_one_for_state(
             .{ .git = .none },
             .{ .key = .{ .key = 'f' } },
+            null,
             .switch_state_to_git_fetch,
         );
         try map.add_one_for_state(
             .{ .git = .none },
             .{ .key = .{ .key = 'p' } },
+            null,
             .switch_state_to_git_push,
         );
         try map.add_one_for_state(
             .{ .git = .fetch },
             .{ .functional = .{ .key = .enter } },
+            null,
             .apply_jj_git_fetch,
         );
         try map.add_one_for_state(
             .{ .git = .push },
             .{ .functional = .{ .key = .enter } },
+            null,
             .{ .apply_jj_git_push_selected = .{ .allow_new = false } },
         );
         try map.add_one_for_state(
             .{ .git = .push },
             .{ .functional = .{ .key = .enter, .mod = .{ .shift = true } } },
+            null,
             .{ .apply_jj_git_push_selected = .{ .allow_new = true } },
         );
 
@@ -2244,8 +2367,32 @@ pub const App = struct {
                     else => {},
                 };
 
-                const action = self.input_action_map.get(self.state, input) orelse return;
-                try self._handle_event(.{ .action = action });
+                switch (input) {
+                    .mouse => |key| {
+                        var curr_id: ?i32 = null;
+                        var curr_depth: ?f32 = null;
+                        var region_kind: MouseRegionKind = .none;
+                        for (self.mouse_regions.items) |region| {
+                            if (region.depth < curr_depth orelse std.math.floatMin(f32)) continue;
+                            if (region.depth == curr_depth orelse std.math.floatMin(f32) and cast(i32, region.surface_id) < curr_id orelse std.math.minInt(i32)) continue;
+
+                            if (region.region.contains_vec(key.pos)) {
+                                curr_id = cast(i32, region.surface_id);
+                                curr_depth = region.depth;
+                                region_kind = region.kind;
+                            }
+                        }
+
+                        if (region_kind == .none) return;
+
+                        const action = self.input_action_map.get(self.state, input) orelse return;
+                        try self._handle_event(.{ .action = action });
+                    },
+                    else => {
+                        const action = self.input_action_map.get(self.state, input) orelse return;
+                        try self._handle_event(.{ .action = action });
+                    },
+                }
             },
             .action => |action| switch (action) {
                 .fancy_terminal_features_that_break_gdb => |set| switch (set) {

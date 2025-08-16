@@ -57,6 +57,7 @@ pub fn hash_update(hasher: anytype, val: anytype, comptime v: AutoHashArgs) void
             }
         },
         .void => {},
+        .optional => if (val) |e| hash_update(hasher, e, v),
         .pointer => |p| switch (p.size) {
             .one => switch (comptime v.pointer_hashing) {
                 .disabled => @compileError("pointer hashing is disabled"),
@@ -108,6 +109,11 @@ pub fn auto_eql(a: anytype, b: @TypeOf(a), comptime v: AutoEqArgs) bool {
             return true;
         },
         .void => return true,
+        .optional => {
+            if (a == null and b == null) return true;
+            if (a == null or b == null) return false;
+            return auto_eql(a.?, b.?, .{});
+        },
         .pointer => |p| switch (p.size) {
             .one => switch (comptime v.pointer_hashing) {
                 .disabled => @compileError("pointer hashing is disabled"),

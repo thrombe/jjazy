@@ -1421,6 +1421,7 @@ pub const App = struct {
     show_help: bool = false,
     x_split: f32 = 0.55,
     text_input: TextInput,
+    mouse_regions: std.ArrayList(MouseRegion),
 
     log: LogSlate,
     oplog: OpLogSlate,
@@ -1433,6 +1434,19 @@ pub const App = struct {
     rerender_pending_count: u64 = 0,
     render_count: u64 = 0,
     last_hash: u64 = 0,
+
+    const MouseRegionKind = enum {
+        none,
+        status,
+        bookmarks,
+        diff,
+    };
+    const MouseRegion = struct {
+        region: lay_mod.Region,
+        depth: f32,
+        surface_id: u32,
+        kind: MouseRegionKind,
+    };
 
     const CommandResult = struct {
         errored: bool,
@@ -1507,6 +1521,7 @@ pub const App = struct {
                 .toasts = .init(alloc),
             },
             .text_input = .init(alloc),
+            .mouse_regions = .init(alloc),
             .input_action_map = input_action_map,
             .input_thread = undefined,
         };
@@ -1534,6 +1549,7 @@ pub const App = struct {
         defer self.help.deinit();
         defer self.toaster.deinit();
         defer self.text_input.deinit();
+        defer self.mouse_regions.deinit();
         defer self.input_action_map.deinit();
         defer self.arena.deinit();
         defer self.screen.deinit();
@@ -2775,6 +2791,15 @@ pub const App = struct {
         try self.sleeper.delay_event(5000, .{ .pop_toast = id });
     }
 
+    fn _register_mouse_region(self: *@This(), kind: MouseRegionKind, surface: *Surface) void {
+        self.mouse_regions.append(.{
+            .kind = kind,
+            .surface_id = surface.id,
+            .depth = surface.depth,
+            .region = surface.region,
+        }) catch |e| utils_mod.dump_error(e);
+    }
+
     fn request_jj_op(self: *@This()) !void {
         self.oplog.ops.reset(self.oplog.oplog);
         var i: i32 = 0;
@@ -2837,16 +2862,20 @@ pub const App = struct {
         defer self.render_count += 1;
 
         self.x_split = @min(@max(0.0, self.x_split), 1.0);
+        self.mouse_regions.clearRetainingCapacity();
 
         {
             var status = try Surface.init(&self.screen, 0, .{});
+            defer self._register_mouse_region(.status, &status);
             try status.clear();
             // try status.draw_border(symbols.thin.rounded);
 
             var bar = try status.split_y(-1, .none);
+            defer self._register_mouse_region(.none, &bar);
             try self.render_status_bar(&bar);
 
             var diffs = try status.split_x(cast(i32, cast(f32, status.size().x) * self.x_split), .border);
+            defer self._register_mouse_region(.diff, &diffs);
 
             switch (self.state) {
                 .oplog => try self.oplog.render(&status, self),
@@ -2867,6 +2896,7 @@ pub const App = struct {
                 const origin = max_popup_region.origin.add(max_popup_region.size.mul(0.5)).sub(popup_size.mul(0.5));
                 const region = max_popup_region.clamp(.{ .origin = origin, .size = popup_size });
                 var surface = try Surface.init(&self.screen, 1, .{ .origin = region.origin, .size = region.size });
+                defer self._register_mouse_region(.bookmarks, &surface);
 
                 if (self.state == .bookmark) {
                     try self.bookmarks.render(&surface, self, .{}, .{});
@@ -2882,6 +2912,7 @@ pub const App = struct {
                 const origin = max_popup_region.origin.add(max_popup_region.size.mul(0.5)).sub(popup_size.mul(0.5));
                 const region = max_popup_region.clamp(.{ .origin = origin, .size = popup_size });
                 var input_box = try Surface.init(&self.screen, 5, .{ .origin = region.origin, .size = region.size });
+                defer self._register_mouse_region(.none, &input_box);
                 try input_box.clear();
                 try input_box.draw_border(symbols.thin.rounded);
 
@@ -2897,6 +2928,7 @@ pub const App = struct {
             {
                 const region = max_popup_region.split_x(-100, false).right;
                 var surface = try Surface.init(&self.screen, 10, .{ .origin = region.origin, .size = region.size });
+                defer self._register_mouse_region(.none, &surface);
                 try self.toaster.render(&surface, self, if (self.show_help or tropes.show_help) .up else .down);
             }
 
@@ -2908,6 +2940,7 @@ pub const App = struct {
                     .origin = r1.origin,
                     .size = r1.size,
                 });
+                defer self._register_mouse_region(.none, &help);
                 try self.help.render(&help, self);
             }
         }

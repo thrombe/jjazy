@@ -511,24 +511,18 @@ const BookmarkSlate = struct {
     y: i32 = 0,
     skip_y: i32 = 0,
 
-    bookmarks_hash_order: std.ArrayList(Targets),
-    bookmarks: utils_mod.AutoHashMap(
-        Targets,
-        struct {
-            name: []const u8,
-            remotes: std.ArrayList([]const u8),
-        },
-        .{ .pointer_hashing = .follow },
-    ),
-
-    const Targets = []const u8;
+    arena: std.heap.ArenaAllocator,
+    bookmarks_order: std.ArrayList([]const u8),
+    // ArrayXar prevents memory wastage through realloc in arena allocators
+    bookmarks: std.StringHashMap(utils_mod.ArrayXar(jj_mod.Bookmark.Parsed, 2)),
 
     fn init(alloc: std.mem.Allocator) @This() {
         return .{
             .alloc = alloc,
+            .arena = .init(alloc),
             .buf = &.{},
             .it = .init(alloc, &.{}),
-            .bookmarks_hash_order = .init(alloc),
+            .bookmarks_order = .init(alloc),
             .bookmarks = .init(alloc),
         };
     }
@@ -536,22 +530,23 @@ const BookmarkSlate = struct {
     fn deinit(self: *@This()) void {
         self.alloc.free(self.buf);
         self.it.deinit();
+        self.bookmarks_order.deinit();
+        self.bookmarks.deinit();
+        self.arena.deinit();
     }
 
-    fn update(self: *@This(), buf: []const u8) !void {
+    fn update(self: *@This(), buf: []const u8, app: *App) !void {
         self.y = 0;
         self.buf = buf;
-        self._update_cache();
+        try self._update_cache(app);
     }
 
-    fn _update_cache(self: *@This()) !void {
-        self.bookmarks_hash_order.clearRetainingCapacity();
+    fn _update_cache(self: *@This(), app: *App) !void {
+        _ = self.arena.reset(.retain_capacity);
+        self.bookmarks_order.clearRetainingCapacity();
         self.bookmarks.clearRetainingCapacity();
         self.it.reset(self.buf);
         while (try self.it.next()) |bookmark| {
-            // if (!include.local_only and bookmark.parsed.remote == null) continue;
-            // if (!include.remotes and bookmark.parsed.remote != null) continue;
-            // if (!include.git_as_remote and std.mem.eql(u8, bookmark.parsed.remote orelse &.{}, "git")) continue;
             if (bookmark.parsed.target.len > 1) {
                 try app._toast(.{ .err = error.ManyTargets }, try std.fmt.allocPrint(
                     app.alloc,
@@ -561,16 +556,12 @@ const BookmarkSlate = struct {
                 continue;
             }
 
-            const target = bookmark.parsed.target[0];
-            const b = try self.bookmarks.getOrPut(target);
+            const b = try self.bookmarks.getOrPut(bookmark.parsed.name);
             if (!b.found_existing) {
-                b.value_ptr.name = bookmark.parsed.name;
-                b.value_ptr.remotes = .init(temp);
-                try self.bookmarks_hash_order.append(target);
+                b.value_ptr.* = .init(self.arena.allocator());
+                try self.bookmarks_order.append(bookmark.parsed.name);
             }
-            if (bookmark.parsed.remote) |remote| {
-                try b.value_ptr.remotes.append(remote);
-            }
+            try b.value_ptr.append(bookmark);
         }
     }
 
@@ -599,42 +590,6 @@ const BookmarkSlate = struct {
     }, show: struct {
         targets: bool = true,
     }) !void {
-        const temp = app.arena.allocator();
-        // ArrayXar prevents memory wastage through realloc in arena allocators
-        const Targets = []const u8;
-        var bookmarks_hash_order = utils_mod.ArrayXar(Targets, 5).init(temp);
-        var bookmarks = utils_mod.AutoHashMap(
-            Targets,
-            struct { name: []const u8, remotes: utils_mod.ArrayXar([]const u8, 2) },
-            .{ .pointer_hashing = .follow },
-        ).init(temp);
-
-        self.it.reset(self.buf);
-        while (try self.it.next()) |bookmark| {
-            if (!include.local_only and bookmark.parsed.remote == null) continue;
-            if (!include.remotes and bookmark.parsed.remote != null) continue;
-            if (!include.git_as_remote and std.mem.eql(u8, bookmark.parsed.remote orelse &.{}, "git")) continue;
-            if (bookmark.parsed.target.len > 1) {
-                try app._toast(.{ .err = error.ManyTargets }, try std.fmt.allocPrint(
-                    app.alloc,
-                    "bookmark {s} has {d} targets. but jjazy can only handle 1 at the moment",
-                    .{ bookmark.parsed.name, bookmark.parsed.target.len },
-                ));
-                continue;
-            }
-
-            const target = bookmark.parsed.target[0];
-            const b = try bookmarks.getOrPut(target);
-            if (!b.found_existing) {
-                b.value_ptr.name = bookmark.parsed.name;
-                b.value_ptr.remotes = .init(temp);
-                try bookmarks_hash_order.append(target);
-            }
-            if (bookmark.parsed.remote) |remote| {
-                try b.value_ptr.remotes.append(remote);
-            }
-        }
-
         try surface.clear();
 
         try surface.apply_style(.bold);
@@ -650,49 +605,55 @@ const BookmarkSlate = struct {
             self.skip_y = self.y;
         }
 
+        var ended = false;
         var i: i32 = 0;
-        var it = bookmarks_hash_order.iterator(.{});
-        while (it.next()) |e| {
-            defer i += 1;
-            if (self.skip_y > i) {
-                continue;
-            }
+        for (self.bookmarks_order.items) |name| {
+            var it = self.bookmarks.get(name).?.iterator(.{});
+            while (it.next()) |bookmark| {
+                if (!include.local_only and bookmark.parsed.remote == null) continue;
+                if (!include.remotes and bookmark.parsed.remote != null) continue;
+                if (!include.git_as_remote and std.mem.eql(u8, bookmark.parsed.remote orelse &.{}, "git")) continue;
 
-            const bookmark = bookmarks.get(e.*).?;
-            try surface.apply_style(.{ .foreground_color = .from_theme(.info) });
-            try surface.draw_buf(bookmark.name);
-            try surface.apply_style(.reset);
+                defer i += 1;
+                if (self.skip_y > i) {
+                    continue;
+                }
 
-            if (show.targets) {
-                try surface.draw_buf(" ");
-                try surface.apply_style(.{ .foreground_color = .from_theme(.default_foreground) });
-                try surface.draw_buf(e.*[0..8]);
+                try surface.apply_style(.{ .foreground_color = .from_theme(.info) });
+                try surface.draw_buf(bookmark.parsed.name);
                 try surface.apply_style(.reset);
-            }
 
-            var remotes = bookmark.remotes.iterator(.{});
-            while (remotes.next()) |remote| {
-                try surface.apply_style(.{ .foreground_color = .from_theme(.alt_info) });
-                try surface.draw_buf(" @");
-                try surface.draw_buf(remote.*);
-                try surface.apply_style(.reset);
-            }
-            try surface.new_line();
+                if (show.targets) for (bookmark.parsed.target) |target| {
+                    try surface.draw_buf(" ");
+                    try surface.apply_style(.{ .foreground_color = .from_theme(.default_foreground) });
+                    try surface.draw_buf(target[0..8]);
+                    try surface.apply_style(.reset);
+                };
 
-            if (i == self.y) {
-                try gutter.draw_bufln("->");
-            } else {
-                try gutter.new_line();
-            }
+                if (bookmark.parsed.remote) |remote| {
+                    try surface.apply_style(.{ .foreground_color = .from_theme(.alt_info) });
+                    try surface.draw_buf(" @");
+                    try surface.draw_buf(remote);
+                    try surface.apply_style(.reset);
+                }
+                try surface.new_line();
 
+                if (i == self.y) {
+                    try gutter.draw_bufln("->");
+                } else {
+                    try gutter.new_line();
+                }
+            }
+            ended = ended or it.ended();
+            ended = ended or self.bookmarks_order.items.len == i + 1;
             if (surface.is_full()) break;
         }
 
-        if (it.ended() and self.y >= i and i > 0) {
+        if (ended and self.y >= i and i > 0) {
             self.y = i - 1;
         }
 
-        if (self.y >= i and !it.ended()) {
+        if (self.y >= i and !ended) {
             self.skip_y += 1;
             try app._send_event(.rerender);
         }
@@ -1535,11 +1496,7 @@ pub const App = struct {
                 .alloc = alloc,
                 .diffcache = .init(alloc),
             },
-            .bookmarks = .{
-                .alloc = alloc,
-                .buf = &.{},
-                .it = .init(alloc, &[_]u8{}),
-            },
+            .bookmarks = .init(alloc),
             .help = help,
             .toaster = .{
                 .alloc = alloc,
@@ -2131,7 +2088,9 @@ pub const App = struct {
                     .input_text = true,
                     .show_help = true,
                 },
-                .view => .{},
+                .view => .{
+                    .show_help = true,
+                },
             },
             .git => |state| switch (state) {
                 .none => .{
@@ -2756,8 +2715,7 @@ pub const App = struct {
                     switch (res.res) {
                         .ok => |buf| {
                             self.alloc.free(self.bookmarks.buf);
-                            self.bookmarks.buf = buf;
-                            self.bookmarks.reset();
+                            try self.bookmarks.update(buf, self);
                             try self._send_event(.rerender);
                         },
                         .err => |buf| try self._toast(.{ .err = error.JJBookmarkFailed }, buf),

@@ -515,6 +515,7 @@ const BookmarkSlate = struct {
     bookmarks_order: std.ArrayList([]const u8),
     // ArrayXar prevents memory wastage through realloc in arena allocators
     bookmarks: std.StringHashMap(utils_mod.ArrayXar(jj_mod.Bookmark.Parsed, 2)),
+    selected_bookmark: ?jj_mod.Bookmark.Parsed = null,
 
     fn init(alloc: std.mem.Allocator) @This() {
         return .{
@@ -533,9 +534,12 @@ const BookmarkSlate = struct {
         self.bookmarks_order.deinit();
         self.bookmarks.deinit();
         self.arena.deinit();
+        self.selected_bookmark = null;
     }
 
     fn update(self: *@This(), buf: []const u8, app: *App) !void {
+        self.alloc.free(self.buf);
+        self.selected_bookmark = null;
         self.y = 0;
         self.buf = buf;
         try self._update_cache(app);
@@ -570,16 +574,8 @@ const BookmarkSlate = struct {
         self.it.reset(self.buf);
     }
 
-    fn get_selected(self: *@This()) !?jj_mod.Bookmark.Parsed {
-        var i = self.y;
-        self.it.reset(self.buf);
-        while (try self.it.next()) |b| {
-            if (i == 0) {
-                return b;
-            }
-            i -|= 1;
-        }
-        return null;
+    fn get_selected(self: *@This()) ?jj_mod.Bookmark.Parsed {
+        return self.selected_bookmark;
     }
 
     // TODO: make window width dynamic with a min size
@@ -639,6 +635,7 @@ const BookmarkSlate = struct {
                 try surface.new_line();
 
                 if (i == self.y) {
+                    self.selected_bookmark = bookmark.*;
                     try gutter.draw_bufln("->");
                 } else {
                     try gutter.new_line();
@@ -2535,7 +2532,7 @@ pub const App = struct {
                         self.state = .log;
                     }
 
-                    const bookmark = try self.bookmarks.get_selected() orelse return;
+                    const bookmark = self.bookmarks.get_selected() orelse return;
 
                     // TODO: why multiple targets?
                     if (bookmark.parsed.target.len != 1) {
@@ -2553,7 +2550,7 @@ pub const App = struct {
                 },
                 .move_bookmark_to_selected => |v| {
                     defer self.state = .log;
-                    const bookmark = try self.bookmarks.get_selected() orelse return;
+                    const bookmark = self.bookmarks.get_selected() orelse return;
 
                     var args = std.ArrayList([]const u8).init(temp);
                     try args.append("jj");
@@ -2571,7 +2568,7 @@ pub const App = struct {
                 },
                 .apply_jj_bookmark_delete => {
                     defer self.state = .log;
-                    const bookmark = try self.bookmarks.get_selected() orelse return;
+                    const bookmark = self.bookmarks.get_selected() orelse return;
                     try self.execute_non_interactive_command(&[_][]const u8{
                         "jj",
                         "bookmark",
@@ -2581,7 +2578,7 @@ pub const App = struct {
                 },
                 .apply_jj_bookmark_forget => |v| {
                     defer self.state = .log;
-                    const bookmark = try self.bookmarks.get_selected() orelse return;
+                    const bookmark = self.bookmarks.get_selected() orelse return;
 
                     var args = std.ArrayList([]const u8).init(temp);
                     try args.append("jj");
@@ -2618,7 +2615,7 @@ pub const App = struct {
                     try args.append("fetch");
 
                     if (self.state.git == .fetch) {
-                        const bookmark = try self.bookmarks.get_selected() orelse return;
+                        const bookmark = self.bookmarks.get_selected() orelse return;
                         try args.append("--branch");
                         try args.append(bookmark.parsed.name);
                         if (bookmark.parsed.remote) |remote| {
@@ -2642,7 +2639,7 @@ pub const App = struct {
                 },
                 .apply_jj_git_push_selected => |v| {
                     defer self.state = .log;
-                    const bookmark = try self.bookmarks.get_selected() orelse return;
+                    const bookmark = self.bookmarks.get_selected() orelse return;
 
                     var args = std.ArrayList([]const u8).init(temp);
                     try args.append("jj");
@@ -2715,7 +2712,6 @@ pub const App = struct {
                 .bookmark => {
                     switch (res.res) {
                         .ok => |buf| {
-                            self.alloc.free(self.bookmarks.buf);
                             try self.bookmarks.update(buf, self);
                             try self._send_event(.rerender);
                         },

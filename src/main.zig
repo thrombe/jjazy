@@ -23,6 +23,7 @@ const Surface = struct {
     border: bool = false,
 
     id: u32,
+    depth: f32,
     screen: *term_mod.Screen,
 
     const Split = enum {
@@ -31,9 +32,10 @@ const Surface = struct {
         border,
     };
 
-    fn init(screen: *term_mod.Screen, v: struct { origin: ?Vec2 = null, size: ?Vec2 = null }) !@This() {
+    fn init(screen: *term_mod.Screen, depth: f32, v: struct { origin: ?Vec2 = null, size: ?Vec2 = null }) !@This() {
         return .{
-            .id = try screen.get_cmdbuf_id(),
+            .id = try screen.get_cmdbuf_id(depth),
+            .depth = depth,
             .screen = screen,
             .region = .{
                 .origin = v.origin orelse screen.term.screen.origin,
@@ -130,13 +132,15 @@ const Surface = struct {
         }
 
         const other = @This(){
-            .id = try self.screen.get_cmdbuf_id(),
+            .id = try self.screen.get_cmdbuf_id(self.depth),
+            .depth = self.depth,
             .screen = self.screen,
             .region = regions.right,
         };
 
         self.* = @This(){
             .id = self.id,
+            .depth = self.depth,
             .screen = self.screen,
             .region = regions.left,
         };
@@ -159,13 +163,15 @@ const Surface = struct {
         }
 
         const other = @This(){
-            .id = try self.screen.get_cmdbuf_id(),
+            .id = try self.screen.get_cmdbuf_id(self.depth),
+            .depth = self.depth,
             .screen = self.screen,
             .region = regions.bottom,
         };
 
         self.* = @This(){
             .id = self.id,
+            .depth = self.depth,
             .screen = self.screen,
             .region = regions.top,
         };
@@ -2833,7 +2839,7 @@ pub const App = struct {
         self.x_split = @min(@max(0.0, self.x_split), 1.0);
 
         {
-            var status = try Surface.init(&self.screen, .{});
+            var status = try Surface.init(&self.screen, 0, .{});
             try status.clear();
             // try status.draw_border(symbols.thin.rounded);
 
@@ -2860,7 +2866,7 @@ pub const App = struct {
                 const popup_size = Vec2{ .x = 60, .y = 30 };
                 const origin = max_popup_region.origin.add(max_popup_region.size.mul(0.5)).sub(popup_size.mul(0.5));
                 const region = max_popup_region.clamp(.{ .origin = origin, .size = popup_size });
-                var surface = try Surface.init(&self.screen, .{ .origin = region.origin, .size = region.size });
+                var surface = try Surface.init(&self.screen, 1, .{ .origin = region.origin, .size = region.size });
 
                 if (self.state == .bookmark) {
                     try self.bookmarks.render(&surface, self, .{}, .{});
@@ -2875,7 +2881,7 @@ pub const App = struct {
                 const popup_size = Vec2{ .x = 55, .y = 5 };
                 const origin = max_popup_region.origin.add(max_popup_region.size.mul(0.5)).sub(popup_size.mul(0.5));
                 const region = max_popup_region.clamp(.{ .origin = origin, .size = popup_size });
-                var input_box = try Surface.init(&self.screen, .{ .origin = region.origin, .size = region.size });
+                var input_box = try Surface.init(&self.screen, 5, .{ .origin = region.origin, .size = region.size });
                 try input_box.clear();
                 try input_box.draw_border(symbols.thin.rounded);
 
@@ -2890,7 +2896,7 @@ pub const App = struct {
 
             {
                 const region = max_popup_region.split_x(-100, false).right;
-                var surface = try Surface.init(&self.screen, .{ .origin = region.origin, .size = region.size });
+                var surface = try Surface.init(&self.screen, 10, .{ .origin = region.origin, .size = region.size });
                 try self.toaster.render(&surface, self, if (self.show_help or tropes.show_help) .up else .down);
             }
 
@@ -2898,7 +2904,7 @@ pub const App = struct {
                 const screen = self.screen.term.screen;
                 const r0 = screen.border_sub(.{ .x = 3, .y = 2 });
                 const r1 = r0.split_x(-80, false).right;
-                var help = try Surface.init(&self.screen, .{
+                var help = try Surface.init(&self.screen, 4, .{
                     .origin = r1.origin,
                     .size = r1.size,
                 });

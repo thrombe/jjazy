@@ -1146,11 +1146,19 @@ pub const Screen = struct {
 
     cmdbuf_id: u32 = 0,
     cmdbufs: std.ArrayList(std.ArrayList(u8)),
+    depths: std.ArrayList(DepthEntry),
 
     alloc: std.mem.Allocator,
 
+    const DepthEntry = struct { id: u32, depth: f32 };
+
     pub fn init(alloc: std.mem.Allocator, term: Term) @This() {
-        return .{ .alloc = alloc, .cmdbufs = .init(alloc), .term = term };
+        return .{
+            .alloc = alloc,
+            .cmdbufs = .init(alloc),
+            .depths = .init(alloc),
+            .term = term,
+        };
     }
 
     pub fn deinit(self: *@This()) void {
@@ -1161,13 +1169,15 @@ pub const Screen = struct {
             self.cmdbufs.deinit();
         }
         defer self.term.deinit();
+        defer self.depths.deinit();
     }
 
-    pub fn get_cmdbuf_id(self: *@This()) !u32 {
+    pub fn get_cmdbuf_id(self: *@This(), depth: f32) !u32 {
         defer self.cmdbuf_id += 1;
         if (self.cmdbufs.items.len <= self.cmdbuf_id) {
             try self.cmdbufs.append(.init(self.alloc));
         }
+        try self.depths.append(.{ .id = self.cmdbuf_id, .depth = depth });
         return self.cmdbuf_id;
     }
 
@@ -1176,10 +1186,20 @@ pub const Screen = struct {
     }
 
     pub fn flush_writes(self: *@This()) !void {
+        const SortCtx = struct {
+            fn lessThan(_: @This(), lhs: DepthEntry, rhs: DepthEntry) bool {
+                if (lhs.depth < rhs.depth) return true;
+                if (lhs.depth == rhs.depth) if (lhs.id < rhs.id) return true;
+                return false;
+            }
+        };
+        std.mem.sort(DepthEntry, self.depths.items, SortCtx{}, SortCtx.lessThan);
+
         try self.term.tty.writeAll(codes.sync_set ++ codes.clear);
 
         // submit and clear cmdbufs
-        for (self.cmdbufs.items[0..self.cmdbuf_id]) |*cmdbuf| {
+        for (self.depths.items) |e| {
+            const cmdbuf = &self.cmdbufs.items[e.id];
             try self.term.tty.writeAll(cmdbuf.items);
             try @as(TermStyledGraphemeIterator.Style, .reset).write_to(self.term.tty.writer());
             cmdbuf.clearRetainingCapacity();
@@ -1188,6 +1208,7 @@ pub const Screen = struct {
         try self.term.tty.writeAll(codes.sync_reset);
 
         self.cmdbuf_id = 0;
+        self.depths.clearRetainingCapacity();
     }
 
     pub fn clear_region(self: *@This(), id: u32, region: Region) !void {

@@ -32,6 +32,8 @@ pub const codes = struct {
         pub const leave = "\x1B[?1049l";
     };
     pub const mouse = struct {
+        pub const enable_basic_mouse = "\x1B[?1000h";
+        pub const disable_basic_mouse = "\x1B[?1000l";
         pub const enable_any_event = "\x1B[?1003h";
         pub const disable_any_event = "\x1B[?1003l";
         pub const enable_sgr_mouse_mode = "\x1B[?1006h";
@@ -1016,6 +1018,7 @@ pub const Term = struct {
             codes.cursor.hide ++
             codes.alt_buf.enter ++
             codes.kitty.enable_input_protocol ++
+            codes.mouse.enable_basic_mouse ++
             codes.mouse.enable_any_event ++
             codes.mouse.enable_sgr_mouse_mode ++
             codes.mouse.enable_shift_escape ++
@@ -1026,6 +1029,7 @@ pub const Term = struct {
 
     pub fn cook_restore(self: *@This()) !void {
         try self.tty.writeAll("" ++
+            codes.mouse.disable_basic_mouse ++
             codes.mouse.disable_any_event ++
             codes.mouse.disable_sgr_mouse_mode ++
             codes.mouse.disable_shift_escape ++
@@ -1051,6 +1055,7 @@ pub const Term = struct {
                 if (v.input) try self.tty.writeAll(codes.kitty.enable_input_protocol);
                 if (v.focus) try self.tty.writeAll(codes.focus.enable);
                 if (v.mouse) try self.tty.writeAll("" ++
+                    codes.mouse.enable_basic_mouse ++
                     codes.mouse.enable_any_event ++
                     codes.mouse.enable_sgr_mouse_mode ++
                     codes.mouse.enable_shift_escape ++
@@ -1060,6 +1065,7 @@ pub const Term = struct {
                 if (v.input) try self.tty.writeAll(codes.kitty.disable_input_protocol);
                 if (v.focus) try self.tty.writeAll(codes.focus.disable);
                 if (v.mouse) try self.tty.writeAll("" ++
+                    codes.mouse.disable_basic_mouse ++
                     codes.mouse.disable_any_event ++
                     codes.mouse.disable_sgr_mouse_mode ++
                     codes.mouse.disable_shift_escape ++

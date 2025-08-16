@@ -2313,6 +2313,7 @@ pub const App = struct {
                 try self._send_event(.rerender);
             },
             .input => |input| {
+                // std.log.debug("{any}", .{input});
                 if (tropes.global) switch (input) {
                     .key => |key| {
                         _ = key;
@@ -2388,7 +2389,6 @@ pub const App = struct {
                             region_kind = null;
                         }
 
-                        // TODO: zellij does not give scrolling events?
                         const action = self.input_action_map.get(self.state, input, region_kind) orelse return;
                         try self._handle_event(.{ .action = action });
                     },

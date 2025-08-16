@@ -607,7 +607,7 @@ const BookmarkSlate = struct {
 
         var ended = false;
         var i: i32 = 0;
-        for (self.bookmarks_order.items) |name| {
+        for (self.bookmarks_order.items, 0..) |name, j| {
             var it = self.bookmarks.get(name).?.iterator(.{});
             while (it.next()) |bookmark| {
                 if (!include.local_only and bookmark.parsed.remote == null) continue;
@@ -643,9 +643,10 @@ const BookmarkSlate = struct {
                 } else {
                     try gutter.new_line();
                 }
+
+                if (surface.is_full()) break;
             }
-            ended = ended or it.ended();
-            ended = ended or self.bookmarks_order.items.len == i + 1;
+            ended = ended or (it.ended() and self.bookmarks_order.items.len == j + 1);
             if (surface.is_full()) break;
         }
 

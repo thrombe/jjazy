@@ -1925,24 +1925,24 @@ pub const App = struct {
                 null,
                 .{ .scroll = .{ .target = .bookmarks, .dir = .up } },
             );
-        }
 
-        try map.add_many(
-            &[_]Key{
-                .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .press } },
-                .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .repeat } },
-            },
-            .bookmarks,
-            .{ .scroll = .{ .target = .bookmarks, .dir = .up } },
-        );
-        try map.add_many(
-            &[_]Key{
-                .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .press } },
-                .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .repeat } },
-            },
-            .bookmarks,
-            .{ .scroll = .{ .target = .bookmarks, .dir = .down } },
-        );
+            try map.add_many(
+                &[_]Key{
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .press } },
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .repeat } },
+                },
+                .bookmarks,
+                .{ .scroll = .{ .target = .bookmarks, .dir = .up } },
+            );
+            try map.add_many(
+                &[_]Key{
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .press } },
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .repeat } },
+                },
+                .bookmarks,
+                .{ .scroll = .{ .target = .bookmarks, .dir = .down } },
+            );
+        }
 
         try map.add_one_for_state(
             .log,
@@ -2367,6 +2367,20 @@ pub const App = struct {
                     else => {},
                 };
 
+                {
+                    var it = self.input_action_map.map.iterator();
+                    while (it.next()) |e| {
+                        // if (e.key_ptr.state != .bookmark) continue;
+                        if (e.key_ptr.input != .mouse) continue;
+                        std.log.debug("{any}\n{any}\n{any}\n{any}\n\n", .{
+                            e.key_ptr.mouse_region,
+                            e.key_ptr.state,
+                            e.key_ptr.input,
+                            e.value_ptr.*,
+                        });
+                    }
+                }
+
                 switch (input) {
                     .mouse => |key| {
                         var curr_id: ?i32 = null;
@@ -2385,19 +2399,6 @@ pub const App = struct {
 
                         if (region_kind == .none) {
                             region_kind = null;
-                        }
-
-                        {
-                            var it = self.input_action_map.map.iterator();
-                            while (it.next()) |e| {
-                                if (e.key_ptr.state != .bookmark) continue;
-                                std.log.debug("{any}\n{any}\n{any}\n{any}\n\n", .{
-                                    e.key_ptr.mouse_region,
-                                    e.key_ptr.state,
-                                    e.key_ptr.input,
-                                    e.value_ptr.*,
-                                });
-                            }
                         }
 
                         // TODO: bookmarks not scrolling :/
@@ -3337,4 +3338,11 @@ pub fn main() !void {
     defer app.deinit();
 
     app.event_loop() catch |e| utils_mod.dump_error(e);
+}
+
+test "input code" {
+    const alloc = std.testing.allocator;
+
+    var map = try App.init_input_action_map(alloc);
+    defer map.deinit();
 }

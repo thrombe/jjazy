@@ -2865,11 +2865,9 @@ pub const App = struct {
                 if (self.state == .bookmark) {
                     try self.bookmarks.render(&surface, self, .{}, .{});
                 } else if (std.meta.eql(self.state, .{ .git = .push })) {
-                    try self.bookmarks.render(&surface, self, .{
-                        // .remotes = false,
-                    }, .{ .targets = false });
+                    try self.bookmarks.render(&surface, self, .{ .remotes = false }, .{});
                 } else if (std.meta.eql(self.state, .{ .git = .fetch })) {
-                    try self.bookmarks.render(&surface, self, .{ .local_only = false }, .{ .targets = false });
+                    try self.bookmarks.render(&surface, self, .{ .remotes = false }, .{ .targets = false });
                 } else unreachable;
             }
 

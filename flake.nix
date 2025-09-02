@@ -54,7 +54,7 @@
         ];
 
         buildPhase = ''
-          zig build -Doptimize=ReleaseFast
+          zig build -Doptimize=ReleaseSafe
         '';
         installPhase = ''
           mkdir -p $out/bin
@@ -68,7 +68,7 @@
         runScript = "${pkgs.zsh}/bin/zsh";
         profile = ''
           export FHS=1
-          source ./.venv/bin/activate
+          # source ./.venv/bin/activate
           # source .env
         '';
       };

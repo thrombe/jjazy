@@ -166,6 +166,8 @@ pub const JujutsuServer = struct {
                     try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = res } } });
                 },
                 .diff => |change| {
+                    // TODO: these diffs can get pretty large, maybe add some kinda paging support to this?
+                    //  - something like: caller passes some line range info (start, end)
                     const stat = self.jjcall(&[_][]const u8{
                         "jj",
                         "--color",

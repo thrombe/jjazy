@@ -815,8 +815,12 @@ const HelpSlate = struct {
             .help = "Apply jj abandon",
         },
         .{
-            .action = .apply_jj_squash,
+            .action = .{ .apply_jj_squash = .{ .ignore_immutable = false } },
             .help = "Apply jj squash",
+        },
+        .{
+            .action = .{ .apply_jj_squash = .{ .ignore_immutable = true } },
+            .help = "Apply jj squash --ignore-immutable",
         },
         .{
             .action = .apply_jj_new,
@@ -1277,7 +1281,7 @@ pub const Action = union(enum) {
     switch_state_to_command,
     apply_jj_rebase,
     apply_jj_abandon,
-    apply_jj_squash,
+    apply_jj_squash: struct { ignore_immutable: bool },
     apply_jj_new,
     execute_command_in_input_buffer: struct { interactive: bool },
     apply_jj_op_restore,
@@ -2051,8 +2055,22 @@ pub const App = struct {
             .squash,
             .{ .functional = .{ .key = .enter } },
             null,
-            .apply_jj_squash,
+            .{ .apply_jj_squash = .{ .ignore_immutable = false } },
         );
+        {
+            defer map.reset();
+            try map.for_state(.squash);
+
+            // OOF: zellij enter + shift is broken :/
+            try map.add_many(
+                &[_]Key{
+                    .{ .functional = .{ .key = .enter, .mod = .{ .shift = true } } },
+                    .{ .functional = .{ .key = .enter, .mod = .{ .ctrl = true } } },
+                },
+                null,
+                .{ .apply_jj_squash = .{ .ignore_immutable = false } },
+            );
+        }
         try map.add_one_for_state(
             .new,
             .{ .functional = .{ .key = .enter } },
@@ -2599,7 +2617,7 @@ pub const App = struct {
 
                     try self.jj.requests.send(.log);
                 },
-                .apply_jj_squash => {
+                .apply_jj_squash => |v| {
                     defer {
                         self.log.selected_changes.clearRetainingCapacity();
                         self.state = .log;
@@ -2622,6 +2640,10 @@ pub const App = struct {
 
                     try args.append("--into");
                     try args.append(self.log.focused_change.id[0..]);
+
+                    if (v.ignore_immutable) {
+                        try args.append("--ignore-immutable");
+                    }
 
                     try self.execute_non_interactive_command(args.items);
 

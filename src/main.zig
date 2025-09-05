@@ -2174,12 +2174,20 @@ pub const App = struct {
             null,
             .{ .apply_jj_git_push_selected = .{ .allow_new = false } },
         );
-        try map.add_one_for_state(
-            .{ .git = .push },
-            .{ .functional = .{ .key = .enter, .mod = .{ .shift = true } } },
-            null,
-            .{ .apply_jj_git_push_selected = .{ .allow_new = true } },
-        );
+        {
+            defer map.reset();
+            try map.for_state(.{ .git = .push });
+
+            // OOF: zellij enter + shift is broken :/
+            try map.add_many(
+                &[_]Key{
+                    .{ .functional = .{ .key = .enter, .mod = .{ .shift = true } } },
+                    .{ .functional = .{ .key = .enter, .mod = .{ .ctrl = true } } },
+                },
+                null,
+                .{ .apply_jj_git_push_selected = .{ .allow_new = true } },
+            );
+        }
 
         return map.build();
     }
@@ -2201,6 +2209,13 @@ pub const App = struct {
         switch (event) {
             .rerender => {
                 self.rerender_pending_count -|= 1;
+            },
+            .input => |e| {
+                // TDOO:
+                //  - zellij shift + enter broken
+                //  - zellij enter only sends 1 .press event (even for hold). no repeats, no releases
+                _ = e;
+                // std.log.debug("{any}", .{e});
             },
             else => {},
         }

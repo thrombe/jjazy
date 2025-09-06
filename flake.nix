@@ -52,6 +52,9 @@
           zig
           zig.hook
         ];
+        buildInputs = with pkgs; [
+          jujutsu
+        ];
 
         buildPhase = ''
           zig build -Doptimize=ReleaseSafe

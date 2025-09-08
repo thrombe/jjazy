@@ -505,7 +505,8 @@ const DiffSlate = struct {
         _ = app;
         if (self.diffcache.getPtr(focused.hash)) |cdiff| if (cdiff.diff) |diff| {
             cdiff.y = @max(0, cdiff.y);
-            cdiff.y = @min(cdiff.y, cdiff.len - surface.region.size.y);
+            // +2 just so it is visually obvious in the UI that the diff has ended
+            cdiff.y = @min(cdiff.y, cdiff.len - surface.region.size.y + 2);
 
             var skip_y = cdiff.y;
             var it = utils_mod.LineIterator.init(diff);

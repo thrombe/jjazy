@@ -405,18 +405,18 @@ pub const TermStyledGraphemeIterator = struct {
                             .background_color => @as(u32, v) + 40,
                             else => unreachable,
                         }}),
-                        else => {},
-                    }
-
-                    switch (self) {
-                        .foreground_color => try writer.print("\x1B[38", .{}),
-                        .background_color => try writer.print("\x1B[48", .{}),
-                        else => unreachable,
-                    }
-                    switch (col) {
-                        .bit8 => |v| try writer.print(";5;{d}m", .{v}),
-                        .bit24 => |v| try writer.print(";2;{d};{d};{d}m", .{ v[0], v[1], v[2] }),
-                        else => unreachable,
+                        else => {
+                            switch (self) {
+                                .foreground_color => try writer.print("\x1B[38", .{}),
+                                .background_color => try writer.print("\x1B[48", .{}),
+                                else => unreachable,
+                            }
+                            switch (col) {
+                                .bit8 => |v| try writer.print(";5;{d}m", .{v}),
+                                .bit24 => |v| try writer.print(";2;{d};{d};{d}m", .{ v[0], v[1], v[2] }),
+                                else => unreachable,
+                            }
+                        },
                     }
                 },
                 .double_underline, .not_supported => {},

@@ -305,7 +305,11 @@ pub const TermStyledGraphemeIterator = struct {
             }
         }
 
-        pub fn write_diff(self: *const @This(), other: @This(), w: std.ArrayList(u8).Writer) !void {
+        pub fn write_diff(self: @This(), other: @This(), w: std.ArrayList(u8).Writer) !void {
+            if (utils_mod.auto_eql(self, other, .{ .pointer_eq = .follow })) {
+                return;
+            }
+
             if (utils_mod.auto_eql(other, .{}, .{ .pointer_eq = .follow })) {
                 try Style.write_to(.reset, w);
                 return;
@@ -316,7 +320,7 @@ pub const TermStyledGraphemeIterator = struct {
             } else {
                 try Style.write_to(.reset, w);
 
-                try StyleSet.write_diff(&.{}, other, w);
+                try StyleSet.write_diff(.{}, other, w);
                 return;
             };
 
@@ -342,11 +346,11 @@ pub const TermStyledGraphemeIterator = struct {
 
             if (self.font != other.font) try Style.write_to(if (other.font) |font| .{ .alt_font = font } else .font_default, w);
 
-            if (utils_mod.auto_eql(self.foreground_color, other.foreground_color, .{ .pointer_eq = .follow })) {
+            if (!utils_mod.auto_eql(self.foreground_color, other.foreground_color, .{ .pointer_eq = .follow })) {
                 try Style.write_to(.{ .foreground_color = other.foreground_color }, w);
             }
 
-            if (utils_mod.auto_eql(self.background_color, other.background_color, .{ .pointer_eq = .follow })) {
+            if (!utils_mod.auto_eql(self.background_color, other.background_color, .{ .pointer_eq = .follow })) {
                 try Style.write_to(.{ .background_color = other.background_color }, w);
             }
 
@@ -1252,30 +1256,29 @@ pub const DiffTerm = struct {
     }
 
     fn resize(self: *@This(), size: Vec2) !void {
-        if (std.meta.eql(self.styled.size, size)) {
-            return;
-        }
-
         self.styled.size = size;
         self.styled.last.clearRetainingCapacity();
         try self.styled.last.appendNTimes(.{ .grapheme = " ", .style = .{} }, @intCast(self.styled.size.x * self.styled.size.y));
 
         self.styled.curr.clearRetainingCapacity();
         try self.styled.curr.appendNTimes(.{ .grapheme = " ", .style = .{} }, @intCast(self.styled.size.x * self.styled.size.y));
+
+        self.raw.last.clearRetainingCapacity();
+        self.raw.curr.clearRetainingCapacity();
+
+        try self.cmdbuf.writer().writeAll(codes.clear);
     }
 
     fn clear(self: *@This()) !void {
+        self.raw.curr.clearRetainingCapacity();
+
         self.styled.curr.clearRetainingCapacity();
         try self.styled.curr.appendNTimes(.{ .grapheme = " ", .style = .{} }, @intCast(self.styled.size.x * self.styled.size.y));
     }
 
-    fn swap(self: *@This()) !void {
+    fn swap(self: *@This()) void {
         std.mem.swap(std.ArrayList(u8), &self.raw.last, &self.raw.curr);
-        self.raw.curr.clearRetainingCapacity();
-
         std.mem.swap(std.ArrayList(Cell), &self.styled.last, &self.styled.curr);
-        self.styled.curr.clearRetainingCapacity();
-        try self.styled.curr.appendNTimes(.{ .grapheme = " ", .style = .{} }, @intCast(self.styled.size.x * self.styled.size.y));
     }
 
     fn writer(self: *@This()) Writer {
@@ -1333,14 +1336,13 @@ pub const DiffTerm = struct {
                         // ignore
                     },
 
-                    .set_style => |e| {
-                        style = e;
-                    },
+                    .set_style => |e| style = e,
                 }
 
                 continue;
             }
 
+            std.debug.assert(std.mem.indexOf(u8, t.grapheme, "\x1b[") == null);
             if (size.x == x and size.y == y) continue;
             self.styled.curr.items[cast(usize, y * size.x + x)].grapheme = t.grapheme;
             self.styled.curr.items[cast(usize, y * size.x + x)].style = style;
@@ -1356,26 +1358,31 @@ pub const DiffTerm = struct {
     // render from styled.curr to cmdbuf
     fn _render_diff(self: *@This()) !void {
         const size = self.styled.size;
-        var style: Style = .{};
         var x: i32 = 0;
         var y: i32 = 0;
         for (self.styled.last.items, self.styled.curr.items) |last, curr| {
-            if (!utils_mod.auto_eql(last.style, curr.style, .{ .pointer_eq = .follow })) {
-                try self.cmdbuf.writer().print(codes.cursor.move, .{ y + 1, x + 1 });
-
-                try style.write_diff(curr.style, self.cmdbuf.writer());
-                style = curr.style;
-
-                try self.cmdbuf.writer().writeAll(curr.grapheme);
-            } else if (!utils_mod.auto_eql(last.grapheme, curr.grapheme, .{ .pointer_eq = .follow })) {
-                try self.cmdbuf.writer().print(codes.cursor.move, .{ y + 1, x + 1 });
-                try self.cmdbuf.writer().writeAll(curr.grapheme);
+            defer {
+                x += 1;
+                if (x >= size.x) {
+                    x = 0;
+                    y += 1;
+                }
             }
 
-            x += 1;
-            if (x >= size.x) {
-                x = 0;
-                y += 1;
+            // if (true) {
+            //     try Style.write_diff(.{}, curr.style, self.cmdbuf.writer());
+            //     try self.cmdbuf.writer().print(codes.cursor.move, .{ y + 1, x + 1 });
+            //     try self.cmdbuf.writer().writeAll(curr.grapheme);
+            //     try TermStyledGraphemeIterator.Style.write_to(.reset, self.cmdbuf.writer());
+            //     continue;
+            // }
+
+            if (!utils_mod.auto_eql(last, curr, .{ .pointer_eq = .follow })) {
+                try self.cmdbuf.writer().print(codes.cursor.move, .{ y + 1, x + 1 });
+
+                try Style.write_diff(.{}, curr.style, self.cmdbuf.writer());
+                try self.cmdbuf.writer().writeAll(curr.grapheme);
+                try TermStyledGraphemeIterator.Style.write_to(.reset, self.cmdbuf.writer());
             }
         }
     }
@@ -1450,7 +1457,7 @@ pub const Screen = struct {
         std.mem.sort(DepthEntry, self.depths.items, SortCtx{}, SortCtx.lessThan);
 
         {
-            try self.diffterm.swap();
+            self.diffterm.swap();
             try self.diffterm.clear();
 
             // submit and clear cmdbufs
@@ -1458,14 +1465,15 @@ pub const Screen = struct {
                 const cmdbuf = &self.cmdbufs.items[e.id];
                 defer cmdbuf.clearRetainingCapacity();
 
-                try @as(TermStyledGraphemeIterator.Style, .reset).write_to(self.diffterm.writer());
+                try TermStyledGraphemeIterator.Style.write_to(.reset, self.diffterm.writer());
                 try self.diffterm.writer().writeAll(cmdbuf.items);
             }
         }
 
         {
-            try self.term.tty.writeAll(codes.sync_set ++ codes.clear);
+            try self.term.tty.writeAll(codes.sync_set);
 
+            defer self.diffterm.cmdbuf.clearRetainingCapacity();
             const cmdbuf = try self.diffterm.render();
             try self.term.tty.writeAll(cmdbuf);
 

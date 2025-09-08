@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const options = @import("options");
 
 const utils_mod = @import("utils.zig");
 const cast = utils_mod.cast;
@@ -1655,7 +1656,7 @@ pub const App = struct {
                 .squash,
                 .abandon,
             });
-            if (builtin.mode == .Debug) try map.add_one(
+            if (options.env == .debug) try map.add_one(
                 .{ .functional = .{ .key = .escape, .mod = .{ .ctrl = true } } },
                 null,
                 .trigger_breakpoint,
@@ -1690,12 +1691,12 @@ pub const App = struct {
                 .squash,
                 .abandon,
             });
-            if (builtin.mode == .Debug) try map.add_one(
+            if (options.env == .debug) try map.add_one(
                 .{ .key = .{ .key = '1' } },
                 null,
                 .{ .fancy_terminal_features_that_break_gdb = .enable },
             );
-            if (builtin.mode == .Debug) try map.add_one(
+            if (options.env == .debug) try map.add_one(
                 .{ .key = .{ .key = '1', .mod = .{ .ctrl = true } } },
                 null,
                 .{ .fancy_terminal_features_that_break_gdb = .disable },
@@ -2935,7 +2936,7 @@ pub const App = struct {
     fn event_loop(self: *@This()) !void {
         try self._send_event(.rerender);
 
-        if (comptime builtin.mode == .Debug) {
+        if (comptime options.env == .debug) {
             // try self.screen.term.fancy_features_that_break_gdb(.disable, .{});
         }
 
@@ -3008,7 +3009,7 @@ pub const App = struct {
     fn render_status_bar(self: *@This(), surface: *Surface) !void {
         const temp = self.arena.allocator();
 
-        if (builtin.mode == .Debug) {
+        if (options.env == .debug) {
             var colors = try surface.split_x(-32, .none);
 
             try colors.apply_style(.{ .foreground_color = .from_theme(.default_background) });
@@ -3034,7 +3035,7 @@ pub const App = struct {
             try surface.draw_buf(" ");
             try surface.apply_style(.reset);
 
-            if (builtin.mode == .Debug) {
+            if (options.env == .debug) {
                 try surface.draw_buf(" ");
 
                 try surface.apply_style(.{ .background_color = .from_theme(.default_foreground) });

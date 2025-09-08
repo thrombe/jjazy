@@ -57,7 +57,7 @@
         ];
 
         buildPhase = ''
-          zig build -Doptimize=ReleaseSafe
+          zig build -Doptimize=ReleaseSafe -Denv=prod
         '';
         installPhase = ''
           mkdir -p $out/bin

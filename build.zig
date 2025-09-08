@@ -1,11 +1,13 @@
 const std = @import("std");
 
+const Env = enum { prod, debug };
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
     const options = b.addOptions();
-    options.addOption(enum { prod, debug }, "env", .debug);
+    options.addOption(Env, "env", b.option(Env, "env", "prod / debug env") orelse .debug);
 
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),

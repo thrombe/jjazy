@@ -274,8 +274,8 @@ pub const TermStyledGraphemeIterator = struct {
         hide: bool = false,
         strike: bool = false,
         font: ?u3 = null,
-        foreground_color: ?Color = null,
-        background_color: ?Color = null,
+        foreground_color: Color = .from_theme(.default_foreground),
+        background_color: Color = .from_theme(.default_background),
 
         fn consume(self: *@This(), style: Style) void {
             switch (style) {
@@ -284,22 +284,73 @@ pub const TermStyledGraphemeIterator = struct {
                 .normal_intensity => self.weight = .normal,
                 .faint => self.weight = .faint,
                 .italic => self.italic = true,
+                .no_italic => self.italic = false,
                 .underline => self.underline = .single,
                 .double_underline => self.underline = .double,
+                .no_underline => self.underline = .none,
                 .slow_blink => self.blink = .slow,
                 .rapid_blink => self.blink = .rapid,
+                .no_blink => self.blink = .none,
                 .hide => self.hide = true,
                 .strike => self.strike = true,
                 .font_default => self.font = null,
                 .alt_font => |i| self.font = i,
-                .default_foreground_color => self.foreground_color = null,
-                .default_background_color => self.background_color = null,
+                .default_foreground_color => self.foreground_color = .from_theme(.default_foreground),
+                .default_background_color => self.background_color = .from_theme(.default_background),
                 .foreground_color => |col| self.foreground_color = col,
                 .background_color => |col| self.background_color = col,
-                .invert => std.mem.swap(?Color, &self.foreground_color, &self.background_color),
+                .invert => std.mem.swap(Color, &self.foreground_color, &self.background_color),
 
                 .not_supported => {},
             }
+        }
+
+        pub fn write_diff(self: *const @This(), other: @This(), w: std.ArrayList(u8).Writer) !void {
+            if (utils_mod.auto_eql(other, .{}, .{ .pointer_eq = .follow })) {
+                try Style.write_to(.reset, w);
+                return;
+            }
+
+            if (self.strike != other.strike) if (other.strike) {
+                try Style.write_to(.strike, w);
+            } else {
+                try Style.write_to(.reset, w);
+
+                try StyleSet.write_diff(&.{}, other, w);
+                return;
+            };
+
+            if (!utils_mod.auto_eql(self.weight, other.weight, .{})) try Style.write_to(switch (other.weight) {
+                .normal => .normal_intensity,
+                .faint => .faint,
+                .bold => .bold,
+            }, w);
+
+            if (!utils_mod.auto_eql(self.underline, other.underline, .{})) try Style.write_to(switch (other.underline) {
+                .none => .no_underline,
+                .single => .underline,
+                .double => .double_underline,
+            }, w);
+
+            if (!utils_mod.auto_eql(self.blink, other.blink, .{})) try Style.write_to(switch (other.blink) {
+                .none => .no_blink,
+                .slow => .slow_blink,
+                .rapid => .rapid_blink,
+            }, w);
+
+            if (self.italic != other.italic) try Style.write_to(if (other.italic) .italic else .no_italic, w);
+
+            if (self.font != other.font) try Style.write_to(if (other.font) |font| .{ .alt_font = font } else .font_default, w);
+
+            if (utils_mod.auto_eql(self.foreground_color, other.foreground_color, .{ .pointer_eq = .follow })) {
+                try Style.write_to(.{ .foreground_color = other.foreground_color }, w);
+            }
+
+            if (utils_mod.auto_eql(self.background_color, other.background_color, .{ .pointer_eq = .follow })) {
+                try Style.write_to(.{ .background_color = other.background_color }, w);
+            }
+
+            // self.hide does not matter
         }
     };
     pub const Style = union(enum) {
@@ -308,9 +359,12 @@ pub const TermStyledGraphemeIterator = struct {
         normal_intensity,
         faint,
         italic,
+        no_italic,
         underline,
+        no_underline,
         slow_blink,
         rapid_blink,
+        no_blink,
         invert,
         hide,
         strike,
@@ -330,9 +384,12 @@ pub const TermStyledGraphemeIterator = struct {
                 .bold => try writer.print("\x1B[1m", .{}),
                 .faint => try writer.print("\x1B[2m", .{}),
                 .italic => try writer.print("\x1B[3m", .{}),
+                .no_italic => try writer.print("\x1B[23m", .{}),
                 .underline => try writer.print("\x1B[4m", .{}),
+                .no_underline => try writer.print("\x1B[24m", .{}),
                 .slow_blink => try writer.print("\x1B[5m", .{}),
                 .rapid_blink => try writer.print("\x1B[6m", .{}),
+                .no_blink => try writer.print("\x1B[25m", .{}),
                 .invert => try writer.print("\x1B[7m", .{}),
                 .hide => try writer.print("\x1B[8m", .{}),
                 .strike => try writer.print("\x1B[9m", .{}),
@@ -477,6 +534,9 @@ pub const TermStyledGraphemeIterator = struct {
                                 10 => style.consume(.font_default),
                                 11...19 => style.consume(.{ .alt_font = cast(u3, n.? - 11) }),
                                 22 => style.consume(.normal_intensity),
+                                23 => style.consume(.no_italic),
+                                24 => style.consume(.no_underline),
+                                25 => style.consume(.no_blink),
 
                                 39 => style.consume(.default_foreground_color),
                                 49 => style.consume(.default_background_color),
@@ -487,7 +547,7 @@ pub const TermStyledGraphemeIterator = struct {
                                 38 => style.consume(.{ .foreground_color = Color.from_params(m, r, g, b) orelse return error.BadColorParams }),
                                 48 => style.consume(.{ .background_color = Color.from_params(m, r, g, b) orelse return error.BadColorParams }),
 
-                                20...21, 23...29, 50...107 => style.consume(.not_supported),
+                                20...21, 26...29, 50...107 => style.consume(.not_supported),
                                 else => {},
                             }
 
@@ -1147,8 +1207,188 @@ pub const Term = struct {
     }
 };
 
+pub const DiffTerm = struct {
+    raw: struct {
+        last: std.ArrayList(u8),
+        curr: std.ArrayList(u8),
+    },
+    styled: struct {
+        size: Vec2,
+        last: std.ArrayList(Cell),
+        curr: std.ArrayList(Cell),
+    },
+    cmdbuf: std.ArrayList(u8),
+
+    const Writer = std.ArrayList(u8).Writer;
+
+    const Style = TermStyledGraphemeIterator.StyleSet;
+    const Cell = struct {
+        grapheme: []const u8,
+        style: Style,
+    };
+
+    fn init(alloc: std.mem.Allocator) @This() {
+        return .{
+            .raw = .{
+                .last = .init(alloc),
+                .curr = .init(alloc),
+            },
+            .styled = .{
+                .size = .{},
+                .last = .init(alloc),
+                .curr = .init(alloc),
+            },
+            .cmdbuf = .init(alloc),
+        };
+    }
+
+    fn deinit(self: *@This()) void {
+        self.raw.last.deinit();
+        self.raw.curr.deinit();
+        self.styled.last.deinit();
+        self.styled.curr.deinit();
+        self.cmdbuf.deinit();
+    }
+
+    fn resize(self: *@This(), size: Vec2) !void {
+        if (std.meta.eql(self.styled.size, size)) {
+            return;
+        }
+
+        self.styled.size = size;
+        self.styled.last.clearRetainingCapacity();
+        try self.styled.last.appendNTimes(.{ .grapheme = " ", .style = .{} }, @intCast(self.styled.size.x * self.styled.size.y));
+
+        self.styled.curr.clearRetainingCapacity();
+        try self.styled.curr.appendNTimes(.{ .grapheme = " ", .style = .{} }, @intCast(self.styled.size.x * self.styled.size.y));
+    }
+
+    fn clear(self: *@This()) !void {
+        self.styled.curr.clearRetainingCapacity();
+        try self.styled.curr.appendNTimes(.{ .grapheme = " ", .style = .{} }, @intCast(self.styled.size.x * self.styled.size.y));
+    }
+
+    fn swap(self: *@This()) !void {
+        std.mem.swap(std.ArrayList(u8), &self.raw.last, &self.raw.curr);
+        self.raw.curr.clearRetainingCapacity();
+
+        std.mem.swap(std.ArrayList(Cell), &self.styled.last, &self.styled.curr);
+        self.styled.curr.clearRetainingCapacity();
+        try self.styled.curr.appendNTimes(.{ .grapheme = " ", .style = .{} }, @intCast(self.styled.size.x * self.styled.size.y));
+    }
+
+    fn writer(self: *@This()) Writer {
+        return self.raw.curr.writer();
+    }
+
+    // render from raw.curr to styled.curr
+    fn _render_styled(self: *@This()) !void {
+        const size = self.styled.size;
+        var it = try TermStyledGraphemeIterator.init(self.raw.curr.items);
+
+        var style: Style = .{};
+        var x: i32 = 0;
+        var y: i32 = 0;
+        while (try it.next()) |t| {
+            if (t.codepoint) |c| {
+                switch (c) {
+                    .cursor_up => |e| y = @max(y - cast(i32, e), 0),
+                    .cursor_down => |e| y = @min(y + cast(i32, e), @max(size.y - 1, 0)),
+                    .cursor_fwd => |e| x = @min(x + cast(i32, e), @max(size.x - 1, 0)),
+                    .cursor_back => |e| x = @max(x - cast(i32, e), 0),
+                    .cursor_next_line => |e| {
+                        x = 0;
+                        y = @min(y + cast(i32, e), @max(size.y - 1, 0));
+                    },
+                    .cursor_prev_line => |e| {
+                        x = 0;
+                        y = @max(y - cast(i32, e), 0);
+                    },
+                    .cursor_horizontal_absolute => |e| {
+                        x = cast(i32, e) - 1;
+                        x = @max(x, 0);
+                        x = @min(x, @max(size.x - 1, 0));
+                    },
+                    .cursor_set_position => |e| {
+                        x = cast(i32, e.m - 1);
+                        y = cast(i32, e.n - 1);
+
+                        x = @max(x, 0);
+                        x = @min(x, @max(size.x - 1, 0));
+
+                        y = @max(y, 0);
+                        y = @min(y, @max(size.y - 1, 0));
+                    },
+                    .erase_in_display => |e| {
+                        _ = e;
+                        return error.Todo;
+                    },
+                    .erase_in_line => |e| {
+                        _ = e;
+                        return error.Todo;
+                    },
+
+                    .scroll_up, .scroll_down, .cursor_get_position, .cursor_position_save, .cursor_position_restore, .cursor_hide, .enable_focus_reporting, .disable_focus_reporting, .enable_alt_screen, .disable_alt_screen, .enable_bracketed_paste, .disable_bracketed_paste, .render_sync_start, .render_sync_end => {
+                        // ignore
+                    },
+
+                    .set_style => |e| {
+                        style = e;
+                    },
+                }
+
+                continue;
+            }
+
+            if (size.x == x and size.y == y) continue;
+            self.styled.curr.items[cast(usize, y * size.x + x)].grapheme = t.grapheme;
+            self.styled.curr.items[cast(usize, y * size.x + x)].style = style;
+            x += 1;
+            if (x >= size.x) {
+                x = 0;
+                y += 1;
+            }
+            y = @min(y, @max(size.y - 1, 0));
+        }
+    }
+
+    // render from styled.curr to cmdbuf
+    fn _render_diff(self: *@This()) !void {
+        const size = self.styled.size;
+        var style: Style = .{};
+        var x: i32 = 0;
+        var y: i32 = 0;
+        for (self.styled.last.items, self.styled.curr.items) |last, curr| {
+            if (!utils_mod.auto_eql(last.style, curr.style, .{ .pointer_eq = .follow })) {
+                try self.cmdbuf.writer().print(codes.cursor.move, .{ y + 1, x + 1 });
+
+                try style.write_diff(curr.style, self.cmdbuf.writer());
+                style = curr.style;
+
+                try self.cmdbuf.writer().writeAll(curr.grapheme);
+            } else if (!utils_mod.auto_eql(last.grapheme, curr.grapheme, .{ .pointer_eq = .follow })) {
+                try self.cmdbuf.writer().print(codes.cursor.move, .{ y + 1, x + 1 });
+                try self.cmdbuf.writer().writeAll(curr.grapheme);
+            }
+
+            x += 1;
+            if (x >= size.x) {
+                x = 0;
+                y += 1;
+            }
+        }
+    }
+
+    fn render(self: *@This()) ![]const u8 {
+        try self._render_styled();
+        try self._render_diff();
+        return self.cmdbuf.items;
+    }
+};
+
 pub const Screen = struct {
     term: Term,
+    diffterm: DiffTerm,
 
     cmdbuf_id: u32 = 0,
     cmdbufs: std.ArrayList(std.ArrayList(u8)),
@@ -1163,6 +1403,7 @@ pub const Screen = struct {
             .alloc = alloc,
             .cmdbufs = .init(alloc),
             .depths = .init(alloc),
+            .diffterm = .init(alloc),
             .term = term,
         };
     }
@@ -1176,6 +1417,12 @@ pub const Screen = struct {
         }
         defer self.term.deinit();
         defer self.depths.deinit();
+        defer self.diffterm.deinit();
+    }
+
+    pub fn update_size(self: *@This()) !void {
+        try self.term.update_size();
+        try self.diffterm.resize(self.term.screen.size);
     }
 
     pub fn get_cmdbuf_id(self: *@This(), depth: f32) !u32 {
@@ -1201,17 +1448,28 @@ pub const Screen = struct {
         };
         std.mem.sort(DepthEntry, self.depths.items, SortCtx{}, SortCtx.lessThan);
 
-        try self.term.tty.writeAll(codes.sync_set ++ codes.clear);
+        {
+            try self.diffterm.swap();
+            try self.diffterm.clear();
 
-        // submit and clear cmdbufs
-        for (self.depths.items) |e| {
-            const cmdbuf = &self.cmdbufs.items[e.id];
-            try self.term.tty.writeAll(cmdbuf.items);
-            try @as(TermStyledGraphemeIterator.Style, .reset).write_to(self.term.tty.writer());
-            cmdbuf.clearRetainingCapacity();
+            // submit and clear cmdbufs
+            for (self.depths.items) |e| {
+                const cmdbuf = &self.cmdbufs.items[e.id];
+                defer cmdbuf.clearRetainingCapacity();
+
+                try @as(TermStyledGraphemeIterator.Style, .reset).write_to(self.diffterm.writer());
+                try self.diffterm.writer().writeAll(cmdbuf.items);
+            }
         }
 
-        try self.term.tty.writeAll(codes.sync_reset);
+        {
+            try self.term.tty.writeAll(codes.sync_set ++ codes.clear);
+
+            const cmdbuf = try self.diffterm.render();
+            try self.term.tty.writeAll(cmdbuf);
+
+            try self.term.tty.writeAll(codes.sync_reset);
+        }
 
         self.cmdbuf_id = 0;
         self.depths.clearRetainingCapacity();

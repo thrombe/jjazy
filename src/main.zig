@@ -1476,6 +1476,7 @@ pub const App = struct {
         const term = try term_mod.Term.init();
         var screen = term_mod.Screen.init(alloc, term);
         errdefer screen.deinit();
+        try screen.update_size();
 
         screen.term.register_signal_handlers(@This());
         errdefer screen.term.unregister_signal_handlers();
@@ -2300,7 +2301,7 @@ pub const App = struct {
                 }
             },
             .sigwinch => {
-                try self.screen.term.update_size();
+                try self.screen.update_size();
                 try self._send_event(.rerender);
             },
             .scroll_update => {

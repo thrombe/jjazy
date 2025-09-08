@@ -104,7 +104,9 @@ pub fn auto_eql(a: anytype, b: @TypeOf(a), comptime v: AutoEqArgs) bool {
         .@"union" => |e| {
             if (!std.meta.eql(std.meta.activeTag(a), std.meta.activeTag(b))) return false;
             inline for (e.fields) |field| {
-                if (!auto_eql(@field(a, field.name), @field(b, field.name), v)) return false;
+                if (std.mem.eql(u8, @tagName(std.meta.activeTag(a)), field.name)) {
+                    if (!auto_eql(@field(a, field.name), @field(b, field.name), v)) return false;
+                }
             }
             return true;
         },
@@ -115,13 +117,13 @@ pub fn auto_eql(a: anytype, b: @TypeOf(a), comptime v: AutoEqArgs) bool {
             return auto_eql(a.?, b.?, .{});
         },
         .pointer => |p| switch (p.size) {
-            .one => switch (comptime v.pointer_hashing) {
-                .disabled => @compileError("pointer hashing is disabled"),
+            .one => switch (comptime v.pointer_eq) {
+                .disabled => @compileError("pointer eq is disabled"),
                 .follow => return auto_eql(a.*, b.*, v),
                 .ptr_as_usize => return auto_eql(@intFromPtr(a), @intFromPtr(b), v),
             },
-            .slice => switch (comptime v.pointer_hashing) {
-                .disabled => @compileError("pointer hashing is disabled"),
+            .slice => switch (comptime v.pointer_eq) {
+                .disabled => @compileError("pointer eq is disabled"),
                 .follow => {
                     if (a.len != b.len) return false;
                     for (a, b) |ae, be| {

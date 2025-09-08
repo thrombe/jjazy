@@ -1626,7 +1626,7 @@ pub const App = struct {
     fn uncook_terminal(self: *@This()) !void {
         self.input_thread = try std.Thread.spawn(.{}, @This()._input_loop, .{self});
         self.screen.term.register_signal_handlers(@This());
-        try self.screen.term.uncook();
+        try self.screen.uncook();
         try self._send_event(.rerender);
         try self.jj.requests.send(.log);
     }

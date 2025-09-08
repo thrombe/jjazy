@@ -1438,6 +1438,11 @@ pub const Screen = struct {
         try self.diffterm.resize(self.term.screen.size);
     }
 
+    pub fn uncook(self: *@This()) !void {
+        try self.term.uncook();
+        try self.diffterm.resize(self.term.screen.size);
+    }
+
     pub fn get_cmdbuf_id(self: *@This(), depth: f32) !u32 {
         defer self.cmdbuf_id += 1;
         if (self.cmdbufs.items.len <= self.cmdbuf_id) {

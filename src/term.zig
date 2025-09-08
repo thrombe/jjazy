@@ -544,8 +544,9 @@ pub const TermStyledGraphemeIterator = struct {
                                 30...37 => style.consume(.{ .foreground_color = .{ .bit3 = cast(u3, n.? - 30) } }),
                                 40...47 => style.consume(.{ .background_color = .{ .bit3 = cast(u3, n.? - 40) } }),
 
-                                38 => style.consume(.{ .foreground_color = Color.from_params(m, r, g, b) orelse return error.BadColorParams }),
-                                48 => style.consume(.{ .background_color = Color.from_params(m, r, g, b) orelse return error.BadColorParams }),
+                                // TODO: orelse should be error
+                                38 => style.consume(.{ .foreground_color = Color.from_params(m, r, g, b) orelse Color.from_theme(.default_foreground) }),
+                                48 => style.consume(.{ .background_color = Color.from_params(m, r, g, b) orelse Color.from_theme(.default_background) }),
 
                                 20...21, 26...29, 50...107 => style.consume(.not_supported),
                                 else => {},

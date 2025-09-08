@@ -1363,33 +1363,42 @@ pub const DiffTerm = struct {
     // render from styled.curr to cmdbuf
     fn _render_diff(self: *@This()) !void {
         const size = self.styled.size;
+        var style = Style{};
         var x: i32 = 0;
         var y: i32 = 0;
+        var jump = true;
         for (self.styled.last.items, self.styled.curr.items) |last, curr| {
             defer {
                 x += 1;
                 if (x >= size.x) {
                     x = 0;
                     y += 1;
+                    jump = true;
                 }
             }
 
-            // if (true) {
-            //     try Style.write_diff(.{}, curr.style, self.cmdbuf.writer());
-            //     try self.cmdbuf.writer().print(codes.cursor.move, .{ y + 1, x + 1 });
-            //     try self.cmdbuf.writer().writeAll(curr.grapheme);
-            //     try TermStyledGraphemeIterator.Style.write_to(.reset, self.cmdbuf.writer());
-            //     continue;
-            // }
-
             if (!utils_mod.auto_eql(last, curr, .{ .pointer_eq = .follow })) {
-                try self.cmdbuf.writer().print(codes.cursor.move, .{ y + 1, x + 1 });
+                if (jump) {
+                    try TermStyledGraphemeIterator.Style.write_to(.reset, self.cmdbuf.writer());
+                    style = .{};
+                    try self.cmdbuf.writer().print(codes.cursor.move, .{ y + 1, x + 1 });
+                }
 
-                try Style.write_diff(.{}, curr.style, self.cmdbuf.writer());
+                if (!utils_mod.auto_eql(style, curr.style, .{ .pointer_eq = .follow })) {
+                    // TODO: not sure why a reset is needed here. Style.write_diff() should have worked.
+                    try TermStyledGraphemeIterator.Style.write_to(.reset, self.cmdbuf.writer());
+                    style = .{};
+                    try style.write_diff(curr.style, self.cmdbuf.writer());
+                    style = curr.style;
+                }
+
                 try self.cmdbuf.writer().writeAll(curr.grapheme);
-                try TermStyledGraphemeIterator.Style.write_to(.reset, self.cmdbuf.writer());
+                jump = false;
+            } else {
+                jump = true;
             }
         }
+        try TermStyledGraphemeIterator.Style.write_to(.reset, self.cmdbuf.writer());
     }
 
     fn render(self: *@This()) ![]const u8 {

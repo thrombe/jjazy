@@ -273,7 +273,7 @@ pub const TermStyledGraphemeIterator = struct {
         blink: enum { none, slow, rapid } = .none,
         hide: bool = false,
         strike: bool = false,
-        font: ?u3 = null,
+        font: ?u4 = null,
         foreground_color: Color = .from_theme(.default_foreground),
         background_color: Color = .from_theme(.default_background),
 
@@ -369,7 +369,7 @@ pub const TermStyledGraphemeIterator = struct {
         hide,
         strike,
         font_default,
-        alt_font: u3, // 1 to 9
+        alt_font: u4, // 1 to 9
         double_underline,
         default_foreground_color,
         default_background_color,
@@ -532,7 +532,7 @@ pub const TermStyledGraphemeIterator = struct {
                                 8 => style.consume(.hide),
                                 9 => style.consume(.strike),
                                 10 => style.consume(.font_default),
-                                11...19 => style.consume(.{ .alt_font = cast(u3, n.? - 11) }),
+                                11...19 => style.consume(.{ .alt_font = cast(u4, n.? - 11) }),
                                 22 => style.consume(.normal_intensity),
                                 23 => style.consume(.no_italic),
                                 24 => style.consume(.no_underline),

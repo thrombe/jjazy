@@ -231,6 +231,7 @@ pub const border = struct {
 
 pub const TermStyledGraphemeIterator = struct {
     utf8: std.unicode.Utf8Iterator,
+    style: StyleSet = .{},
 
     pub const Token = struct {
         grapheme: []const u8,
@@ -475,6 +476,7 @@ pub const TermStyledGraphemeIterator = struct {
         const utf8_view = try std.unicode.Utf8View.init(buf);
         return .{
             .utf8 = utf8_view.iterator(),
+            .style = .{},
         };
     }
 
@@ -515,7 +517,7 @@ pub const TermStyledGraphemeIterator = struct {
                         const bak = it;
                         defer it = bak;
 
-                        var style = StyleSet{};
+                        var style = self.style;
                         while (true) {
                             _ = it.consume(";");
                             const r = it.param();
@@ -556,7 +558,10 @@ pub const TermStyledGraphemeIterator = struct {
                                 else => {},
                             }
 
-                            if (it.consume("m")) return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = style } };
+                            if (it.consume("m")) {
+                                self.style = style;
+                                return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = style } };
+                            }
 
                             _ = it.consume(";");
                             n = it.param() orelse break :blk;

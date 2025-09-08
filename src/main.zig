@@ -479,6 +479,7 @@ const DiffSlate = struct {
     const Hash = jj_mod.Change.Hash;
     const CachedDiff = struct {
         y: i32 = 0,
+        len: i32 = 0,
         diff: ?[]const u8 = null,
     };
     const DiffCache = std.HashMap(Hash, CachedDiff, struct {
@@ -500,11 +501,23 @@ const DiffSlate = struct {
         self.diffcache.deinit();
     }
 
-    fn render(self: *@This(), surface: *Surface, focused: jj_mod.Change) !void {
+    fn render(self: *@This(), surface: *Surface, app: *App, focused: jj_mod.Change) !void {
+        _ = app;
         if (self.diffcache.getPtr(focused.hash)) |cdiff| if (cdiff.diff) |diff| {
             cdiff.y = @max(0, cdiff.y);
-            surface.y_scroll = cdiff.y;
-            try surface.draw_buf(diff);
+            cdiff.y = @min(cdiff.y, cdiff.len - surface.region.size.y);
+
+            var skip_y = cdiff.y;
+            var it = utils_mod.LineIterator.init(diff);
+            while (it.next()) |line| {
+                if (surface.y < skip_y) {
+                    skip_y -= 1;
+                    continue;
+                }
+                try surface.draw_bufln(line);
+
+                if (surface.is_full()) break;
+            }
         } else {
             try surface.draw_buf(" loading ... ");
         };
@@ -2896,6 +2909,11 @@ pub const App = struct {
                     switch (res.res) {
                         .ok => |buf| {
                             self.diff.diffcache.getPtr(req.hash).?.diff = buf;
+
+                            var it = utils_mod.LineIterator.init(buf);
+                            var len: i32 = 0;
+                            while (it.next()) |_| len += 1;
+                            self.diff.diffcache.getPtr(req.hash).?.len = len;
                         },
                         .err => |buf| try self._toast(.{ .err = error.JJDiffFailed }, buf),
                     }
@@ -3071,7 +3089,7 @@ pub const App = struct {
                 .oplog => try self.oplog.render(&status, self),
                 else => try self.log.render(&status, self, self.state, tropes),
             }
-            try self.diff.render(&diffs, self.log.focused_change);
+            try self.diff.render(&diffs, self, self.log.focused_change);
 
             const max_popup_region = self.screen.term.screen
                 .split_y(-2, false).top

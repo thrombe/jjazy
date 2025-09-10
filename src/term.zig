@@ -507,25 +507,20 @@ pub const TermStyledGraphemeIterator = struct {
                     if (it.consume("?2006h")) return Token{ .grapheme = try self.consume(it.i), .codepoint = .render_sync_start };
                     if (it.consume("?2006l")) return Token{ .grapheme = try self.consume(it.i), .codepoint = .render_sync_end };
 
-                    var n = it.param();
-                    _ = it.consume(";");
-                    var m = it.param();
-
                     blk: {
                         // any number of style params can come after '[' and before 'm'.
                         // so we have a sort of state machine style style parsing. here.
                         const bak = it;
                         defer it = bak;
 
+                        var n = it.param();
+                        var m: ?u32 = null;
+                        var r: ?u32 = null;
+                        var g: ?u32 = null;
+                        var b: ?u32 = null;
+
                         var style = self.style;
                         while (true) {
-                            _ = it.consume(";");
-                            const r = it.param();
-                            _ = it.consume(";");
-                            const g = it.param();
-                            _ = it.consume(";");
-                            const b = it.param();
-
                             switch (n orelse 0) {
                                 0 => style.consume(.reset),
                                 1 => style.consume(.bold),
@@ -550,9 +545,24 @@ pub const TermStyledGraphemeIterator = struct {
                                 30...37 => style.consume(.{ .foreground_color = .{ .bit3 = cast(u3, n.? - 30) } }),
                                 40...47 => style.consume(.{ .background_color = .{ .bit3 = cast(u3, n.? - 40) } }),
 
-                                // TODO: orelse should be error
-                                38 => style.consume(.{ .foreground_color = Color.from_params(m, r, g, b) orelse Color.from_theme(.default_foreground) }),
-                                48 => style.consume(.{ .background_color = Color.from_params(m, r, g, b) orelse Color.from_theme(.default_background) }),
+                                // handled separately
+                                38, 48 => {
+                                    _ = it.consume(";");
+                                    m = it.param();
+                                    _ = it.consume(";");
+                                    r = it.param();
+                                    _ = it.consume(";");
+                                    g = it.param();
+                                    _ = it.consume(";");
+                                    b = it.param();
+
+                                    switch (n.?) {
+                                        // TODO: orelse should be error
+                                        38 => style.consume(.{ .foreground_color = Color.from_params(m, r, g, b) orelse Color.from_theme(.default_foreground) }),
+                                        48 => style.consume(.{ .background_color = Color.from_params(m, r, g, b) orelse Color.from_theme(.default_background) }),
+                                        else => {},
+                                    }
+                                },
 
                                 20...21, 26...29, 50...107 => style.consume(.not_supported),
                                 else => {},
@@ -563,13 +573,18 @@ pub const TermStyledGraphemeIterator = struct {
                                 return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .set_style = style } };
                             }
 
+                            m = null;
+                            r = null;
+                            g = null;
+                            b = null;
                             _ = it.consume(";");
                             n = it.param() orelse break :blk;
-                            _ = it.consume(";");
-                            m = it.param();
                         }
                     }
 
+                    const n = it.param();
+                    _ = it.consume(";");
+                    const m = it.param();
                     switch (try it.expect()) {
                         'A' => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .cursor_up = n orelse 1 } },
                         'B' => return Token{ .grapheme = try self.consume(it.i), .codepoint = .{ .cursor_down = n orelse 1 } },
@@ -1376,6 +1391,14 @@ pub const DiffTerm = struct {
                     jump = true;
                 }
             }
+
+            // if (true) {
+            //     try Style.write_diff(.{}, curr.style, self.cmdbuf.writer());
+            //     try self.cmdbuf.writer().print(codes.cursor.move, .{ y + 1, x + 1 });
+            //     try self.cmdbuf.writer().writeAll(curr.grapheme);
+            //     try TermStyledGraphemeIterator.Style.write_to(.reset, self.cmdbuf.writer());
+            //     continue;
+            // }
 
             if (!utils_mod.auto_eql(last, curr, .{ .pointer_eq = .follow })) {
                 if (jump) {

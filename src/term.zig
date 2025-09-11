@@ -234,6 +234,9 @@ pub const TermStyledGraphemeIterator = struct {
     style: StyleSet = .{},
 
     pub const Token = struct {
+        // TODO: figure out some way to get visual width
+        // TODO: actually use the visual width of chars in the code
+        visual_width: u4,
         grapheme: []const u8,
         codepoint: ?Codepoint,
     };
@@ -478,11 +481,17 @@ pub const TermStyledGraphemeIterator = struct {
 
     pub fn next(self: *@This()) !?Token {
         if (try self.next_codepoint()) |t| return t;
-        return .{
-            .grapheme = self.utf8.nextCodepointSlice() orelse return null,
+        // TODO: a codepoint slice is not a grapheme cluster. fix this.
+        const grapheme = self.utf8.nextCodepointSlice() orelse return null;
+        const len = codepoint_length(grapheme);
+        return Token{
+            .grapheme = grapheme,
             .codepoint = null,
+            .visual_width = len,
         };
     }
+
+    fn codepoint_length(codepoint: []const u8) u4 {}
 
     // https://en.wikipedia.org/wiki/ANSI_escape_code#C0_control_codes
     fn next_codepoint(self: *@This()) !?Token {

@@ -294,6 +294,7 @@ pub const TermStyledGraphemeIterator = struct {
                 .no_blink => self.blink = .none,
                 .hide => self.hide = true,
                 .strike => self.strike = true,
+                .no_strike => self.strike = false,
                 .font_default => self.font = null,
                 .alt_font => |i| self.font = i,
                 .default_foreground_color => self.foreground_color = .from_theme(.default_foreground),
@@ -316,15 +317,6 @@ pub const TermStyledGraphemeIterator = struct {
                 return;
             }
 
-            if (self.strike != other.strike) if (other.strike) {
-                try Style.write_to(.strike, w);
-            } else {
-                try Style.write_to(.reset, w);
-
-                try StyleSet.write_diff(.{}, other, w);
-                return;
-            };
-
             if (!utils_mod.auto_eql(self.weight, other.weight, .{})) try Style.write_to(switch (other.weight) {
                 .normal => .normal_intensity,
                 .faint => .faint,
@@ -344,6 +336,8 @@ pub const TermStyledGraphemeIterator = struct {
             }, w);
 
             if (self.italic != other.italic) try Style.write_to(if (other.italic) .italic else .no_italic, w);
+
+            if (self.strike != other.strike) try Style.write_to(if (other.strike) .strike else .no_strike, w);
 
             if (self.font != other.font) try Style.write_to(if (other.font) |font| .{ .alt_font = font } else .font_default, w);
 
@@ -373,6 +367,7 @@ pub const TermStyledGraphemeIterator = struct {
         invert,
         hide,
         strike,
+        no_strike,
         font_default,
         alt_font: u4, // 1 to 9
         double_underline,
@@ -398,6 +393,7 @@ pub const TermStyledGraphemeIterator = struct {
                 .invert => try writer.print("\x1B[7m", .{}),
                 .hide => try writer.print("\x1B[8m", .{}),
                 .strike => try writer.print("\x1B[9m", .{}),
+                .no_strike => try writer.print("\x1B[29m", .{}),
                 .font_default => try writer.print("\x1B[10m", .{}),
                 .normal_intensity => try writer.print("\x1B[22m", .{}),
                 .alt_font => |alt| try writer.print("\x1B[{d}m", .{alt + 1}),
@@ -532,6 +528,7 @@ pub const TermStyledGraphemeIterator = struct {
                                 7 => style.consume(.invert),
                                 8 => style.consume(.hide),
                                 9 => style.consume(.strike),
+                                29 => style.consume(.no_strike),
                                 10 => style.consume(.font_default),
                                 11...19 => style.consume(.{ .alt_font = cast(u4, n.? - 11) }),
                                 22 => style.consume(.normal_intensity),
@@ -564,7 +561,7 @@ pub const TermStyledGraphemeIterator = struct {
                                     }
                                 },
 
-                                20...21, 26...29, 50...107 => style.consume(.not_supported),
+                                20...21, 26...28, 50...107 => style.consume(.not_supported),
                                 else => {},
                             }
 

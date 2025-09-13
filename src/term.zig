@@ -236,7 +236,7 @@ pub const TermStyledGraphemeIterator = struct {
     pub const Token = struct {
         // TODO: figure out some way to get visual width
         // TODO: actually use the visual width of chars in the code
-        visual_width: ?u2 = null,
+        visual_width: ?u3 = null,
         grapheme: []const u8,
         codepoint: ?Codepoint,
     };
@@ -491,8 +491,8 @@ pub const TermStyledGraphemeIterator = struct {
         };
     }
 
-    // null 0 1 or 2
-    fn codepoint_length(codepoint_bytes: []const u8) ?u2 {
+    // null 0 1 2 or 4
+    fn codepoint_length(codepoint_bytes: []const u8) ?u3 {
         const to_u32_codepoint = struct {
             fn to_u32_codepoint(codepoint: []const u8) u21 {
                 std.debug.assert(codepoint.len <= 4);
@@ -513,7 +513,7 @@ pub const TermStyledGraphemeIterator = struct {
         }.to_u32_codepoint;
 
         const wcwidth = struct {
-            fn wcwidth(cp: u21) ?u2 {
+            fn wcwidth(cp: u21) ?u3 {
                 // null byte
                 if (cp == 0) return 0;
 
@@ -578,7 +578,7 @@ pub const TermStyledGraphemeIterator = struct {
     test "wcwidth/codepoint_length tests" {
         const test_cases = [_]struct {
             input: []const u8,
-            expected_width: ?u2,
+            expected_width: ?u3,
             desc: []const u8,
         }{
             // ASCII
@@ -1512,12 +1512,30 @@ pub const DiffTerm = struct {
                     self.styled.curr.items[cast(usize, y * size.x + x)].style = style;
 
                     if (size.x > x + 1) {
-                        self.styled.curr.items[cast(usize, y * size.x + x + 1)].grapheme = "0x0";
+                        self.styled.curr.items[cast(usize, y * size.x + x + 1)].grapheme = "\x00";
                         self.styled.curr.items[cast(usize, y * size.x + x + 1)].style = style;
                     }
                     x += 2;
                 },
-                3 => unreachable,
+                4 => {
+                    self.styled.curr.items[cast(usize, y * size.x + x)].grapheme = t.grapheme;
+                    self.styled.curr.items[cast(usize, y * size.x + x)].style = style;
+
+                    if (size.x > x + 1) {
+                        self.styled.curr.items[cast(usize, y * size.x + x + 1)].grapheme = "\x00";
+                        self.styled.curr.items[cast(usize, y * size.x + x + 1)].style = style;
+                    }
+                    if (size.x > x + 2) {
+                        self.styled.curr.items[cast(usize, y * size.x + x + 2)].grapheme = "\x00";
+                        self.styled.curr.items[cast(usize, y * size.x + x + 2)].style = style;
+                    }
+                    if (size.x > x + 3) {
+                        self.styled.curr.items[cast(usize, y * size.x + x + 3)].grapheme = "\x00";
+                        self.styled.curr.items[cast(usize, y * size.x + x + 3)].style = style;
+                    }
+                    x += 4;
+                },
+                else => unreachable,
             }
             if (x >= size.x) {
                 x = 0;

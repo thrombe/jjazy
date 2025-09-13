@@ -43,6 +43,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
     const test_files = [_][]const u8{
         "src/main.zig",
+        "src/term.zig",
         "src/utils.zig",
     };
     for (test_files) |file| {
@@ -51,6 +52,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
+        unit_tests.root_module.addImport("options", options.createModule());
         const run_exe_unit_tests = b.addRunArtifact(unit_tests);
         test_step.dependOn(&run_exe_unit_tests.step);
     }

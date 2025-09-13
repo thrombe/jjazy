@@ -571,8 +571,25 @@ pub const TermStyledGraphemeIterator = struct {
             }
         }.wcwidth;
 
+        const c_wcwidth = struct {
+            const c = @cImport({
+                @cDefine("_XOPEN_SOURCE", "700");
+                @cInclude("wchar.h");
+            });
+
+            fn c_wcwidth(cp: u21) ?u3 {
+                const len = c.wcwidth(cp);
+                if (len < 0) return null;
+                if (len <= 4) return cast(u3, len);
+                unreachable;
+            }
+        }.c_wcwidth;
+
         const codepoint = to_u32_codepoint(codepoint_bytes);
-        return wcwidth(codepoint);
+
+        _ = wcwidth;
+        // return wcwidth(codepoint);
+        return c_wcwidth(codepoint);
     }
 
     test "wcwidth/codepoint_length tests" {

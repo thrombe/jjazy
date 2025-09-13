@@ -27,6 +27,7 @@ pub fn build(b: *std.Build) void {
         //     else => null,
         // },
     });
+    exe.linkLibC();
 
     b.installArtifact(exe);
 
@@ -52,6 +53,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
+        unit_tests.linkLibC();
         unit_tests.root_module.addImport("options", options.createModule());
         const run_exe_unit_tests = b.addRunArtifact(unit_tests);
         test_step.dependOn(&run_exe_unit_tests.step);

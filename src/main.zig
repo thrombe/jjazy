@@ -830,8 +830,12 @@ const HelpSlate = struct {
             .help = "Apply jj rebase --ignore-immutable",
         },
         .{
-            .action = .apply_jj_abandon,
+            .action = .{ .apply_jj_abandon = .{ .ignore_immutable = false } },
             .help = "Apply jj abandon",
+        },
+        .{
+            .action = .{ .apply_jj_abandon = .{ .ignore_immutable = true } },
+            .help = "Apply jj abandon --ignore-immutable",
         },
         .{
             .action = .{ .apply_jj_squash = .{ .ignore_immutable = false } },
@@ -1299,7 +1303,7 @@ pub const Action = union(enum) {
     jj_describe,
     switch_state_to_command,
     apply_jj_rebase: struct { ignore_immutable: bool },
-    apply_jj_abandon,
+    apply_jj_abandon: struct { ignore_immutable: bool },
     apply_jj_squash: struct { ignore_immutable: bool },
     apply_jj_new,
     execute_command_in_input_buffer: struct { interactive: bool },
@@ -2075,12 +2079,26 @@ pub const App = struct {
                 .{ .apply_jj_rebase = .{ .ignore_immutable = true } },
             );
         }
-        try map.add_one_for_state(
-            .abandon,
-            .{ .functional = .{ .key = .enter } },
-            null,
-            .apply_jj_abandon,
-        );
+        {
+            defer map.reset();
+            try map.for_state(.abandon);
+
+            try map.add_one(
+                .{ .functional = .{ .key = .enter } },
+                null,
+                .{ .apply_jj_abandon = .{ .ignore_immutable = false } },
+            );
+
+            // OOF: zellij enter + shift is broken :/
+            try map.add_many(
+                &[_]Key{
+                    .{ .functional = .{ .key = .enter, .mod = .{ .shift = true } } },
+                    .{ .functional = .{ .key = .enter, .mod = .{ .ctrl = true } } },
+                },
+                null,
+                .{ .apply_jj_abandon = .{ .ignore_immutable = true } },
+            );
+        }
         {
             defer map.reset();
             try map.for_state(.squash);
@@ -2631,7 +2649,7 @@ pub const App = struct {
 
                     try self.jj.requests.send(.log);
                 },
-                .apply_jj_abandon => {
+                .apply_jj_abandon => |v| {
                     defer {
                         self.log.selected_changes.clearRetainingCapacity();
                         self.state = .log;
@@ -2645,6 +2663,10 @@ pub const App = struct {
                     var it = self.log.selected_changes.iterator();
                     while (it.next()) |e| {
                         try args.append(e.key_ptr.id[0..]);
+                    }
+
+                    if (v.ignore_immutable) {
+                        try args.append("--ignore-immutable");
                     }
 
                     try self.execute_non_interactive_command(args.items);

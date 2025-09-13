@@ -2067,15 +2067,15 @@ pub const App = struct {
             null,
             .apply_jj_abandon,
         );
-        try map.add_one_for_state(
-            .squash,
-            .{ .functional = .{ .key = .enter } },
-            null,
-            .{ .apply_jj_squash = .{ .ignore_immutable = false } },
-        );
         {
             defer map.reset();
             try map.for_state(.squash);
+
+            try map.add_one(
+                .{ .functional = .{ .key = .enter } },
+                null,
+                .{ .apply_jj_squash = .{ .ignore_immutable = false } },
+            );
 
             // OOF: zellij enter + shift is broken :/
             try map.add_many(
@@ -2084,7 +2084,7 @@ pub const App = struct {
                     .{ .functional = .{ .key = .enter, .mod = .{ .ctrl = true } } },
                 },
                 null,
-                .{ .apply_jj_squash = .{ .ignore_immutable = false } },
+                .{ .apply_jj_squash = .{ .ignore_immutable = true } },
             );
         }
         try map.add_one_for_state(

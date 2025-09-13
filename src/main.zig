@@ -822,8 +822,12 @@ const HelpSlate = struct {
             .help = "Execute arbitary command",
         },
         .{
-            .action = .apply_jj_rebase,
+            .action = .{ .apply_jj_rebase = .{ .ignore_immutable = false } },
             .help = "Apply jj rebase",
+        },
+        .{
+            .action = .{ .apply_jj_rebase = .{ .ignore_immutable = true } },
+            .help = "Apply jj rebase --ignore-immutable",
         },
         .{
             .action = .apply_jj_abandon,
@@ -1294,7 +1298,7 @@ pub const Action = union(enum) {
     jj_split,
     jj_describe,
     switch_state_to_command,
-    apply_jj_rebase,
+    apply_jj_rebase: struct { ignore_immutable: bool },
     apply_jj_abandon,
     apply_jj_squash: struct { ignore_immutable: bool },
     apply_jj_new,
@@ -2058,7 +2062,17 @@ pub const App = struct {
             try map.add_one(
                 .{ .functional = .{ .key = .enter } },
                 null,
-                .apply_jj_rebase,
+                .{ .apply_jj_rebase = .{ .ignore_immutable = false } },
+            );
+
+            // OOF: zellij enter + shift is broken :/
+            try map.add_many(
+                &[_]Key{
+                    .{ .functional = .{ .key = .enter, .mod = .{ .shift = true } } },
+                    .{ .functional = .{ .key = .enter, .mod = .{ .ctrl = true } } },
+                },
+                null,
+                .{ .apply_jj_rebase = .{ .ignore_immutable = true } },
             );
         }
         try map.add_one_for_state(
@@ -2580,7 +2594,7 @@ pub const App = struct {
                     self.state = .command;
                     self.text_input.reset();
                 },
-                .apply_jj_rebase => {
+                .apply_jj_rebase => |v| {
                     defer {
                         self.log.selected_changes.clearRetainingCapacity();
                         self.state = .log;
@@ -2608,6 +2622,10 @@ pub const App = struct {
                     }
 
                     try args.append(self.log.focused_change.id[0..]);
+
+                    if (v.ignore_immutable) {
+                        try args.append("--ignore-immutable");
+                    }
 
                     try self.execute_non_interactive_command(args.items);
 

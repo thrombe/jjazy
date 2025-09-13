@@ -491,7 +491,82 @@ pub const TermStyledGraphemeIterator = struct {
         };
     }
 
-    fn codepoint_length(codepoint: []const u8) u4 {}
+    fn codepoint_length(codepoint_bytes: []const u8) u4 {
+        const to_u32_codepoint = struct {
+            fn to_u32_codepoint(codepoint: []const u8) u21 {
+                std.debug.assert(codepoint.len <= 4);
+                return switch (codepoint.len) {
+                    1 => @as(u21, codepoint[0]),
+                    2 => (@as(u21, codepoint[0] & 0b0001_1111) << 6) |
+                        (@as(u21, codepoint[1] & 0b0011_1111)),
+                    3 => (@as(u21, codepoint[0] & 0b0000_1111) << 12) |
+                        (@as(u21, codepoint[1] & 0b0011_1111) << 6) |
+                        (@as(u21, codepoint[2] & 0b0011_1111)),
+                    4 => (@as(u21, codepoint[0] & 0b0000_0111) << 18) |
+                        (@as(u21, codepoint[1] & 0b0011_1111) << 12) |
+                        (@as(u21, codepoint[2] & 0b0011_1111) << 6) |
+                        (@as(u21, codepoint[3] & 0b0011_1111)),
+                    else => unreachable,
+                };
+            }
+        }.to_u32_codepoint;
+
+        const wcwidth = struct {
+            fn wcwidth(cp: u21) i32 {
+                // C0 and DEL control characters
+                if (cp == 0) return 0;
+                if (cp < 32 or (cp >= 0x7f and cp < 0xa0)) return -1;
+
+                // Combining characters (zero-width)
+                if (is_combining(cp)) return 0;
+
+                // Wide characters (East Asian Wide / Fullwidth)
+                if (is_wide(cp)) return 2;
+
+                return 1;
+            }
+
+            // These are ranges of combining characters (width 0).
+            fn is_combining(cp: u21) bool {
+                return in_range(cp, &.{
+                    .{ .start = 0x0300, .end = 0x036F }, // Combining Diacritical Marks
+                    .{ .start = 0x1AB0, .end = 0x1AFF }, // Combining Diacritical Marks Extended
+                    .{ .start = 0x1DC0, .end = 0x1DFF }, // Combining Diacritical Marks Supplement
+                    .{ .start = 0x20D0, .end = 0x20FF }, // Combining Diacritical Marks for Symbols
+                    .{ .start = 0xFE20, .end = 0xFE2F }, // Combining Half Marks
+                    .{ .start = 0xE0100, .end = 0xE01EF }, // Variation Selectors Supplement
+                });
+            }
+
+            // These are wide characters (width 2).
+            fn is_wide(cp: u21) bool {
+                return in_range(cp, &.{
+                    .{ .start = 0x1100, .end = 0x115F }, // Hangul Jamo init. consonants
+                    .{ .start = 0x2329, .end = 0x232A },
+                    .{ .start = 0x2E80, .end = 0xA4CF }, // CJK ... Yi
+                    .{ .start = 0xAC00, .end = 0xD7A3 }, // Hangul Syllables
+                    .{ .start = 0xF900, .end = 0xFAFF }, // CJK Compatibility Ideographs
+                    .{ .start = 0xFE10, .end = 0xFE19 },
+                    .{ .start = 0xFE30, .end = 0xFE6F },
+                    .{ .start = 0xFF00, .end = 0xFF60 },
+                    .{ .start = 0xFFE0, .end = 0xFFE6 },
+                    .{ .start = 0x1F300, .end = 0x1F64F }, // Emojis
+                    .{ .start = 0x1F900, .end = 0x1F9FF },
+                    .{ .start = 0x20000, .end = 0x3FFFD },
+                });
+            }
+
+            fn in_range(cp: u21, ranges: []struct { start: u21, end: u21 }) bool {
+                for (ranges) |r| {
+                    if (cp >= r.start and cp <= r.end) return true;
+                }
+                return false;
+            }
+        }.wcwidth;
+
+        const codepoint = to_u32_codepoint(codepoint_bytes);
+        return wcwidth(codepoint);
+    }
 
     // https://en.wikipedia.org/wiki/ANSI_escape_code#C0_control_codes
     fn next_codepoint(self: *@This()) !?Token {

@@ -480,6 +480,8 @@ pub const TermStyledGraphemeIterator = struct {
     }
 
     pub fn next(self: *@This()) !?Token {
+        // TODO: we want an iterator here that returns 1 char worth of slices :/
+        //  - should take care of the combiners etc
         if (try self.next_codepoint()) |t| return t;
         // TODO: a codepoint slice is not a grapheme cluster. fix this.
         const grapheme = self.utf8.nextCodepointSlice() orelse return null;
@@ -587,9 +589,10 @@ pub const TermStyledGraphemeIterator = struct {
 
         const codepoint = to_u32_codepoint(codepoint_bytes);
 
-        _ = wcwidth;
-        // return wcwidth(codepoint);
-        return c_wcwidth(codepoint);
+        // _ = wcwidth;
+        _ = c_wcwidth;
+        return wcwidth(codepoint);
+        // return c_wcwidth(codepoint);
     }
 
     test "wcwidth/codepoint_length tests" {

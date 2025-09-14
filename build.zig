@@ -9,12 +9,29 @@ pub fn build(b: *std.Build) void {
     const options = b.addOptions();
     options.addOption(Env, "env", b.option(Env, "env", "prod / debug env") orelse .debug);
 
+    const unicode_data = b.dependency("unicode-data", .{});
+    const unicode_generate = b.addRunArtifact(b.addExecutable(.{
+        .name = "unicode-generate",
+        .root_source_file = b.path("src/unicode.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    unicode_generate.producer.?.root_module.addAnonymousImport("DerivedEastAsianWidth.txt", .{
+        .root_source_file = unicode_data.path("DerivedEastAsianWidth.txt"),
+    });
+    unicode_generate.producer.?.root_module.addAnonymousImport("DerivedGeneralCategory.txt", .{
+        .root_source_file = unicode_data.path("DerivedGeneralCategory.txt"),
+    });
+
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
     exe_mod.addImport("options", options.createModule());
+    exe_mod.addAnonymousImport("unicode-data.bin", .{
+        .root_source_file = unicode_generate.addOutputFileArg("unicode-data.bin"),
+    });
 
     const exe = b.addExecutable(.{
         .name = "jjazy",

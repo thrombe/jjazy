@@ -3,6 +3,11 @@
     .version = "0.0.0",
     .fingerprint = 0xf4277665346c850d,
     .minimum_zig_version = "0.14.0",
-    .dependencies = .{},
+    .dependencies = .{
+        .unicode_data = .{
+            .url = "https://github.com/thrombe/unicode-data/archive/d1bc3f78ef53b0f3421a8b378b95a8b00dd69132.tar.gz",
+            .hash = "N-V-__8AAPIgBwDjojDbO4FTj3hIxDNbmpjUEMIBx-Mguple",
+        },
+    },
     .paths = .{""},
 }

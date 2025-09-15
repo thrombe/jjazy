@@ -29,8 +29,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     exe_mod.addImport("options", options.createModule());
-    exe_mod.addAnonymousImport("unicode-data.bin", .{
-        .root_source_file = b.addRunArtifact(unicode_generate).addOutputFileArg("unicode-data.bin"),
+    exe_mod.addAnonymousImport("unicode-width-table.bin", .{
+        .root_source_file = b.addRunArtifact(unicode_generate).addOutputFileArg("unicode-width-table.bin"),
     });
 
     const exe = b.addExecutable(.{

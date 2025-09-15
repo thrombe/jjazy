@@ -232,7 +232,7 @@ pub const border = struct {
 };
 
 pub const TermStyledGraphemeIterator = struct {
-    width_table: *unicode_mod.Table,
+    width_table: *unicode_mod.WidthTable,
     utf8: std.unicode.Utf8Iterator,
     style: StyleSet = .{},
 
@@ -472,7 +472,7 @@ pub const TermStyledGraphemeIterator = struct {
         }
     };
 
-    pub fn init(width_table: *unicode_mod.Table, buf: []const u8) !@This() {
+    pub fn init(width_table: *unicode_mod.WidthTable, buf: []const u8) !@This() {
         const utf8_view = try std.unicode.Utf8View.init(buf);
         return .{
             .width_table = width_table,
@@ -497,7 +497,7 @@ pub const TermStyledGraphemeIterator = struct {
 
     // null 0 1 2 or 4
     fn codepoint_length(self: *@This(), codepoint_bytes: []const u8) ?u3 {
-        const codepoint = unicode_mod.Table.to_u32_codepoint(codepoint_bytes);
+        const codepoint = unicode_mod.WidthTable.to_u32_codepoint(codepoint_bytes);
         const width = self.width_table.length(codepoint);
 
         if (width == -1) {
@@ -1326,7 +1326,7 @@ pub const DiffTerm = struct {
     }
 
     // render from raw.curr to styled.curr
-    fn _render_styled(self: *@This(), width_table: *unicode_mod.Table) !void {
+    fn _render_styled(self: *@This(), width_table: *unicode_mod.WidthTable) !void {
         const size = self.styled.size;
         var it = try TermStyledGraphemeIterator.init(width_table, self.raw.curr.items);
 
@@ -1478,7 +1478,7 @@ pub const DiffTerm = struct {
         try TermStyledGraphemeIterator.Style.write_to(.reset, self.cmdbuf.writer());
     }
 
-    fn render(self: *@This(), width_table: *unicode_mod.Table) ![]const u8 {
+    fn render(self: *@This(), width_table: *unicode_mod.WidthTable) ![]const u8 {
         try self._render_styled(width_table);
         try self._render_diff();
         return self.cmdbuf.items;
@@ -1488,7 +1488,7 @@ pub const DiffTerm = struct {
 pub const Screen = struct {
     term: Term,
     diffterm: DiffTerm,
-    unicode_length_table: unicode_mod.Table,
+    unicode_width_table: unicode_mod.WidthTable,
 
     cmdbuf_id: u32 = 0,
     cmdbufs: std.ArrayList(std.ArrayList(u8)),
@@ -1499,11 +1499,11 @@ pub const Screen = struct {
     const DepthEntry = struct { id: u32, depth: f32 };
 
     pub fn init(alloc: std.mem.Allocator, term: Term) !@This() {
-        const unicode_data = @embedFile("unicode-data.bin");
+        const unicode_data = @embedFile("unicode-width-table.bin");
         var unicode_data_stream = std.io.fixedBufferStream(unicode_data);
         var decomp = std.compress.flate.inflate.decompressor(.raw, unicode_data_stream.reader());
 
-        var table = try unicode_mod.Table.load_from(alloc, decomp.reader());
+        var table = try unicode_mod.WidthTable.load_from(alloc, decomp.reader());
         errdefer table.deinit();
 
         return .{
@@ -1512,7 +1512,7 @@ pub const Screen = struct {
             .depths = .init(alloc),
             .diffterm = .init(alloc),
             .term = term,
-            .unicode_length_table = table,
+            .unicode_width_table = table,
         };
     }
 
@@ -1526,7 +1526,7 @@ pub const Screen = struct {
         defer self.term.deinit();
         defer self.depths.deinit();
         defer self.diffterm.deinit();
-        defer self.unicode_length_table.deinit();
+        defer self.unicode_width_table.deinit();
     }
 
     pub fn update_size(self: *@This()) !void {
@@ -1580,7 +1580,7 @@ pub const Screen = struct {
             try self.term.tty.writeAll(codes.sync_set);
 
             defer self.diffterm.cmdbuf.clearRetainingCapacity();
-            const cmdbuf = try self.diffterm.render(&self.unicode_length_table);
+            const cmdbuf = try self.diffterm.render(&self.unicode_width_table);
             try self.term.tty.writeAll(cmdbuf);
 
             try self.term.tty.writeAll(codes.sync_reset);
@@ -1711,7 +1711,7 @@ pub const Screen = struct {
             _ = line orelse break;
             try self.cursor_move(id, .{ .y = cast(i32, y), .x = last_x });
 
-            var codepoint_it = try TermStyledGraphemeIterator.init(&self.unicode_length_table, line.?);
+            var codepoint_it = try TermStyledGraphemeIterator.init(&self.unicode_width_table, line.?);
 
             while (try codepoint_it.next()) |token| {
                 // execute all control chars

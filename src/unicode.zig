@@ -4,7 +4,7 @@ const builtin = @import("builtin");
 const utils_mod = @import("utils.zig");
 
 // based on [zg](https://codeberg.org/atman/zg/src/commit/9427a9e53aaa29ee071f4dcb35b809a699d75aa9/codegen/dwp.zig)
-pub const Table = struct {
+pub const WidthTable = struct {
     alloc: std.mem.Allocator,
     base_index_map: []u16,
     width_blocks: []i4,
@@ -270,7 +270,7 @@ pub fn main() !void {
         var out_comp = try std.compress.flate.deflate.compressor(.raw, out.writer(), .{ .level = .best });
         const w = out_comp.writer();
 
-        var table = try Table.generate(alloc);
+        var table = try WidthTable.generate(alloc);
         defer table.deinit();
 
         try table.write_to(w);
@@ -292,7 +292,7 @@ pub fn main() !void {
 test "codepoint length tests" {
     const alloc = std.testing.allocator;
 
-    var table = try Table.generate(alloc);
+    var table = try WidthTable.generate(alloc);
     defer table.deinit();
 
     const test_cases = [_]struct {
@@ -340,7 +340,7 @@ test "codepoint length tests" {
     };
 
     for (test_cases) |tc| {
-        const width = table.length(Table.to_u32_codepoint(tc.input));
+        const width = table.length(WidthTable.to_u32_codepoint(tc.input));
         try std.testing.expectEqual(tc.expected_width, width);
     }
 }

@@ -7,7 +7,7 @@ const utils_mod = @import("utils.zig");
 const Table = struct {
     alloc: std.mem.Allocator,
     base_index_map: []u16,
-    width_blocks: []u4,
+    width_blocks: []i4,
 
     const derived_east_asian_width = @embedFile("DerivedEastAsianWidth.txt");
     const derived_general_category = @embedFile("DerivedGeneralCategory.txt");
@@ -218,9 +218,15 @@ const Table = struct {
         for (base_index_map) |*b| b.* = try r.readInt(u16, endian);
 
         const width_blocks_len = try r.readInt(u16, endian);
-        const width_blocks = try alloc.alloc(u16, width_blocks_len);
+        const width_blocks = try alloc.alloc(i4, width_blocks_len);
         errdefer alloc.free(width_blocks);
-        for (width_blocks) |*b| b.* = try r.readInt(i8, endian);
+        for (width_blocks) |*b| b.* = @intCast(try r.readInt(i8, endian));
+
+        return @This(){
+            .alloc = alloc,
+            .base_index_map = base_index_map,
+            .width_blocks = width_blocks,
+        };
     }
 
     fn length(self: *const @This(), cp: u12) i4 {
@@ -248,7 +254,6 @@ pub fn main() !void {
         defer out.close();
 
         var out_comp = try std.compress.flate.deflate.compressor(.raw, out.writer(), .{ .level = .best });
-        defer out_comp.deinit();
         const w = out_comp.writer();
 
         var table = try Table.generate(alloc);
@@ -256,7 +261,7 @@ pub fn main() !void {
 
         try table.write_to(w);
 
-        // try out_comp.finish();
+        try out_comp.finish();
         try out_comp.flush();
     }
 
@@ -264,7 +269,8 @@ pub fn main() !void {
         const out = try std.fs.openFileAbsolute(dest, .{});
         defer out.close();
 
-        var decomp = try std.compress.flate.inflate.decompressor(.raw, out.reader());
-        Table.load_from(alloc, decomp.reader());
+        var decomp = std.compress.flate.inflate.decompressor(.raw, out.reader());
+        var table = try Table.load_from(alloc, decomp.reader());
+        defer table.deinit();
     }
 }

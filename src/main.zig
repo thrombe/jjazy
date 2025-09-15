@@ -1495,8 +1495,12 @@ pub const App = struct {
         var arena = std.heap.ArenaAllocator.init(alloc);
         errdefer arena.deinit();
 
-        const term = try term_mod.Term.init();
-        var screen = term_mod.Screen.init(alloc, term);
+        var screen = blk: {
+            var term = try term_mod.Term.init();
+            errdefer term.deinit();
+
+            break :blk try term_mod.Screen.init(alloc, term);
+        };
         errdefer screen.deinit();
         try screen.update_size();
 

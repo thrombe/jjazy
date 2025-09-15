@@ -23,7 +23,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = unicode_data.path("DerivedGeneralCategory.txt"),
     });
 
-    if (true) {
+    if (false) {
         unicode_generate.addFileArg(b.path("./tmp/generate_test.bin"));
         unicode_generate.step.dependOn(b.getInstallStep());
         const generate_test_step = b.step("generate-test", "generate test");

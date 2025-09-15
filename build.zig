@@ -30,6 +30,24 @@ pub fn build(b: *std.Build) void {
         generate_test_step.dependOn(&unicode_generate.step);
         return;
     }
+    if (true) {
+        const unicode_tests = b.addTest(.{
+            .root_source_file = b.path("src/unicode.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        unicode_tests.root_module.addAnonymousImport("DerivedEastAsianWidth.txt", .{
+            .root_source_file = unicode_data.path("DerivedEastAsianWidth.txt"),
+        });
+        unicode_tests.root_module.addAnonymousImport("DerivedGeneralCategory.txt", .{
+            .root_source_file = unicode_data.path("DerivedGeneralCategory.txt"),
+        });
+        const run_exe_unit_tests = b.addRunArtifact(unicode_tests);
+
+        const test_step = b.step("test", "Run unit tests");
+        test_step.dependOn(&run_exe_unit_tests.step);
+        return;
+    }
 
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -52,7 +70,7 @@ pub fn build(b: *std.Build) void {
         //     else => null,
         // },
     });
-    exe.linkLibC();
+    // exe.linkLibC();
 
     b.installArtifact(exe);
 
@@ -78,7 +96,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
-        unit_tests.linkLibC();
+        // unit_tests.linkLibC();
         unit_tests.root_module.addImport("options", options.createModule());
         const run_exe_unit_tests = b.addRunArtifact(unit_tests);
         test_step.dependOn(&run_exe_unit_tests.step);

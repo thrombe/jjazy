@@ -605,54 +605,6 @@ pub const TermStyledGraphemeIterator = struct {
         }
     }
 
-    test "wcwidth/codepoint_length tests" {
-        const test_cases = [_]struct {
-            input: []const u8,
-            expected_width: ?u3,
-            desc: []const u8,
-        }{
-            // ASCII
-            .{ .input = "A", .expected_width = 1, .desc = "ASCII letter A" },
-            .{ .input = " ", .expected_width = 1, .desc = "Space" },
-            .{ .input = "\n", .expected_width = null, .desc = "Newline (control)" },
-
-            // Control characters
-            .{ .input = "\x00", .expected_width = 0, .desc = "NULL (control)" },
-            .{ .input = "\x7F", .expected_width = null, .desc = "DEL (control)" },
-            .{ .input = "\x1B", .expected_width = null, .desc = "ESC (control)" },
-
-            // Combining marks (zero-width)
-            .{ .input = "\u{0301}", .expected_width = 0, .desc = "Combining acute accent" },
-            .{ .input = "\u{20DD}", .expected_width = 0, .desc = "Combining enclosing circle" },
-
-            // CJK Ideographs
-            .{ .input = "中", .expected_width = 2, .desc = "CJK - U+4E2D (zhōng)" },
-            .{ .input = "語", .expected_width = 2, .desc = "CJK - U+8A9E (language)" },
-
-            // Hindi (Devanagari)
-            .{ .input = "ह", .expected_width = 1, .desc = "Hindi letter Ha (U+0939)" },
-            .{ .input = "ि", .expected_width = 1, .desc = "Hindi vowel sign i (U+093F) - combining" },
-
-            // Emojis (wide)
-            .{ .input = "😀", .expected_width = 2, .desc = "Grinning face (U+1F600)" },
-            .{ .input = "🔥", .expected_width = 2, .desc = "Fire emoji (U+1F525)" },
-            // .{ .input = "👨‍👩‍👧‍👦", .expected_width = 2, .desc = "Family emoji (ZWJ sequence)" },
-
-            // Symbols / tick marks
-            // .{ .input = "✓", .expected_width = 1, .desc = "Check mark (U+2713)" },
-            // .{ .input = "✔", .expected_width = 1, .desc = "Heavy check mark (U+2714)" },
-            // .{ .input = "✅", .expected_width = 2, .desc = "Check mark button emoji (U+2705)" },
-
-            // // ZWJ (zero width joiner)
-            // .{ .input = "\u{200D}", .expected_width = 0, .desc = "Zero-width joiner (U+200D)" },
-        };
-
-        for (test_cases) |tc| {
-            const width = codepoint_length(tc.input);
-            try std.testing.expectEqual(tc.expected_width, width);
-        }
-    }
-
     // https://en.wikipedia.org/wiki/ANSI_escape_code#C0_control_codes
     fn next_codepoint(self: *@This()) !?Token {
         const buf = self.utf8.bytes[self.utf8.i..];

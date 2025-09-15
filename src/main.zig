@@ -3001,7 +3001,7 @@ pub const App = struct {
         try self._send_event(.rerender);
 
         if (comptime options.env == .debug) {
-            // try self.screen.term.fancy_features_that_break_gdb(.disable, .{});
+            try self.screen.term.fancy_features_that_break_gdb(.disable, .{});
         }
 
         while (self._wait_recv_event()) |event| {

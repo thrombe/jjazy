@@ -231,6 +231,23 @@ pub const Table = struct {
         const offset = cp & 0xff;
         return self.width_blocks[block_base + offset];
     }
+
+    fn to_u32_codepoint(codepoint: []const u8) u21 {
+        std.debug.assert(codepoint.len <= 4);
+        return switch (codepoint.len) {
+            1 => @as(u21, codepoint[0]),
+            2 => (@as(u21, codepoint[0] & 0b0001_1111) << 6) |
+                (@as(u21, codepoint[1] & 0b0011_1111)),
+            3 => (@as(u21, codepoint[0] & 0b0000_1111) << 12) |
+                (@as(u21, codepoint[1] & 0b0011_1111) << 6) |
+                (@as(u21, codepoint[2] & 0b0011_1111)),
+            4 => (@as(u21, codepoint[0] & 0b0000_0111) << 18) |
+                (@as(u21, codepoint[1] & 0b0011_1111) << 12) |
+                (@as(u21, codepoint[2] & 0b0011_1111) << 6) |
+                (@as(u21, codepoint[3] & 0b0011_1111)),
+            else => unreachable,
+        };
+    }
 };
 
 pub fn main() !void {
@@ -270,4 +287,57 @@ pub fn main() !void {
     //     var table = try Table.load_from(alloc, decomp.reader());
     //     defer table.deinit();
     // }
+}
+
+test "codepoint length tests" {
+    const alloc = std.testing.allocator;
+
+    var table = try Table.generate(alloc);
+    defer table.deinit();
+
+    const test_cases = [_]struct {
+        input: []const u8,
+        expected_width: i4,
+        desc: []const u8,
+    }{
+        // ASCII
+        .{ .input = "A", .expected_width = 1, .desc = "ASCII letter A" },
+        .{ .input = " ", .expected_width = 1, .desc = "Space" },
+        .{ .input = "\n", .expected_width = 0, .desc = "Newline (control)" },
+
+        // Control characters
+        .{ .input = "\x00", .expected_width = 0, .desc = "NULL (control)" },
+        .{ .input = "\x7F", .expected_width = -1, .desc = "DEL (control)" },
+        .{ .input = "\x1B", .expected_width = 0, .desc = "ESC (control)" },
+
+        // Combining marks (zero-width)
+        .{ .input = "\u{0301}", .expected_width = 0, .desc = "Combining acute accent" },
+        .{ .input = "\u{20DD}", .expected_width = 0, .desc = "Combining enclosing circle" },
+
+        // CJK Ideographs
+        .{ .input = "中", .expected_width = 2, .desc = "CJK - U+4E2D (zhōng)" },
+        .{ .input = "語", .expected_width = 2, .desc = "CJK - U+8A9E (language)" },
+
+        // Hindi (Devanagari)
+        .{ .input = "ह", .expected_width = 1, .desc = "Hindi letter Ha (U+0939)" },
+        .{ .input = "ि", .expected_width = 1, .desc = "Hindi vowel sign i (U+093F) - combining" },
+
+        // Emojis (wide)
+        .{ .input = "😀", .expected_width = 2, .desc = "Grinning face (U+1F600)" },
+        .{ .input = "🔥", .expected_width = 2, .desc = "Fire emoji (U+1F525)" },
+        // .{ .input = "👨‍👩‍👧‍👦", .expected_width = 2, .desc = "Family emoji (ZWJ sequence)" },
+
+        // Symbols / tick marks
+        // .{ .input = "✓", .expected_width = 1, .desc = "Check mark (U+2713)" },
+        // .{ .input = "✔", .expected_width = 1, .desc = "Heavy check mark (U+2714)" },
+        // .{ .input = "✅", .expected_width = 2, .desc = "Check mark button emoji (U+2705)" },
+
+        // // ZWJ (zero width joiner)
+        // .{ .input = "\u{200D}", .expected_width = 0, .desc = "Zero-width joiner (U+200D)" },
+    };
+
+    for (test_cases) |tc| {
+        const width = table.length(Table.to_u32_codepoint(tc.input));
+        try std.testing.expectEqual(tc.expected_width, width);
+    }
 }

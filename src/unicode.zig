@@ -232,7 +232,7 @@ pub const Table = struct {
         return self.width_blocks[block_base + offset];
     }
 
-    fn to_u32_codepoint(codepoint: []const u8) u21 {
+    pub fn to_u32_codepoint(codepoint: []const u8) u21 {
         std.debug.assert(codepoint.len <= 4);
         return switch (codepoint.len) {
             1 => @as(u21, codepoint[0]),

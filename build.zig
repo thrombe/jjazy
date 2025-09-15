@@ -23,14 +23,6 @@ pub fn build(b: *std.Build) void {
         .root_source_file = unicode_data.path("DerivedGeneralCategory.txt"),
     });
 
-    if (false) {
-        unicode_generate.addFileArg(b.path("./tmp/generate_test.bin"));
-        unicode_generate.step.dependOn(b.getInstallStep());
-        const generate_test_step = b.step("generate-test", "generate test");
-        generate_test_step.dependOn(&unicode_generate.step);
-        return;
-    }
-
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -52,7 +44,6 @@ pub fn build(b: *std.Build) void {
         //     else => null,
         // },
     });
-    // exe.linkLibC();
 
     b.installArtifact(exe);
 
@@ -79,7 +70,6 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
-        // unit_tests.linkLibC();
         unit_tests.root_module.addAnonymousImport("DerivedEastAsianWidth.txt", .{
             .root_source_file = unicode_data.path("DerivedEastAsianWidth.txt"),
         });

@@ -10,7 +10,7 @@ pub const Table = struct {
     width_blocks: []i4,
 
     const options = struct {
-        const cjk_a_width: ?i4 = null;
+        const cjk_a_width: ?i4 = 1;
         const c0_width: ?i4 = null;
         const c1_width: ?i4 = null;
     };
@@ -320,7 +320,7 @@ test "codepoint length tests" {
 
         // Hindi (Devanagari)
         .{ .input = "ह", .expected_width = 1, .desc = "Hindi letter Ha (U+0939)" },
-        .{ .input = "ि", .expected_width = 1, .desc = "Hindi vowel sign i (U+093F) - combining" },
+        .{ .input = "ि", .expected_width = 0, .desc = "Hindi vowel sign i (U+093F) - combining" },
 
         // Emojis (wide)
         .{ .input = "😀", .expected_width = 2, .desc = "Grinning face (U+1F600)" },
@@ -328,12 +328,15 @@ test "codepoint length tests" {
         // .{ .input = "👨‍👩‍👧‍👦", .expected_width = 2, .desc = "Family emoji (ZWJ sequence)" },
 
         // Symbols / tick marks
-        // .{ .input = "✓", .expected_width = 1, .desc = "Check mark (U+2713)" },
-        // .{ .input = "✔", .expected_width = 1, .desc = "Heavy check mark (U+2714)" },
-        // .{ .input = "✅", .expected_width = 2, .desc = "Check mark button emoji (U+2705)" },
+        .{ .input = "✓", .expected_width = 1, .desc = "Check mark (U+2713)" },
+        .{ .input = "✔", .expected_width = 1, .desc = "Heavy check mark (U+2714)" },
+        .{ .input = "✅", .expected_width = 2, .desc = "Check mark button emoji (U+2705)" },
 
-        // // ZWJ (zero width joiner)
-        // .{ .input = "\u{200D}", .expected_width = 0, .desc = "Zero-width joiner (U+200D)" },
+        // ZWJ (zero width joiner)
+        .{ .input = "\u{200D}", .expected_width = 0, .desc = "Zero-width joiner (U+200D)" },
+
+        // custom stuff
+        .{ .input = "│", .expected_width = 1, .desc = "" },
     };
 
     for (test_cases) |tc| {

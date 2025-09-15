@@ -34,6 +34,7 @@ const PtrFollow = enum { disabled, ptr_as_usize, follow };
 const AutoHashArgs = struct {
     pointer_hashing: PtrFollow = .disabled,
 };
+// TODO: maybe this function is not required. std has something similar std.hash.autoHashStrat(&hasher, k, .DeepRecursive)
 pub fn hash_update(hasher: anytype, val: anytype, comptime v: AutoHashArgs) void {
     if (comptime std.meta.activeTag(@typeInfo(@TypeOf(hasher))) != .pointer) @compileError("you prob want to pass a pointer to a hasher in hash_update() :/");
 

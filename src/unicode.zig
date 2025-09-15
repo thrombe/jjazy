@@ -7,7 +7,7 @@ const utils_mod = @import("utils.zig");
 const Table = struct {
     alloc: std.mem.Allocator,
     base_index_map: []u16,
-    len_blocks: []u4,
+    width_blocks: []u4,
 
     const derived_east_asian_width = @embedFile("DerivedEastAsianWidth.txt");
     const derived_general_category = @embedFile("DerivedGeneralCategory.txt");
@@ -113,8 +113,8 @@ const Table = struct {
         var base_index_map = std.ArrayList(u16).init(alloc);
         errdefer base_index_map.deinit();
 
-        var len_blocks = std.ArrayList(i4).init(alloc);
-        errdefer len_blocks.deinit();
+        var width_blocks = std.ArrayList(i4).init(alloc);
+        errdefer width_blocks.deinit();
 
         var block: Block = [_]i4{0} ** block_size;
         var block_len: u16 = 0;
@@ -181,8 +181,8 @@ const Table = struct {
             // dedup blocks
             const gop = try blocks_map.getOrPut(block);
             if (!gop.found_existing) {
-                gop.value_ptr.* = @intCast(len_blocks.items.len);
-                try len_blocks.appendSlice(&block);
+                gop.value_ptr.* = @intCast(width_blocks.items.len);
+                try width_blocks.appendSlice(&block);
             }
 
             try base_index_map.append(gop.value_ptr.*);
@@ -192,21 +192,21 @@ const Table = struct {
         return @This(){
             .alloc = alloc,
             .base_index_map = try base_index_map.toOwnedSlice(),
-            .len_blocks = try len_blocks.toOwnedSlice(),
+            .width_blocks = try width_blocks.toOwnedSlice(),
         };
     }
 
     fn deinit(self: *@This()) void {
         self.alloc.free(self.base_index_map);
-        self.alloc.free(self.len_blocks);
+        self.alloc.free(self.width_blocks);
     }
 
     fn write_to(self: *const @This(), w: anytype) !void {
         const endian = builtin.cpu.arch.endian();
         try w.writeInt(u16, @intCast(self.base_index_map.len), endian);
         for (self.base_index_map) |i| try w.writeInt(u16, i, endian);
-        try w.writeInt(u16, @intCast(self.len_blocks.len), endian);
-        for (self.len_blocks) |i| try w.writeInt(i8, i, endian);
+        try w.writeInt(u16, @intCast(self.width_blocks.len), endian);
+        for (self.width_blocks) |i| try w.writeInt(i8, i, endian);
     }
 
     fn load_from(alloc: std.mem.Allocator, r: anytype) !@This() {
@@ -217,16 +217,16 @@ const Table = struct {
         errdefer alloc.free(base_index_map);
         for (base_index_map) |*b| b.* = try r.readInt(u16, endian);
 
-        const len_blocks_len = try r.readInt(u16, endian);
-        const len_blocks = try alloc.alloc(u16, len_blocks_len);
-        errdefer alloc.free(len_blocks);
-        for (len_blocks) |*b| b.* = try r.readInt(i8, endian);
+        const width_blocks_len = try r.readInt(u16, endian);
+        const width_blocks = try alloc.alloc(u16, width_blocks_len);
+        errdefer alloc.free(width_blocks);
+        for (width_blocks) |*b| b.* = try r.readInt(i8, endian);
     }
 
     fn length(self: *const @This(), cp: u12) i4 {
         const block_base = self.base_index_map[cp >> 8];
         const offset = cp & 0xff;
-        return self.len_blocks[block_base + offset];
+        return self.width_blocks[block_base + offset];
     }
 };
 

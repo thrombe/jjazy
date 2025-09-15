@@ -1,22 +1,26 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const utils_mod = @import("utils.zig");
 
 // based on [zg](https://codeberg.org/atman/zg/src/commit/9427a9e53aaa29ee071f4dcb35b809a699d75aa9/codegen/dwp.zig)
-const TableGenerator = struct {
+const Table = struct {
+    alloc: std.mem.Allocator,
+    base_index_map: []u16,
+    len_blocks: []u4,
+
     const derived_east_asian_width = @embedFile("DerivedEastAsianWidth.txt");
     const derived_general_category = @embedFile("DerivedGeneralCategory.txt");
 
     const options = struct {
-        const cjk_a_width: ?u3 = null;
-        const c0_width: ?u3 = null;
-        const c1_width: ?u3 = null;
+        const cjk_a_width: ?i4 = null;
+        const c0_width: ?i4 = null;
+        const c1_width: ?i4 = null;
     };
 
-    fn generate(alloc: std.mem.Allocator, w: std.fs.File.Writer) !void {
-        _ = w;
-
-        var lenmap = std.AutoHashMap(u21, u3).init(alloc);
+    fn generate(alloc: std.mem.Allocator) !@This() {
+        var lenmap = std.AutoHashMap(u21, i4).init(alloc);
+        defer lenmap.deinit();
 
         {
             var lines = utils_mod.LineIterator.init(derived_east_asian_width);
@@ -106,11 +110,11 @@ const TableGenerator = struct {
         var blocks_map = BlockMap.init(alloc);
         defer blocks_map.deinit();
 
-        var stage1 = std.ArrayList(u16).init(alloc);
-        defer stage1.deinit();
+        var base_index_map = std.ArrayList(u16).init(alloc);
+        errdefer base_index_map.deinit();
 
-        var stage2 = std.ArrayList(i4).init(alloc);
-        defer stage2.deinit();
+        var len_blocks = std.ArrayList(i4).init(alloc);
+        errdefer len_blocks.deinit();
 
         var block: Block = [_]i4{0} ** block_size;
         var block_len: u16 = 0;
@@ -174,15 +178,55 @@ const TableGenerator = struct {
 
             if (block_len < block_size and cp != 0x10ffff) continue;
 
+            // dedup blocks
             const gop = try blocks_map.getOrPut(block);
             if (!gop.found_existing) {
-                gop.value_ptr.* = @intCast(stage2.items.len);
-                try stage2.appendSlice(&block);
+                gop.value_ptr.* = @intCast(len_blocks.items.len);
+                try len_blocks.appendSlice(&block);
             }
 
-            try stage1.append(gop.value_ptr.*);
+            try base_index_map.append(gop.value_ptr.*);
             block_len = 0;
         }
+
+        return @This(){
+            .alloc = alloc,
+            .base_index_map = try base_index_map.toOwnedSlice(),
+            .len_blocks = try len_blocks.toOwnedSlice(),
+        };
+    }
+
+    fn deinit(self: *@This()) void {
+        self.alloc.free(self.base_index_map);
+        self.alloc.free(self.len_blocks);
+    }
+
+    fn write_to(self: *const @This(), w: anytype) !void {
+        const endian = builtin.cpu.arch.endian();
+        try w.writeInt(u16, @intCast(self.base_index_map.len), endian);
+        for (self.base_index_map) |i| try w.writeInt(u16, i, endian);
+        try w.writeInt(u16, @intCast(self.len_blocks.len), endian);
+        for (self.len_blocks) |i| try w.writeInt(i8, i, endian);
+    }
+
+    fn load_from(alloc: std.mem.Allocator, r: anytype) !@This() {
+        const endian = builtin.cpu.arch.endian();
+
+        const base_index_map_len = try r.readInt(u16, endian);
+        const base_index_map = try alloc.alloc(u16, base_index_map_len);
+        errdefer alloc.free(base_index_map);
+        for (base_index_map) |*b| b.* = try r.readInt(u16, endian);
+
+        const len_blocks_len = try r.readInt(u16, endian);
+        const len_blocks = try alloc.alloc(u16, len_blocks_len);
+        errdefer alloc.free(len_blocks);
+        for (len_blocks) |*b| b.* = try r.readInt(i8, endian);
+    }
+
+    fn length(self: *const @This(), cp: u12) i4 {
+        const block_base = self.base_index_map[cp >> 8];
+        const offset = cp & 0xff;
+        return self.len_blocks[block_base + offset];
     }
 };
 
@@ -199,9 +243,28 @@ pub fn main() !void {
     _ = args.next();
     const dest = args.next().?;
 
-    const out = try std.fs.createFileAbsolute(dest, .{});
-    defer out.close();
-    const w = out.writer();
+    {
+        const out = try std.fs.createFileAbsolute(dest, .{});
+        defer out.close();
 
-    try TableGenerator.generate(alloc, w);
+        var out_comp = try std.compress.flate.deflate.compressor(.raw, out.writer(), .{ .level = .best });
+        defer out_comp.deinit();
+        const w = out_comp.writer();
+
+        var table = try Table.generate(alloc);
+        defer table.deinit();
+
+        try table.write_to(w);
+
+        // try out_comp.finish();
+        try out_comp.flush();
+    }
+
+    {
+        const out = try std.fs.openFileAbsolute(dest, .{});
+        defer out.close();
+
+        var decomp = try std.compress.flate.inflate.decompressor(.raw, out.reader());
+        Table.load_from(alloc, decomp.reader());
+    }
 }

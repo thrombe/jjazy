@@ -4,13 +4,10 @@ const builtin = @import("builtin");
 const utils_mod = @import("utils.zig");
 
 // based on [zg](https://codeberg.org/atman/zg/src/commit/9427a9e53aaa29ee071f4dcb35b809a699d75aa9/codegen/dwp.zig)
-const Table = struct {
+pub const Table = struct {
     alloc: std.mem.Allocator,
     base_index_map: []u16,
     width_blocks: []i4,
-
-    const derived_east_asian_width = @embedFile("DerivedEastAsianWidth.txt");
-    const derived_general_category = @embedFile("DerivedGeneralCategory.txt");
 
     const options = struct {
         const cjk_a_width: ?i4 = null;
@@ -23,7 +20,7 @@ const Table = struct {
         defer lenmap.deinit();
 
         {
-            var lines = utils_mod.LineIterator.init(derived_east_asian_width);
+            var lines = utils_mod.LineIterator.init(@embedFile("DerivedEastAsianWidth.txt"));
             while (lines.next()) |rawline| {
                 var line = std.mem.trim(u8, rawline, &std.ascii.whitespace);
                 if (line.len == 0) continue;
@@ -60,7 +57,7 @@ const Table = struct {
             }
         }
         {
-            var lines = utils_mod.LineIterator.init(derived_general_category);
+            var lines = utils_mod.LineIterator.init(@embedFile("DerivedGeneralCategory.txt"));
             while (lines.next()) |rawline| {
                 const line = std.mem.trim(u8, rawline, &std.ascii.whitespace);
                 if (line.len == 0) continue;
@@ -196,12 +193,12 @@ const Table = struct {
         };
     }
 
-    fn deinit(self: *@This()) void {
+    pub fn deinit(self: *@This()) void {
         self.alloc.free(self.base_index_map);
         self.alloc.free(self.width_blocks);
     }
 
-    fn write_to(self: *const @This(), w: anytype) !void {
+    pub fn write_to(self: *const @This(), w: anytype) !void {
         const endian = builtin.cpu.arch.endian();
         try w.writeInt(u16, @intCast(self.base_index_map.len), endian);
         for (self.base_index_map) |i| try w.writeInt(u16, i, endian);
@@ -209,7 +206,7 @@ const Table = struct {
         for (self.width_blocks) |i| try w.writeInt(i8, i, endian);
     }
 
-    fn load_from(alloc: std.mem.Allocator, r: anytype) !@This() {
+    pub fn load_from(alloc: std.mem.Allocator, r: anytype) !@This() {
         const endian = builtin.cpu.arch.endian();
 
         const base_index_map_len = try r.readInt(u16, endian);
@@ -229,7 +226,7 @@ const Table = struct {
         };
     }
 
-    fn length(self: *const @This(), cp: u12) i4 {
+    pub fn length(self: *const @This(), cp: u21) i4 {
         const block_base = self.base_index_map[cp >> 8];
         const offset = cp & 0xff;
         return self.width_blocks[block_base + offset];
@@ -265,12 +262,12 @@ pub fn main() !void {
         try out_comp.flush();
     }
 
-    {
-        const out = try std.fs.openFileAbsolute(dest, .{});
-        defer out.close();
+    // {
+    //     const out = try std.fs.openFileAbsolute(dest, .{});
+    //     defer out.close();
 
-        var decomp = std.compress.flate.inflate.decompressor(.raw, out.reader());
-        var table = try Table.load_from(alloc, decomp.reader());
-        defer table.deinit();
-    }
+    //     var decomp = std.compress.flate.inflate.decompressor(.raw, out.reader());
+    //     var table = try Table.load_from(alloc, decomp.reader());
+    //     defer table.deinit();
+    // }
 }

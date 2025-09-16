@@ -2742,7 +2742,13 @@ pub const App = struct {
                     // TODO: support parsing and passing "string" and 'string' with \" \' and spaces properly
                     var arg_it = std.mem.splitAny(u8, self.text_input.text.items, &std.ascii.whitespace);
                     while (arg_it.next()) |arg| {
+                        if (arg.len == 0) continue;
                         try args.append(arg);
+                    }
+
+                    if (args.items.len == 0) {
+                        try self._toast(.{ .err = error.CommandInputEmpty }, try self.alloc.dupe(u8, "Input is empty"));
+                        return;
                     }
 
                     if (e.interactive) {

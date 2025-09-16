@@ -1532,7 +1532,11 @@ pub const App = struct {
             .alloc = alloc,
             .arena = arena,
             .screen = screen,
-            .input_iterator = .{ .input = try .init(alloc) },
+            .input_iterator = .{
+                .input = try .init(alloc),
+                .emu = screen.term.emulator,
+                .features = screen.term.features,
+            },
             .events = events,
             .sleeper = sleeper,
             .jj = jj,
@@ -2284,7 +2288,6 @@ pub const App = struct {
                 // TDOO:
                 //  - zellij shift + enter broken
                 //  - zellij enter only sends 1 .press event (even for hold). no repeats, no releases
-                //  - zellij alt + backspace sends non-kitty code for escape (27 0x1b) twice
                 _ = e;
                 // std.log.debug("{any}", .{e});
             },
@@ -2441,11 +2444,7 @@ pub const App = struct {
                         if (key.key == .backspace and key.action.pressed() and key.mod.eq(.{})) {
                             _ = self.text_input.back();
                         }
-                        // OOF: alt+backspace is broken on zellij
-                        if (key.key == .backspace and
-                            key.action.pressed() and
-                            (key.mod.eq(.{ .alt = true }) or key.mod.eq(.{ .ctrl = true })))
-                        {
+                        if (key.key == .backspace and key.action.pressed() and key.mod.eq(.{ .alt = true })) {
                             _ = self.text_input.back();
                             while (true) {
                                 if (' ' == self.text_input.peek_back() orelse break) {

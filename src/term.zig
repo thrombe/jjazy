@@ -687,6 +687,8 @@ pub const TermStyledGraphemeIterator = struct {
 };
 
 pub const TermInputIterator = struct {
+    emu: Term.Emulator,
+    features: Term.Features,
     input: utils_mod.Deque(u8),
 
     pub const Input = union(enum) {
@@ -1021,7 +1023,14 @@ pub const TermInputIterator = struct {
                         // TODO: pressing escape in non-kitty sends 0x1b once. which is kinda ignored by the input handling code.
                         //   this line only executes when escape is pressed twice
                         //   - look up how helix does this
-                        0x1B => return Input{ .functional = .{ .key = .escape } },
+                        0x1B => {
+                            // OOF: zellij alt + backspace sends (27 0x1b) twice
+                            if (self.features.kitty_kb and self.emu.zellij) {
+                                return Input{ .functional = .{ .key = .backspace, .mod = .{ .alt = true } } };
+                            } else {
+                                return Input{ .functional = .{ .key = .escape } };
+                            }
+                        },
                         else => {
                             std.log.debug("unexpected byte: {d}", .{c});
                             return error.UnsupportedEscapeCode;

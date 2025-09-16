@@ -2284,6 +2284,7 @@ pub const App = struct {
                 // TDOO:
                 //  - zellij shift + enter broken
                 //  - zellij enter only sends 1 .press event (even for hold). no repeats, no releases
+                //  - zellij alt + backspace sends non-kitty code for escape (27 0x1b) twice
                 _ = e;
                 // std.log.debug("{any}", .{e});
             },

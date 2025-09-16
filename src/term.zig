@@ -1018,6 +1018,9 @@ pub const TermInputIterator = struct {
                     // std.log.debug("non kitty kb event: {d}", .{c});
 
                     switch (c) {
+                        // TODO: pressing escape in non-kitty sends 0x1b once. which is kinda ignored by the input handling code.
+                        //   this line only executes when escape is pressed twice
+                        //   - look up how helix does this
                         0x1B => return Input{ .functional = .{ .key = .escape } },
                         else => {
                             std.log.debug("unexpected byte: {d}", .{c});

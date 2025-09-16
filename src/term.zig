@@ -1105,11 +1105,41 @@ pub const Term = struct {
     cooked_termios: ?std.posix.termios = null,
     raw: ?std.posix.termios = null,
 
-    pub fn init() !@This() {
+    emulator: Emulator,
+    envmap: std.process.EnvMap,
+    alloc: std.mem.Allocator,
+
+    const Emulator = struct {
+        zellij: bool,
+
+        // these are kinda mutually exclusive, but it's easier to use.
+        kitty: bool,
+        ghostty: bool,
+        alacritty: bool,
+    };
+
+    pub fn init(alloc: std.mem.Allocator) !@This() {
+        var envmap = try std.process.getEnvMap(alloc);
+        errdefer envmap.deinit();
+
         const tty = try std.fs.cwd().openFile("/dev/tty", .{ .mode = .read_write });
         errdefer tty.close();
 
-        var self = @This(){ .tty = tty };
+        const emu: Emulator = .{
+            .zellij = std.mem.eql(u8, envmap.get("ZELLIJ") orelse "", "0"),
+            .alacritty = std.mem.eql(u8, envmap.get("TERM") orelse "", "alacritty"),
+            .ghostty = std.mem.eql(u8, envmap.get("TERM") orelse "", "xterm-ghostty"),
+            .kitty = std.mem.eql(u8, envmap.get("TERM") orelse "", "xterm-kitty"),
+        };
+
+        std.log.info("emulator: {any}", .{emu});
+
+        var self = @This(){
+            .tty = tty,
+            .emulator = emu,
+            .envmap = envmap,
+            .alloc = alloc,
+        };
 
         try self.update_size();
 
@@ -1117,6 +1147,7 @@ pub const Term = struct {
     }
 
     pub fn deinit(self: *@This()) void {
+        self.envmap.deinit();
         self.tty.close();
     }
 

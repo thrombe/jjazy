@@ -1496,7 +1496,7 @@ pub const App = struct {
         errdefer arena.deinit();
 
         var screen = blk: {
-            var term = try term_mod.Term.init();
+            var term = try term_mod.Term.init(alloc);
             errdefer term.deinit();
 
             break :blk try term_mod.Screen.init(alloc, term);

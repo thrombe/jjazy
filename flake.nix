@@ -91,7 +91,8 @@
           zls
           gdb
 
-          jujutsu
+          ghostty
+          kitty
         ])
         ++ []
         ++ (custom-commands pkgs);

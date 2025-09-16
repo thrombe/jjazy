@@ -2441,7 +2441,11 @@ pub const App = struct {
                         if (key.key == .backspace and key.action.pressed() and key.mod.eq(.{})) {
                             _ = self.text_input.back();
                         }
-                        if (key.key == .backspace and key.action.pressed() and key.mod.eq(.{ .alt = true })) {
+                        // OOF: alt+backspace is broken on zellij
+                        if (key.key == .backspace and
+                            key.action.pressed() and
+                            (key.mod.eq(.{ .alt = true }) or key.mod.eq(.{ .ctrl = true })))
+                        {
                             _ = self.text_input.back();
                             while (true) {
                                 if (' ' == self.text_input.peek_back() orelse break) {

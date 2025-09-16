@@ -1680,21 +1680,24 @@ pub const App = struct {
     // poll + /dev/tty is broken on macos
     // - [Add `select()` to `std` for darwin. · Issue #16382 · ziglang/zig](https://github.com/ziglang/zig/issues/16382)
     // - [macOS doesn't like polling /dev/tty](https://nathancraddock.com/blog/macos-dev-tty-polling/)
-    const input_loop = if (builtin.os.tag.isDarwin()) @This().input_loop_darwin else @This().input_loop_linux;
-    // const input_loop = @This().input_loop_darwin;
+    // const input_loop = if (builtin.os.tag.isDarwin()) @This().input_loop_darwin else @This().input_loop_linux;
+    const input_loop = @This().input_loop_darwin;
     // const input_loop = @This().input_loop_linux;
 
     fn input_loop_darwin(self: *@This()) !void {
+        const c = @cImport({
+            @cInclude("unistd.h");
+            @cInclude("fcntl.h");
+            @cInclude("sys/select.h");
+            @cInclude("errno.h");
+        });
+        const tty_fd = self.screen.term.tty.handle;
+        const fd_arr_type = if (builtin.os.tag.isDarwin()) c_int else c_long;
+        const fd_field_name = if (builtin.os.tag.isDarwin()) "fds_bits" else "__fds_bits";
+
+        var waiting_for_input_after_escape: bool = false;
         while (true) {
-            const c = @cImport({
-                @cInclude("unistd.h");
-                @cInclude("fcntl.h");
-                @cInclude("sys/select.h");
-                @cInclude("errno.h");
-            });
-            const tty_fd = self.screen.term.tty.handle;
-            const fd_arr_type = if (builtin.os.tag.isDarwin()) c_int else c_long;
-            const fd_field_name = if (builtin.os.tag.isDarwin()) "fds_bits" else "__fds_bits";
+            if (self.quit_input_loop.check()) break;
 
             // prepare the read fd_set
             var readfds: c.fd_set = std.mem.zeroes(c.fd_set);
@@ -1719,57 +1722,23 @@ pub const App = struct {
                 } else {
                     return error.SelectError;
                 }
-            } else if (sel == 0) {
-                // timeout, nothing to read
             } else {
+                // sel == 0, timeout, nothing to read
                 // sel > 0, so some FD is ready
-                if (@field(readfds, fd_field_name)[fd_index] & fd_bid != 0) {
-                    var buf: [256]u8 = undefined;
-                    const n = c.read(tty_fd, &buf, buf.len);
-                    if (n > 0) {
-                        for (buf[0..@intCast(n)]) |cbyte| {
-                            try self.input_iterator.input.push_back(cbyte);
-                        }
+                const has_input = @field(readfds, fd_field_name)[fd_index] & fd_bid != 0;
 
-                        while (self.input_iterator.next() catch |e| switch (e) {
-                            error.ExpectedByte => null,
-                            else => {
-                                try self.events.send(.{ .err = e });
-                                return;
-                            },
-                        }) |input| {
-                            try self.events.send(.{ .input = input });
-                        }
-                    } else if (n < 0) {
-                        const err = std.posix.errno(sel);
-                        // if (err == .AGAIN or err == .WOULDBLOCK) {
-                        if (err == .AGAIN) {
-                            // no data after all, ignore
-                        } else if (err == .INTR) {
-                            // interrupted, ignore
-                        } else {
-                            return error.SelectError;
-                        }
-                    } else {
-                        // n == 0: EOF or TTY closed, break
-                        break;
-                    }
-                }
-            }
+                if (has_input) {
+                    var buf = std.mem.zeroes([256]u8);
+                    const n = try self.screen.term.tty.read(&buf);
+                    for (buf[0..n]) |char| try self.input_iterator.input.push_back(char);
 
-            if (self.quit_input_loop.check()) {
-                break;
-            }
-        }
-    }
+                    waiting_for_input_after_escape = buf[n - 1] == 0x1b;
+                } else if (waiting_for_input_after_escape) {
+                    waiting_for_input_after_escape = false;
 
-    fn input_loop_linux(self: *@This()) !void {
-        while (true) {
-            var fds = [1]std.posix.pollfd{.{ .fd = self.screen.term.tty.handle, .events = std.posix.POLL.IN, .revents = 0 }};
-            if (try std.posix.poll(&fds, 20) > 0) {
-                var buf = std.mem.zeroes([256]u8);
-                const n = try self.screen.term.tty.read(&buf);
-                for (buf[0..n]) |c| try self.input_iterator.input.push_back(c);
+                    // NOTE:(1007) we push extra null byte just so we can recognise the last 0x1B byte as .escape without waiting for more input
+                    try self.input_iterator.input.push_back(0x00);
+                } else continue;
 
                 while (self.input_iterator.next() catch |e| switch (e) {
                     error.ExpectedByte => null,
@@ -1781,9 +1750,38 @@ pub const App = struct {
                     try self.events.send(.{ .input = input });
                 }
             }
+        }
+    }
 
-            if (self.quit_input_loop.check()) {
-                break;
+    fn input_loop_linux(self: *@This()) !void {
+        var waiting_for_input_after_escape: bool = false;
+        while (true) {
+            if (self.quit_input_loop.check()) break;
+
+            var fds = [1]std.posix.pollfd{.{ .fd = self.screen.term.tty.handle, .events = std.posix.POLL.IN, .revents = 0 }};
+            const has_input = try std.posix.poll(&fds, 20) > 0;
+
+            if (has_input) {
+                var buf = std.mem.zeroes([256]u8);
+                const n = try self.screen.term.tty.read(&buf);
+                for (buf[0..n]) |c| try self.input_iterator.input.push_back(c);
+
+                waiting_for_input_after_escape = buf[n - 1] == 0x1b;
+            } else if (waiting_for_input_after_escape) {
+                waiting_for_input_after_escape = false;
+
+                // NOTE:(1007) we push extra null byte just so we can recognise the last 0x1B byte as .escape without waiting for more input
+                try self.input_iterator.input.push_back(0x00);
+            } else continue;
+
+            while (self.input_iterator.next() catch |e| switch (e) {
+                error.ExpectedByte => null,
+                else => {
+                    try self.events.send(.{ .err = e });
+                    return;
+                },
+            }) |input| {
+                try self.events.send(.{ .input = input });
             }
         }
     }

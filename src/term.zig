@@ -1028,7 +1028,7 @@ pub const TermInputIterator = struct {
                             return Input{ .functional = .{ .key = .backspace, .mod = .{ .alt = true } } };
                         },
 
-                        // NOTE: this is just a hack to parse single 0x1B .escape bytes.
+                        // NOTE:(1007) this is just a hack to parse single 0x1B .escape bytes.
                         // we insert an extra null byte from the input handling side when we think it's actually .escape
                         // we need the extra byte in cases where user presses .escape, and no extra byte.
                         // if that happens, we can never be sure if next byte is '[' or whatever.

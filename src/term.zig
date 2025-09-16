@@ -1105,6 +1105,7 @@ pub const Term = struct {
     cooked_termios: ?std.posix.termios = null,
     raw: ?std.posix.termios = null,
 
+    features: Features,
     emulator: Emulator,
     envmap: std.process.EnvMap,
     alloc: std.mem.Allocator,
@@ -1116,6 +1117,18 @@ pub const Term = struct {
         kitty: bool,
         ghostty: bool,
         alacritty: bool,
+    };
+    const Features = struct {
+        kitty_kb: bool,
+        kitty_graphics: bool,
+
+        fn init(emu: Emulator) @This() {
+            // TODO: there are better ways to get this info.
+            return .{
+                .kitty_kb = emu.kitty or emu.ghostty or emu.alacritty,
+                .kitty_graphics = emu.ghostty or emu.kitty,
+            };
+        }
     };
 
     pub fn init(alloc: std.mem.Allocator) !@This() {
@@ -1136,6 +1149,7 @@ pub const Term = struct {
 
         var self = @This(){
             .tty = tty,
+            .features = .init(emu),
             .emulator = emu,
             .envmap = envmap,
             .alloc = alloc,

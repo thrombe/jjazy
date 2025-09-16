@@ -3208,7 +3208,14 @@ pub const App = struct {
     }
 
     fn execute_non_interactive_command(self: *@This(), args: []const []const u8) !void {
-        const res = try self._execute_non_interactive_command(args);
+        const res = self._execute_non_interactive_command(args) catch |e| switch (e) {
+            error.FileNotFound => CommandResult{
+                .errored = true,
+                .err = try std.fmt.allocPrint(self.alloc, "Executable not found", .{}),
+                .out = &.{},
+            },
+            else => return e,
+        };
         if (res.errored) {
             try self._toast(.{ .err = error.CommandExecutionError }, res.err);
             if (res.out.len > 0) {

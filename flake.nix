@@ -44,7 +44,7 @@
         inherit overlays;
       };
 
-      jjazy = stdenv.mkDerivation {
+      jjazy = stdenv.mkDerivation (finalAttrs: {
         name = "jjazy";
         src = pkgs.lib.cleanSource ./.;
 
@@ -56,14 +56,23 @@
           jujutsu
         ];
 
-        buildPhase = ''
-          zig build -Doptimize=ReleaseSafe -Denv=prod
-        '';
+        deps = pkgs.callPackage ./deps.nix { };
+
+        strictDeps = true;
+        doCheck = false;
+
+        zigBuildFlags = [
+          "--system"
+          "${finalAttrs.deps}"
+          "-Doptimize=ReleaseSafe"
+          "-Denv=prod"
+        ];
+
         installPhase = ''
           mkdir -p $out/bin
           cp ./zig-out/bin/jjazy $out/bin/.
         '';
-      };
+      });
 
       fhs = pkgs.buildFHSEnv {
         name = "fhs-shell";
@@ -87,6 +96,7 @@
           pkg-config
 
           zig
+          zon2nix
 
           zls
           gdb

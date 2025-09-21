@@ -49,8 +49,8 @@
         src = pkgs.lib.cleanSource ./.;
 
         nativeBuildInputs = with pkgs; [
-          zig
-          zig.hook
+          zig_0_14
+          zig_0_14.hook
         ];
         buildInputs = with pkgs; [
           jujutsu
@@ -95,10 +95,10 @@
         (with pkgs; [
           pkg-config
 
-          zig
+          zig_0_14
           zon2nix
 
-          zls
+          zls_0_14
           gdb
 
           ghostty

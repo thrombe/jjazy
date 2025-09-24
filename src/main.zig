@@ -1657,6 +1657,8 @@ pub const App = struct {
         self.input_thread = try std.Thread.spawn(.{}, @This()._input_loop, .{self});
         self.screen.term.register_signal_handlers(@This());
         try self.screen.uncook();
+        // terminal might resize when a command is active
+        try self.screen.update_size();
         try self._send_event(.rerender);
         try self.jj.requests.send(.log);
     }

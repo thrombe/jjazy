@@ -3213,6 +3213,10 @@ pub const App = struct {
     }
 
     fn execute_non_interactive_command(self: *@This(), args: []const []const u8) !void {
+        // better error messages. nothing bad. so i just do this for now :|
+        // OOF: some jj commands print output when successful. so this mode will dump output in real stdout :/
+        // try self.execute_interactive_command(args);
+
         const res = self._execute_non_interactive_command(args) catch |e| switch (e) {
             error.FileNotFound => CommandResult{
                 .errored = true,
@@ -3243,9 +3247,7 @@ pub const App = struct {
             }
         }
 
-        // better error messages. nothing bad. so i just do this for now :|
-        // OOF: some jj commands print output when successful. so this mode will dump output in real stdout :/
-        // try self.execute_interactive_command(args);
+        try self.jj.requests.send(.log);
     }
 
     fn _execute_non_interactive_command(self: *@This(), args: []const []const u8) !CommandResult {

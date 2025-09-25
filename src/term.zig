@@ -1238,7 +1238,7 @@ pub const Term = struct {
 
     pub fn update_size(self: *@This()) !void {
         var win_size = std.mem.zeroes(std.posix.winsize);
-        const err = std.os.linux.ioctl(self.tty.handle, std.posix.T.IOCGWINSZ, @intFromPtr(&win_size));
+        const err = std.posix.system.ioctl(self.tty.handle, std.posix.T.IOCGWINSZ, @intFromPtr(&win_size));
         if (std.posix.errno(err) != .SUCCESS) {
             return std.posix.unexpectedErrno(@as(std.posix.E, @enumFromInt(err)));
         }
@@ -1301,7 +1301,7 @@ pub const Term = struct {
     }
 
     pub fn unregister_signal_handlers(_: *@This()) void {
-        std.posix.sigaction(std.posix.SIG.WINCH, &std.os.linux.Sigaction{
+        std.posix.sigaction(std.posix.SIG.WINCH, &std.posix.Sigaction{
             .handler = .{ .handler = std.posix.SIG.DFL },
             .mask = std.posix.empty_sigset,
             .flags = 0,

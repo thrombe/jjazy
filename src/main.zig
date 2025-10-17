@@ -1620,8 +1620,12 @@ pub const App = struct {
         self.input_loop() catch |e| utils_mod.dump_error(e);
     }
 
-    // const input_loop = if (builtin.os.tag.isDarwin()) @This().input_loop_darwin else @This().input_loop_linux;
-    const input_loop = @This().input_loop_darwin;
+    // poll + /dev/tty is broken on macos
+    // - [Add `select()` to `std` for darwin. · Issue #16382 · ziglang/zig](https://github.com/ziglang/zig/issues/16382)
+    // - [macOS doesn't like polling /dev/tty](https://nathancraddock.com/blog/macos-dev-tty-polling/)
+    const input_loop = if (builtin.os.tag.isDarwin()) @This().input_loop_darwin else @This().input_loop_linux;
+    // const input_loop = @This().input_loop_darwin;
+    // const input_loop = @This().input_loop_linux;
 
     fn input_loop_darwin(self: *@This()) !void {
         while (true) {
@@ -1632,11 +1636,14 @@ pub const App = struct {
                 @cInclude("errno.h");
             });
             const tty_fd = self.screen.term.tty.handle;
+            const fd_arr_type = if (builtin.os.tag.isDarwin()) c_int else c_long;
+            const fd_field_name = if (builtin.os.tag.isDarwin()) "fds_bits" else "__fds_bits";
+
             // prepare the read fd_set
             var readfds: c.fd_set = std.mem.zeroes(c.fd_set);
-            const fd_index: usize = @intCast(@divFloor(tty_fd, (8 * @sizeOf(c_long))));
-            const fd_bid = @as(c_long, (@as(c_long, 1) << @intCast(@rem(tty_fd, (8 * @sizeOf(c_long))))));
-            readfds.__fds_bits[fd_index] |= fd_bid;
+            const fd_index: usize = @intCast(@divFloor(tty_fd, (8 * @sizeOf(fd_arr_type))));
+            const fd_bid = @as(fd_arr_type, (@as(fd_arr_type, 1) << @intCast(@rem(tty_fd, (8 * @sizeOf(fd_arr_type))))));
+            @field(readfds, fd_field_name)[fd_index] |= fd_bid;
 
             // timeout of 20ms
             var tv: c.struct_timeval = .{
@@ -1659,7 +1666,7 @@ pub const App = struct {
                 // timeout, nothing to read
             } else {
                 // sel > 0, so some FD is ready
-                if (readfds.__fds_bits[fd_index] & fd_bid != 0) {
+                if (@field(readfds, fd_field_name)[fd_index] & fd_bid != 0) {
                     var buf: [256]u8 = undefined;
                     const n = c.read(tty_fd, &buf, buf.len);
                     if (n > 0) {

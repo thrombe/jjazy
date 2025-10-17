@@ -44,7 +44,9 @@ pub fn build(b: *std.Build) void {
         //     else => null,
         // },
     });
-    exe.linkLibC();
+    if (target.result.os.tag.isDarwin()) {
+        exe.linkLibC();
+    }
 
     b.installArtifact(exe);
 

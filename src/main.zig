@@ -1620,7 +1620,86 @@ pub const App = struct {
         self.input_loop() catch |e| utils_mod.dump_error(e);
     }
 
-    fn input_loop(self: *@This()) !void {
+    // const input_loop = if (builtin.os.tag.isDarwin()) @This().input_loop_darwin else @This().input_loop_linux;
+    const input_loop = @This().input_loop_darwin;
+
+    fn input_loop_darwin(self: *@This()) !void {
+        while (true) {
+            const c = @cImport({
+                @cInclude("unistd.h");
+                @cInclude("fcntl.h");
+                @cInclude("sys/select.h");
+                @cInclude("errno.h");
+            });
+            const tty_fd = self.screen.term.tty.handle;
+            // prepare the read fd_set
+            var readfds: c.fd_set = std.mem.zeroes(c.fd_set);
+            const fd_index: usize = @intCast(@divFloor(tty_fd, (8 * @sizeOf(c_long))));
+            const fd_bid = @as(c_long, (@as(c_long, 1) << @intCast(@rem(tty_fd, (8 * @sizeOf(c_long))))));
+            readfds.__fds_bits[fd_index] |= fd_bid;
+
+            // timeout of 20ms
+            var tv: c.struct_timeval = .{
+                .tv_sec = 0,
+                .tv_usec = 20 * 1000,
+            };
+
+            const nfds = tty_fd + 1;
+            const sel = c.select(nfds, &readfds, null, null, &tv);
+
+            if (sel < 0) {
+                const err = std.posix.errno(sel);
+                if (err == .INTR) {
+                    // interrupted by signal, just continue
+                    continue;
+                } else {
+                    return error.SelectError;
+                }
+            } else if (sel == 0) {
+                // timeout, nothing to read
+            } else {
+                // sel > 0, so some FD is ready
+                if (readfds.__fds_bits[fd_index] & fd_bid != 0) {
+                    var buf: [256]u8 = undefined;
+                    const n = c.read(tty_fd, &buf, buf.len);
+                    if (n > 0) {
+                        for (buf[0..@intCast(n)]) |cbyte| {
+                            try self.input_iterator.input.push_back(cbyte);
+                        }
+
+                        while (self.input_iterator.next() catch |e| switch (e) {
+                            error.ExpectedByte => null,
+                            else => {
+                                try self.events.send(.{ .err = e });
+                                return;
+                            },
+                        }) |input| {
+                            try self.events.send(.{ .input = input });
+                        }
+                    } else if (n < 0) {
+                        const err = std.posix.errno(sel);
+                        // if (err == .AGAIN or err == .WOULDBLOCK) {
+                        if (err == .AGAIN) {
+                            // no data after all, ignore
+                        } else if (err == .INTR) {
+                            // interrupted, ignore
+                        } else {
+                            return error.SelectError;
+                        }
+                    } else {
+                        // n == 0: EOF or TTY closed, break
+                        break;
+                    }
+                }
+            }
+
+            if (self.quit_input_loop.check()) {
+                break;
+            }
+        }
+    }
+
+    fn input_loop_linux(self: *@This()) !void {
         while (true) {
             var fds = [1]std.posix.pollfd{.{ .fd = self.screen.term.tty.handle, .events = std.posix.POLL.IN, .revents = 0 }};
             if (try std.posix.poll(&fds, 20) > 0) {

@@ -44,6 +44,7 @@ pub fn build(b: *std.Build) void {
         //     else => null,
         // },
     });
+    exe.linkLibC();
 
     b.installArtifact(exe);
 

@@ -311,6 +311,144 @@ pub const LineIterator = struct {
     }
 };
 
+pub fn DllLruCache(K: type, V: type, comptime v: struct { ptr: PtrFollow = .disabled }) type {
+    return struct {
+        first: ?K,
+        last: ?K,
+        map: Map,
+
+        const Entry = struct {
+            val: V,
+            next: ?K,
+            prev: ?K,
+        };
+        const Map = std.HashMap(K, Entry, struct {
+            pub fn hash(self: @This(), s: K) u64 {
+                _ = self;
+                var hasher = std.hash.Wyhash.init(0);
+                hash_update(&hasher, s, .{ .pointer_hashing = v.ptr });
+                return hasher.final();
+            }
+            pub fn eql(self: @This(), a: K, b: K) bool {
+                _ = self;
+                return auto_eql(a, b, .{ .pointer_eq = v.ptr });
+            }
+        }, std.hash_map.default_max_load_percentage);
+
+        const PopEntry = struct { key: K, val: V };
+
+        pub fn init(alloc: std.mem.Allocator) @This() {
+            return .{
+                .first = null,
+                .last = null,
+                .map = Map.init(alloc),
+            };
+        }
+
+        pub fn deinit(self: *@This()) void {
+            self.map.deinit();
+        }
+
+        pub fn pop(self: *@This()) ?PopEntry {
+            if (self.first) |first| {
+                const val = self.remove(first).?;
+                return .{ .key = first, .val = val };
+            } else {
+                return null;
+            }
+        }
+
+        pub fn retaining_pop(self: *@This(), n: u32) ?PopEntry {
+            if (self.map.count() > n) {
+                return self.pop();
+            } else {
+                return null;
+            }
+        }
+
+        pub fn remove(self: *@This(), key: K) ?V {
+            const curr = self.map.fetchRemove(key) orelse return null;
+            const entry = curr.value;
+
+            if (entry.prev) |prev_key| {
+                const prev = self.map.getPtr(prev_key).?;
+                prev.next = entry.next;
+            } else {
+                self.first = entry.next;
+            }
+            if (entry.next) |next_key| {
+                const next = self.map.getPtr(next_key).?;
+                next.prev = entry.prev;
+            } else {
+                self.last = entry.prev;
+            }
+
+            return entry.val;
+        }
+
+        fn touch(self: *@This(), key: K, entry: *Entry) void {
+            // if this is the last element, we don't need to change anything
+            if (self.last) |last_key| if (auto_eql(key, last_key, .{ .pointer_eq = v.ptr })) {
+                return;
+            };
+
+            const last = if (self.last) |last_key| self.map.getPtr(last_key) else null;
+
+            if (entry.prev) |prev_key| {
+                const prev = self.map.getPtr(prev_key).?;
+                prev.next = entry.next;
+            } else {
+                self.first = entry.next;
+            }
+            if (entry.next) |next_key| {
+                const next = self.map.getPtr(next_key).?;
+                next.prev = entry.prev;
+            }
+
+            if (last) |last_entry| {
+                last_entry.next = key;
+            }
+
+            entry.prev = self.last;
+            entry.next = null;
+            self.last = key;
+        }
+
+        pub fn get(self: *@This(), key: K, op: enum { touch, peek }) ?*V {
+            switch (op) {
+                .touch => {
+                    const entry = self.map.getPtr(key) orelse return null;
+                    self.touch(key, entry);
+                    return &entry.val;
+                },
+                .peek => {
+                    const entry = self.map.getPtr(key) orelse return null;
+                    return &entry.val;
+                },
+            }
+        }
+
+        pub fn getOrPut(self: *@This(), key: K) !struct { found_existing: bool, val: *V } {
+            const result = try self.map.getOrPut(key);
+
+            if (result.found_existing) {
+                self.touch(key, result.value_ptr);
+            } else {
+                if (self.last) |last_key| {
+                    self.map.getPtr(last_key).?.next = key;
+                } else {
+                    self.first = key;
+                }
+                result.value_ptr.prev = self.last;
+                result.value_ptr.next = null;
+                self.last = key;
+            }
+
+            return .{ .found_existing = result.found_existing, .val = &result.value_ptr.val };
+        }
+    };
+}
+
 pub fn Deque(typ: type) type {
     return struct {
         allocator: std.mem.Allocator,

@@ -115,7 +115,7 @@ pub fn auto_eql(a: anytype, b: @TypeOf(a), comptime v: AutoEqArgs) bool {
         .optional => {
             if (a == null and b == null) return true;
             if (a == null or b == null) return false;
-            return auto_eql(a.?, b.?, .{});
+            return auto_eql(a.?, b.?, v);
         },
         .pointer => |p| switch (p.size) {
             .one => switch (comptime v.pointer_eq) {

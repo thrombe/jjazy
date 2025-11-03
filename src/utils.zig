@@ -1084,3 +1084,149 @@ test "Xar test base 5" {
     }
     try std.testing.expectEqual(null, bytes.pop());
 }
+
+test "basic insertion and ordering" {
+    const alloc = std.testing.allocator;
+
+    const Cache = DllLruCache(u32, u32, .{});
+    var cache = Cache.init(alloc);
+    defer cache.deinit();
+
+    // Insert elements
+    {
+        const r1 = try cache.getOrPut(1);
+        r1.val.* = 10;
+        const r2 = try cache.getOrPut(2);
+        r2.val.* = 20;
+        const r3 = try cache.getOrPut(3);
+        r3.val.* = 30;
+    }
+
+    try std.testing.expectEqual(@as(?u32, 1), cache.first);
+    try std.testing.expectEqual(@as(?u32, 3), cache.last);
+
+    // Check values
+    try std.testing.expectEqual(10, (cache.get(1, .peek).?).*);
+    try std.testing.expectEqual(20, (cache.get(2, .peek).?).*);
+    try std.testing.expectEqual(30, (cache.get(3, .peek).?).*);
+}
+
+test "touch reorders entries (LRU behavior)" {
+    const alloc = std.testing.allocator;
+
+    const Cache = DllLruCache(u32, []const u8, .{});
+    var cache = Cache.init(alloc);
+    defer cache.deinit();
+
+    // insert 1,2,3
+    _ = try cache.getOrPut(1);
+    _ = try cache.getOrPut(2);
+    _ = try cache.getOrPut(3);
+
+    // Initially: first=1, last=3
+    try std.testing.expectEqual(@as(?u32, 1), cache.first);
+    try std.testing.expectEqual(@as(?u32, 3), cache.last);
+
+    // touch(1) should move 1 to last
+    _ = cache.get(1, .touch);
+    try std.testing.expectEqual(@as(?u32, 2), cache.first);
+    try std.testing.expectEqual(@as(?u32, 1), cache.last);
+}
+
+test "remove maintains linked list integrity" {
+    const alloc = std.testing.allocator;
+
+    const Cache = DllLruCache(u32, u32, .{});
+    var cache = Cache.init(alloc);
+    defer cache.deinit();
+
+    _ = try cache.getOrPut(1);
+    _ = try cache.getOrPut(2);
+    _ = try cache.getOrPut(3);
+
+    // Remove middle element
+    const removed = cache.remove(2);
+    try std.testing.expect(removed != null);
+    try std.testing.expectEqual(@as(?u32, 1), cache.first);
+    try std.testing.expectEqual(@as(?u32, 3), cache.last);
+
+    // Removing first
+    _ = cache.remove(1);
+    try std.testing.expectEqual(@as(?u32, 3), cache.first);
+
+    // Removing last (remaining one)
+    _ = cache.remove(3);
+    try std.testing.expectEqual(@as(?u32, null), cache.first);
+    try std.testing.expectEqual(@as(?u32, null), cache.last);
+}
+
+test "pop removes from head" {
+    const alloc = std.testing.allocator;
+
+    const Cache = DllLruCache(u32, []const u8, .{});
+    var cache = Cache.init(alloc);
+    defer cache.deinit();
+
+    {
+        _ = try cache.getOrPut(1);
+        _ = try cache.getOrPut(2);
+        _ = try cache.getOrPut(3);
+    }
+
+    const popped1 = cache.pop().?;
+    try std.testing.expectEqual(@as(u32, 1), popped1.key);
+    try std.testing.expectEqual(@as(?u32, 2), cache.first);
+
+    const popped2 = cache.pop().?;
+    try std.testing.expectEqual(@as(u32, 2), popped2.key);
+    try std.testing.expectEqual(@as(?u32, 3), cache.first);
+
+    const popped3 = cache.pop().?;
+    try std.testing.expectEqual(@as(u32, 3), popped3.key);
+    try std.testing.expectEqual(@as(?u32, null), cache.first);
+}
+
+test "retaining_pop keeps only n newest" {
+    const alloc = std.testing.allocator;
+
+    const Cache = DllLruCache(u32, u32, .{});
+    var cache = Cache.init(alloc);
+    defer cache.deinit();
+
+    _ = try cache.getOrPut(1);
+    _ = try cache.getOrPut(2);
+    _ = try cache.getOrPut(3);
+    _ = try cache.getOrPut(4);
+
+    // retain 2 newest → should pop oldest until count == 2
+    while (cache.retaining_pop(2)) |_| {}
+    try std.testing.expectEqual(@as(usize, 2), cache.map.count());
+
+    // first should be 3, last should be 4
+    try std.testing.expectEqual(@as(?u32, 3), cache.first);
+    try std.testing.expectEqual(@as(?u32, 4), cache.last);
+}
+
+test "pointer equality variant works" {
+    const alloc = std.testing.allocator;
+
+    const Cache = DllLruCache(*u32, u32, .{ .ptr = .follow });
+    var cache = Cache.init(alloc);
+    defer cache.deinit();
+
+    var a: u32 = 42;
+    var b: u32 = 43;
+    var c: u32 = 44;
+
+    {
+        const r = try cache.getOrPut(&a);
+        r.val.* = 1;
+        _ = try cache.getOrPut(&b);
+        _ = try cache.getOrPut(&c);
+    }
+
+    // Touching &a moves it to tail
+    _ = cache.get(&a, .touch);
+    try std.testing.expectEqual(@as(?*u32, &b), cache.first);
+    try std.testing.expectEqual(@as(?*u32, &a), cache.last);
+}

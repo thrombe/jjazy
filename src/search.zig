@@ -233,27 +233,32 @@ pub const SublimeSearcher = struct {
 
         try self.capture_occurrences(string, query, case);
 
-        const qc = query[0];
-        const key = switch (case) {
-            .sensitive => qc,
-            .insensitive => std.ascii.toLower(qc),
-        };
-        const occs = self.occ[@intCast(key)].items;
+        // NOTE: this is a lop because we don't know which is the first key that even matched. so searching for the first self.occ[key].len > 0
+        for (query, 0..) |qc, i| {
+            const key = switch (case) {
+                .sensitive => qc,
+                .insensitive => std.ascii.toLower(qc),
+            };
+            const occs = self.occ[@intCast(key)].items;
+            if (occs.len == 0) continue;
 
-        var max_match: ?Match = null;
-        for (occs) |occ| {
-            const m = try self.match(query, 0, occ, 0, case);
-            if (m == null) continue;
-            if (max_match) |mm| {
-                if (mm.score < m.?.score) {
+            var max_match: ?Match = null;
+            for (occs) |occ| {
+                const m = try self.match(query, i, occ, 0, case);
+                if (m == null) continue;
+                if (max_match) |mm| {
+                    if (mm.score < m.?.score) {
+                        max_match = m;
+                    }
+                } else {
                     max_match = m;
                 }
-            } else {
-                max_match = m;
             }
+
+            return max_match;
         }
 
-        return max_match;
+        return null;
 
         // var matches = std.ArrayListUnmanaged(Match).empty;
         // const Ctx = struct {};
@@ -293,7 +298,7 @@ test "case sensitivity - match only with correct case" {
     var searcher = SublimeSearcher.init(std.testing.allocator, .{});
     defer searcher.deinit();
 
-    const query = "Ab";
+    const query = "A";
     const target = "ab";
 
     const m_sensitive = try searcher.best_match(target, query, .sensitive);
@@ -463,4 +468,19 @@ test "non alpha-numeric matches" {
 
     try std.testing.expect(m != null);
     try std.testing.expect(m.?.score > 0);
+}
+
+test "first char does not match" {
+    var searcher = SublimeSearcher.init(std.testing.allocator, .{});
+    defer searcher.deinit();
+
+    const query = "tman";
+    const t1 = "ab manig";
+    const t2 = "abigman";
+
+    const m1 = try searcher.best_match(t1, query, .insensitive);
+    const m2 = try searcher.best_match(t2, query, .insensitive);
+
+    try std.testing.expect(m1 != null and m2 != null);
+    try std.testing.expect(m1.?.score > m2.?.score);
 }

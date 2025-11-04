@@ -43,7 +43,7 @@ pub const SublimeSearcher = struct {
         last_match_index: u32,
     };
 
-    fn init(alloc: std.mem.Allocator, config: Config) @This() {
+    pub fn init(alloc: std.mem.Allocator, config: Config) @This() {
         var occ: [256]std.ArrayListUnmanaged(Occurrence) = undefined;
         @memset(&occ, .empty);
         return .{
@@ -61,7 +61,7 @@ pub const SublimeSearcher = struct {
         }
     }
 
-    fn deinit(self: *@This()) void {
+    pub fn deinit(self: *@This()) void {
         self.match_cache.deinit(self.alloc);
         for (&self.occ) |*occ| {
             occ.deinit(self.alloc);
@@ -218,13 +218,15 @@ pub const SublimeSearcher = struct {
                 matched.score -= penalty;
             },
         }
+        // TODO: to show the matched characters in UI, we need to store what we matched.
+        // matched.matches.extend(max_match.?.matches);
         matched.last_match_index = max_match.?.last_match_index;
 
         try self.match_cache.putNoClobber(self.alloc, match_key, matched);
         return matched;
     }
 
-    fn best_match(self: *@This(), string: []const u8, query: []const u8, case: CaseSensitivity) !?Match {
+    pub fn best_match(self: *@This(), string: []const u8, query: []const u8, case: CaseSensitivity) !?Match {
         if (query.len == 0) return null;
         self.reset();
         try self.match_cache.ensureTotalCapacity(self.alloc, @intCast(query.len * query.len));
@@ -445,6 +447,18 @@ test "many repeats in string" {
 
     const query = "abc";
     const target = "aaaabbbccc";
+    const m = try searcher.best_match(target, query, .insensitive);
+
+    try std.testing.expect(m != null);
+    try std.testing.expect(m.?.score > 0);
+}
+
+test "non alpha-numeric matches" {
+    var searcher = SublimeSearcher.init(std.testing.allocator, .{});
+    defer searcher.deinit();
+
+    const query = "-";
+    const target = "huh-man";
     const m = try searcher.best_match(target, query, .insensitive);
 
     try std.testing.expect(m != null);

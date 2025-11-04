@@ -1,6 +1,53 @@
 const std = @import("std");
 const utils = @import("utils.zig");
 
+const CaseSensitivity = enum {
+    sensitive,
+    insensitive,
+};
+
+pub const SearchCollector = struct {
+    matched: std.ArrayListUnmanaged(Match) = .empty,
+    strings: std.ArrayListUnmanaged([]const u8) = .empty,
+    alloc: std.mem.Allocator,
+
+    const Match = struct { index: u32, score: i32 };
+
+    pub fn init(alloc: std.mem.Allocator) @This() {
+        return .{ .alloc = alloc };
+    }
+
+    pub fn deinit(self: *@This()) void {
+        self.matched.deinit(self.alloc);
+        self.strings.deinit(self.alloc);
+    }
+
+    pub fn reorder_strings(self: *@This(), strings: []const []const u8, query: []const u8, searcher: anytype, case: CaseSensitivity) ![]const []const u8 {
+        self.matched.clearRetainingCapacity();
+        self.strings.clearRetainingCapacity();
+        try self.matched.ensureTotalCapacity(self.alloc, strings.len);
+        try self.strings.ensureTotalCapacity(self.alloc, strings.len);
+
+        for (strings, 0..) |string, i| {
+            const score = try searcher.get_score(string, query, case) orelse continue;
+            try self.matched.append(self.alloc, .{ .index = @intCast(i), .score = score });
+        }
+
+        const Ctx = struct {};
+        std.sort.block(Match, self.matched.items, Ctx{}, struct {
+            fn lessThan(_: Ctx, lhs: Match, rhs: Match) bool {
+                return lhs.score > rhs.score;
+            }
+        }.lessThan);
+
+        for (self.matched.items) |match| {
+            try self.strings.append(self.alloc, strings[match.index]);
+        }
+
+        return self.strings.items;
+    }
+};
+
 pub const SublimeSearcher = struct {
     occ: [256]std.ArrayListUnmanaged(Occurrence),
     match_cache: MatchCache,
@@ -26,11 +73,6 @@ pub const SublimeSearcher = struct {
         index: u32,
         char: u8,
         is_start: bool,
-    };
-
-    const CaseSensitivity = enum {
-        sensitive,
-        insensitive,
     };
 
     const Match = struct {
@@ -233,7 +275,7 @@ pub const SublimeSearcher = struct {
 
         try self.capture_occurrences(string, query, case);
 
-        // NOTE: this is a lop because we don't know which is the first key that even matched. so searching for the first self.occ[key].len > 0
+        // NOTE: this is a loop because we don't know which is the first key that even matched. so searching for the first self.occ[key].len > 0
         for (query, 0..) |qc, i| {
             const key = switch (case) {
                 .sensitive => qc,
@@ -259,14 +301,12 @@ pub const SublimeSearcher = struct {
         }
 
         return null;
+    }
 
-        // var matches = std.ArrayListUnmanaged(Match).empty;
-        // const Ctx = struct {};
-        // std.sort.block(Match, matches.items, Ctx, struct {
-        //     fn lessThan(_: Ctx, lhs: Match, rhs: Match) bool {
-        //         return lhs.score < rhs.score;
-        //     }
-        // }.lessThan);
+    pub fn get_score(self: *@This(), string: []const u8, query: []const u8, case: CaseSensitivity) !?i32 {
+        const maybe_matched = try self.best_match(string, query, case);
+        const matched = maybe_matched orelse return null;
+        return matched.score;
     }
 };
 

@@ -261,3 +261,191 @@ pub const SublimeSearcher = struct {
         // }.lessThan);
     }
 };
+
+test "basic exact match" {
+    var searcher = SublimeSearcher.init(std.testing.allocator);
+    defer searcher.deinit();
+
+    const query = "abc";
+    const target = "abc";
+
+    const m = try searcher.best_match(target, query, .insensitive);
+    try std.testing.expect(m != null);
+    try std.testing.expect(m.?.score > 0);
+    try std.testing.expectEqual(@as(u32, 0), m.?.first_match_index);
+    try std.testing.expectEqual(@as(u32, 2), m.?.last_match_index);
+}
+
+test "characters appear out of order should not match" {
+    var searcher = SublimeSearcher.init(std.testing.allocator);
+    defer searcher.deinit();
+
+    const query = "abc";
+    const target = "cba";
+    const m = try searcher.best_match(target, query, .insensitive);
+    try std.testing.expect(m == null);
+}
+
+test "case sensitivity - match only with correct case" {
+    var searcher = SublimeSearcher.init(std.testing.allocator);
+    defer searcher.deinit();
+
+    const query = "Ab";
+    const target = "ab";
+
+    const m_sensitive = try searcher.best_match(target, query, .sensitive);
+    const m_insensitive = try searcher.best_match(target, query, .insensitive);
+
+    try std.testing.expect(m_sensitive == null);
+    try std.testing.expect(m_insensitive != null);
+}
+
+test "bonus for word start vs middle" {
+    var searcher = SublimeSearcher.init(std.testing.allocator);
+    defer searcher.deinit();
+
+    const q = "c";
+    const t1 = "Controller"; // 'C' at start = word start
+    const t2 = "mycontroller"; // 'c' not at word start
+
+    const m1 = try searcher.best_match(t1, q, .insensitive);
+    const m2 = try searcher.best_match(t2, q, .insensitive);
+
+    try std.testing.expect(m1 != null and m2 != null);
+    try std.testing.expect(m1.?.score > m2.?.score);
+}
+
+test "bonus for consecutive characters" {
+    var searcher = SublimeSearcher.init(std.testing.allocator);
+    defer searcher.deinit();
+
+    const query = "ab";
+    const t1 = "ab"; // consecutive
+    const t2 = "a_b"; // non-consecutive
+
+    searcher.config.bonus.word_start = 0;
+    const m1 = try searcher.best_match(t1, query, .insensitive);
+    const m2 = try searcher.best_match(t2, query, .insensitive);
+
+    try std.testing.expect(m1 != null and m2 != null);
+    try std.testing.expect(m1.?.score > m2.?.score);
+}
+
+test "penalty for large gaps between chars" {
+    var searcher = SublimeSearcher.init(std.testing.allocator);
+    defer searcher.deinit();
+
+    const query = "abc";
+    const t1 = "abc";
+    const t2 = "a----b----c";
+
+    searcher.config.bonus.word_start = 0;
+    const m1 = try searcher.best_match(t1, query, .insensitive);
+    const m2 = try searcher.best_match(t2, query, .insensitive);
+
+    try std.testing.expect(m1 != null and m2 != null);
+    try std.testing.expect(m1.?.score > m2.?.score);
+}
+
+test "longer string with embedded query" {
+    var searcher = SublimeSearcher.init(std.testing.allocator);
+    defer searcher.deinit();
+
+    const query = "cat";
+    const target = "concatenate";
+    const m = try searcher.best_match(target, query, .insensitive);
+
+    try std.testing.expect(m != null);
+    try std.testing.expect(m.?.score > 0);
+}
+
+test "non-alphanumeric separators are treated as word starts" {
+    var searcher = SublimeSearcher.init(std.testing.allocator);
+    defer searcher.deinit();
+
+    const query = "b";
+    const target1 = "foo-bar"; // 'b' after '-' = word start
+    const target2 = "foobar"; // 'b' not a word start
+
+    const m1 = try searcher.best_match(target1, query, .insensitive);
+    const m2 = try searcher.best_match(target2, query, .insensitive);
+
+    try std.testing.expect(m1 != null and m2 != null);
+    try std.testing.expect(m1.?.score != m2.?.score);
+}
+
+test "handles empty query" {
+    var searcher = SublimeSearcher.init(std.testing.allocator);
+    defer searcher.deinit();
+
+    const target = "anything";
+    const m = try searcher.best_match(target, "", .insensitive);
+    try std.testing.expect(m == null);
+}
+
+test "handles query longer than target" {
+    var searcher = SublimeSearcher.init(std.testing.allocator);
+    defer searcher.deinit();
+
+    const query = "longquery";
+    const target = "short";
+    const m = try searcher.best_match(target, query, .insensitive);
+    try std.testing.expect(m == null);
+}
+
+test "prefer tighter matches (fewer gaps)" {
+    var searcher = SublimeSearcher.init(std.testing.allocator);
+    defer searcher.deinit();
+
+    const query = "abc";
+    const t1 = "a-b-c";
+    const t2 = "a---b---c";
+
+    const m1 = try searcher.best_match(t1, query, .insensitive);
+    const m2 = try searcher.best_match(t2, query, .insensitive);
+
+    try std.testing.expect(m1.?.score > m2.?.score);
+}
+
+test "camelCase word start bonus" {
+    var searcher = SublimeSearcher.init(std.testing.allocator);
+    defer searcher.deinit();
+
+    const query = "cn";
+    const t1 = "CamelName"; // matches at capitals
+    const t2 = "camelname"; // no camelCase bonus
+
+    const m1 = try searcher.best_match(t1, query, .insensitive);
+    const m2 = try searcher.best_match(t2, query, .insensitive);
+
+    try std.testing.expect(m1 != null and m2 != null);
+    try std.testing.expect(m1.?.score > m2.?.score);
+}
+
+test "case match" {
+    var searcher = SublimeSearcher.init(std.testing.allocator);
+    defer searcher.deinit();
+
+    const query = "sC";
+    const t1 = "simpleController";
+    const t2 = "sire-cool";
+
+    searcher.config.bonus.word_start = 0;
+    const m1 = try searcher.best_match(t1, query, .insensitive);
+    const m2 = try searcher.best_match(t2, query, .insensitive);
+
+    try std.testing.expect(m1 != null and m2 != null);
+    try std.testing.expect(m1.?.score > m2.?.score);
+}
+
+test "many repeats in string" {
+    var searcher = SublimeSearcher.init(std.testing.allocator);
+    defer searcher.deinit();
+
+    const query = "abc";
+    const target = "aaaabbbccc";
+    const m = try searcher.best_match(target, query, .insensitive);
+
+    try std.testing.expect(m != null);
+    try std.testing.expect(m.?.score > 0);
+}

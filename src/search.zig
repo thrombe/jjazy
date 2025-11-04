@@ -282,7 +282,11 @@ pub const SublimeSearcher = struct {
                 .insensitive => std.ascii.toLower(qc),
             };
             const occs = self.occ[@intCast(key)].items;
-            if (occs.len == 0) continue;
+
+            // TODO: decide if this should really be a break or continue.
+            // 'break' if every character of query must be in the string. else the code needs more changes anyway.
+            // if (occs.len == 0) continue;
+            if (occs.len == 0) break;
 
             var max_match: ?Match = null;
             for (occs) |occ| {
@@ -521,6 +525,8 @@ test "first char does not match" {
     const m1 = try searcher.best_match(t1, query, .insensitive);
     const m2 = try searcher.best_match(t2, query, .insensitive);
 
-    try std.testing.expect(m1 != null and m2 != null);
-    try std.testing.expect(m1.?.score > m2.?.score);
+    // try std.testing.expect(m1 != null and m2 != null);
+    // try std.testing.expect(m1.?.score > m2.?.score);
+
+    try std.testing.expect(m1 == null and m2 == null);
 }

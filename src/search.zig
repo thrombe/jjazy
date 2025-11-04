@@ -43,13 +43,14 @@ pub const SublimeSearcher = struct {
         last_match_index: u32,
     };
 
-    fn init(alloc: std.mem.Allocator) @This() {
+    fn init(alloc: std.mem.Allocator, config: Config) @This() {
         var occ: [256]std.ArrayListUnmanaged(Occurrence) = undefined;
         @memset(&occ, .empty);
         return .{
             .alloc = alloc,
             .occ = occ,
             .match_cache = .{},
+            .config = config,
         };
     }
 
@@ -263,7 +264,7 @@ pub const SublimeSearcher = struct {
 };
 
 test "basic exact match" {
-    var searcher = SublimeSearcher.init(std.testing.allocator);
+    var searcher = SublimeSearcher.init(std.testing.allocator, .{});
     defer searcher.deinit();
 
     const query = "abc";
@@ -277,7 +278,7 @@ test "basic exact match" {
 }
 
 test "characters appear out of order should not match" {
-    var searcher = SublimeSearcher.init(std.testing.allocator);
+    var searcher = SublimeSearcher.init(std.testing.allocator, .{});
     defer searcher.deinit();
 
     const query = "abc";
@@ -287,7 +288,7 @@ test "characters appear out of order should not match" {
 }
 
 test "case sensitivity - match only with correct case" {
-    var searcher = SublimeSearcher.init(std.testing.allocator);
+    var searcher = SublimeSearcher.init(std.testing.allocator, .{});
     defer searcher.deinit();
 
     const query = "Ab";
@@ -301,7 +302,7 @@ test "case sensitivity - match only with correct case" {
 }
 
 test "bonus for word start vs middle" {
-    var searcher = SublimeSearcher.init(std.testing.allocator);
+    var searcher = SublimeSearcher.init(std.testing.allocator, .{});
     defer searcher.deinit();
 
     const q = "c";
@@ -316,7 +317,7 @@ test "bonus for word start vs middle" {
 }
 
 test "bonus for consecutive characters" {
-    var searcher = SublimeSearcher.init(std.testing.allocator);
+    var searcher = SublimeSearcher.init(std.testing.allocator, .{});
     defer searcher.deinit();
 
     const query = "ab";
@@ -332,7 +333,7 @@ test "bonus for consecutive characters" {
 }
 
 test "penalty for large gaps between chars" {
-    var searcher = SublimeSearcher.init(std.testing.allocator);
+    var searcher = SublimeSearcher.init(std.testing.allocator, .{});
     defer searcher.deinit();
 
     const query = "abc";
@@ -348,7 +349,7 @@ test "penalty for large gaps between chars" {
 }
 
 test "longer string with embedded query" {
-    var searcher = SublimeSearcher.init(std.testing.allocator);
+    var searcher = SublimeSearcher.init(std.testing.allocator, .{});
     defer searcher.deinit();
 
     const query = "cat";
@@ -360,7 +361,7 @@ test "longer string with embedded query" {
 }
 
 test "non-alphanumeric separators are treated as word starts" {
-    var searcher = SublimeSearcher.init(std.testing.allocator);
+    var searcher = SublimeSearcher.init(std.testing.allocator, .{});
     defer searcher.deinit();
 
     const query = "b";
@@ -375,7 +376,7 @@ test "non-alphanumeric separators are treated as word starts" {
 }
 
 test "handles empty query" {
-    var searcher = SublimeSearcher.init(std.testing.allocator);
+    var searcher = SublimeSearcher.init(std.testing.allocator, .{});
     defer searcher.deinit();
 
     const target = "anything";
@@ -384,7 +385,7 @@ test "handles empty query" {
 }
 
 test "handles query longer than target" {
-    var searcher = SublimeSearcher.init(std.testing.allocator);
+    var searcher = SublimeSearcher.init(std.testing.allocator, .{});
     defer searcher.deinit();
 
     const query = "longquery";
@@ -394,7 +395,7 @@ test "handles query longer than target" {
 }
 
 test "prefer tighter matches (fewer gaps)" {
-    var searcher = SublimeSearcher.init(std.testing.allocator);
+    var searcher = SublimeSearcher.init(std.testing.allocator, .{});
     defer searcher.deinit();
 
     const query = "abc";
@@ -408,7 +409,7 @@ test "prefer tighter matches (fewer gaps)" {
 }
 
 test "camelCase word start bonus" {
-    var searcher = SublimeSearcher.init(std.testing.allocator);
+    var searcher = SublimeSearcher.init(std.testing.allocator, .{});
     defer searcher.deinit();
 
     const query = "cn";
@@ -423,7 +424,7 @@ test "camelCase word start bonus" {
 }
 
 test "case match" {
-    var searcher = SublimeSearcher.init(std.testing.allocator);
+    var searcher = SublimeSearcher.init(std.testing.allocator, .{});
     defer searcher.deinit();
 
     const query = "sC";
@@ -439,7 +440,7 @@ test "case match" {
 }
 
 test "many repeats in string" {
-    var searcher = SublimeSearcher.init(std.testing.allocator);
+    var searcher = SublimeSearcher.init(std.testing.allocator, .{});
     defer searcher.deinit();
 
     const query = "abc";

@@ -66,6 +66,7 @@ pub fn build(b: *std.Build) void {
         "src/term.zig",
         "src/utils.zig",
         "src/unicode.zig",
+        "src/search.zig",
     };
     for (test_files) |file| {
         const unit_tests = b.addTest(.{

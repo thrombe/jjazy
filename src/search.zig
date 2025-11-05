@@ -8,29 +8,34 @@ const CaseSensitivity = enum {
 
 pub const SearchCollector = struct {
     matched: std.ArrayListUnmanaged(Match) = .empty,
-    strings: std.ArrayListUnmanaged([]const u8) = .empty,
     alloc: std.mem.Allocator,
+    matches_arena: std.heap.ArenaAllocator,
 
-    const Match = struct { index: u32, score: i32 };
+    const Match = struct { index: u32, score: i32, matches: []const u32, string: []const u8 };
 
     pub fn init(alloc: std.mem.Allocator) @This() {
-        return .{ .alloc = alloc };
+        return .{ .alloc = alloc, .matches_arena = .init(alloc) };
     }
 
     pub fn deinit(self: *@This()) void {
+        self.matches_arena.deinit();
         self.matched.deinit(self.alloc);
-        self.strings.deinit(self.alloc);
     }
 
-    pub fn reorder_strings(self: *@This(), strings: []const []const u8, query: []const u8, searcher: anytype, case: CaseSensitivity) ![]const []const u8 {
+    pub fn reorder_strings(self: *@This(), strings: []const []const u8, query: []const u8, searcher: anytype, case: CaseSensitivity) ![]const Match {
+        _ = self.matches_arena.reset(.retain_capacity);
         self.matched.clearRetainingCapacity();
-        self.strings.clearRetainingCapacity();
         try self.matched.ensureTotalCapacity(self.alloc, strings.len);
-        try self.strings.ensureTotalCapacity(self.alloc, strings.len);
 
         for (strings, 0..) |string, i| {
-            const score = try searcher.get_score(string, query, case) orelse continue;
-            try self.matched.append(self.alloc, .{ .index = @intCast(i), .score = score });
+            const m = try searcher.best_match(string, query, case) orelse continue;
+            const temp = self.matches_arena.allocator();
+            try self.matched.append(self.alloc, .{
+                .index = @intCast(i),
+                .score = m.score,
+                .matches = try temp.dupe(u32, m.matches),
+                .string = string,
+            });
         }
 
         const Ctx = struct {};
@@ -40,11 +45,7 @@ pub const SearchCollector = struct {
             }
         }.lessThan);
 
-        for (self.matched.items) |match| {
-            try self.strings.append(self.alloc, strings[match.index]);
-        }
-
-        return self.strings.items;
+        return self.matched.items;
     }
 };
 
@@ -343,12 +344,6 @@ pub const SublimeSearcher = struct {
 
         return null;
     }
-
-    pub fn get_score(self: *@This(), string: []const u8, query: []const u8, case: CaseSensitivity) !?i32 {
-        const maybe_matched = try self.best_match(string, query, case);
-        const matched = maybe_matched orelse return null;
-        return matched.score;
-    }
 };
 
 test "basic exact match" {
@@ -604,8 +599,8 @@ test "SearchCollector: basic ordering by fuzzy match score" {
     const results = try collector.reorder_strings(&strings, query, &searcher, .insensitive);
 
     // "cat" and "concatenate" should rank highest (exact and prefix match)
-    try std.testing.expectEqualStrings("cat", results[0]);
-    try std.testing.expectEqualStrings("concatenate", results[1]);
+    try std.testing.expectEqualStrings("cat", results[0].string);
+    try std.testing.expectEqualStrings("concatenate", results[1].string);
 
     // TODO: do we expect 2?
     // try std.testing.expectEqual(@as(usize, 3), results.len);
@@ -632,7 +627,7 @@ test "SearchCollector: ignores non-matching strings" {
 
     // Only "abc" should match, because it contains 'a'
     try std.testing.expectEqual(@as(usize, 1), results.len);
-    try std.testing.expectEqualStrings("abc", results[0]);
+    try std.testing.expectEqualStrings("abc", results[0].string);
 }
 
 test "SearchCollector: orders by score descending" {
@@ -656,9 +651,9 @@ test "SearchCollector: orders by score descending" {
     const results = try collector.reorder_strings(&strings, query, &searcher, .insensitive);
 
     // "abc" (tightest match) should be first, then "a_b_c", then "a---b---c"
-    try std.testing.expectEqualStrings("abc", results[0]);
-    try std.testing.expectEqualStrings("a_b_c", results[1]);
-    try std.testing.expectEqualStrings("a---b---c", results[2]);
+    try std.testing.expectEqualStrings("abc", results[0].string);
+    try std.testing.expectEqualStrings("a_b_c", results[1].string);
+    try std.testing.expectEqualStrings("a---b---c", results[2].string);
 }
 
 test "SearchCollector: stable when scores tie" {
@@ -682,7 +677,7 @@ test "SearchCollector: stable when scores tie" {
     // Both contain "alp"; their scores may tie.
     // At least ensure both appear in the result set and in some deterministic order.
     try std.testing.expectEqual(@as(usize, 2), results.len);
-    try std.testing.expectEqualStrings("alpha", results[0]);
+    try std.testing.expectEqualStrings("alpha", results[0].string);
 }
 
 test "SearchCollector: empty query produces empty results" {

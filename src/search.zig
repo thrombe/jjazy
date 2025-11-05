@@ -11,7 +11,7 @@ pub const SearchCollector = struct {
     alloc: std.mem.Allocator,
     matches_arena: std.heap.ArenaAllocator,
 
-    const Match = struct { index: u32, score: i32, matches: []const u32, string: []const u8 };
+    pub const Match = struct { index: u32, score: i32, matches: []const u32, string: []const u8 };
 
     pub fn init(alloc: std.mem.Allocator) @This() {
         return .{ .alloc = alloc, .matches_arena = .init(alloc) };
@@ -28,7 +28,17 @@ pub const SearchCollector = struct {
         try self.matched.ensureTotalCapacity(self.alloc, strings.len);
 
         for (strings, 0..) |string, i| {
-            const m = try searcher.best_match(string, query, case) orelse continue;
+            const m = try searcher.best_match(string, query, case) orelse {
+                if (query.len == 0) {
+                    try self.matched.append(self.alloc, .{
+                        .index = @intCast(i),
+                        .score = 0,
+                        .matches = &.{},
+                        .string = string,
+                    });
+                }
+                continue;
+            };
             const temp = self.matches_arena.allocator();
             try self.matched.append(self.alloc, .{
                 .index = @intCast(i),

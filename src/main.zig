@@ -5,6 +5,8 @@ const options = @import("options");
 const utils_mod = @import("utils.zig");
 const cast = utils_mod.cast;
 
+const search_mod = @import("search.zig");
+
 const lay_mod = @import("lay.zig");
 const Vec2 = lay_mod.Vec2;
 
@@ -537,6 +539,9 @@ const BookmarkSlate = struct {
     // ArrayXar prevents memory wastage through realloc in arena allocators
     bookmarks: std.StringHashMap(utils_mod.ArrayXar(jj_mod.Bookmark.Parsed, 2)),
     selected_bookmark: ?jj_mod.Bookmark.Parsed = null,
+    bookmark_searcher: search_mod.SublimeSearcher,
+    bookmark_search_collector: search_mod.SearchCollector,
+    searched_bookmarks: []const search_mod.SearchCollector.Match = &.{},
 
     fn init(alloc: std.mem.Allocator) @This() {
         return .{
@@ -546,6 +551,8 @@ const BookmarkSlate = struct {
             .it = .init(alloc, &.{}),
             .bookmarks_order = .init(alloc),
             .bookmarks = .init(alloc),
+            .bookmark_searcher = .init(alloc, .{}),
+            .bookmark_search_collector = .init(alloc),
         };
     }
 
@@ -556,6 +563,8 @@ const BookmarkSlate = struct {
         self.bookmarks.deinit();
         self.arena.deinit();
         self.selected_bookmark = null;
+        self.bookmark_searcher.deinit();
+        self.bookmark_search_collector.deinit();
     }
 
     fn update(self: *@This(), buf: []const u8, app: *App) !void {
@@ -607,6 +616,13 @@ const BookmarkSlate = struct {
     }, show: struct {
         targets: bool = true,
     }) !void {
+        self.searched_bookmarks = try self.bookmark_search_collector.reorder_strings(
+            self.bookmarks_order.items,
+            app.text_input.text.items,
+            &self.bookmark_searcher,
+            .insensitive,
+        );
+
         try surface.clear();
 
         try surface.apply_style(.bold);
@@ -624,8 +640,8 @@ const BookmarkSlate = struct {
 
         var ended = false;
         var i: i32 = 0;
-        for (self.bookmarks_order.items, 0..) |name, j| {
-            var it = self.bookmarks.get(name).?.iterator(.{});
+        for (self.searched_bookmarks, 0..) |match, j| {
+            var it = self.bookmarks.get(match.string).?.iterator(.{});
             while (it.next()) |bookmark| {
                 if (!include.local_only and bookmark.parsed.remote == null) continue;
                 if (!include.remotes and bookmark.parsed.remote != null) continue;
@@ -664,7 +680,7 @@ const BookmarkSlate = struct {
 
                 if (surface.is_full()) break;
             }
-            ended = ended or (it.ended() and self.bookmarks_order.items.len == j + 1);
+            ended = ended or (it.ended() and self.searched_bookmarks.len == j + 1);
             if (surface.is_full()) break;
         }
 
@@ -920,6 +936,18 @@ const HelpSlate = struct {
         .{
             .action = .{ .apply_jj_git_push_selected = .{ .allow_new = true } },
             .help = "Git push selected bookmark (allow new)",
+        },
+        .{
+            .action = .start_search,
+            .help = "Start Search",
+        },
+        .{
+            .action = .{ .end_search = .{ .reset = true } },
+            .help = "End Search (reset input)",
+        },
+        .{
+            .action = .{ .end_search = .{ .reset = false } },
+            .help = "End Search",
         },
     };
 
@@ -1220,6 +1248,7 @@ pub const State = union(enum(u8)) {
     bookmark: enum {
         view,
         create,
+        search,
     },
     git: enum {
         none,
@@ -1320,6 +1349,8 @@ pub const Action = union(enum) {
     switch_state_to_git_fetch,
     switch_state_to_git_push,
     apply_jj_git_push_selected: struct { allow_new: bool },
+    start_search,
+    end_search: struct { reset: bool },
 };
 
 pub const InputActionMap = struct {
@@ -1797,6 +1828,7 @@ pub const App = struct {
                 .log,
                 .oplog,
                 .{ .bookmark = .view },
+                .{ .bookmark = .search },
                 .{ .git = .none },
                 .{ .git = .fetch },
                 .{ .git = .push },
@@ -2222,6 +2254,18 @@ pub const App = struct {
             .apply_jj_new,
         );
         try map.add_one_for_state(
+            .{ .bookmark = .search },
+            .{ .functional = .{ .key = .escape } },
+            null,
+            .{ .end_search = .{ .reset = true } },
+        );
+        try map.add_one_for_state(
+            .{ .bookmark = .search },
+            .{ .functional = .{ .key = .enter } },
+            null,
+            .{ .end_search = .{ .reset = false } },
+        );
+        try map.add_one_for_state(
             .command,
             .{ .functional = .{ .key = .enter } },
             null,
@@ -2293,6 +2337,12 @@ pub const App = struct {
             .{ .key = .{ .key = 'F', .mod = .{ .shift = true } } },
             null,
             .{ .apply_jj_bookmark_forget = .{ .include_remotes = true } },
+        );
+        try map.add_one_for_state(
+            .{ .bookmark = .view },
+            .{ .key = .{ .key = '/', .mod = .{} } },
+            null,
+            .start_search,
         );
         try map.add_one_for_state(
             .{ .bookmark = .create },
@@ -2409,6 +2459,10 @@ pub const App = struct {
                     .show_help = true,
                 },
                 .view => .{
+                    .show_help = true,
+                },
+                .search => .{
+                    .input_text = true,
                     .show_help = true,
                 },
             },
@@ -2576,6 +2630,37 @@ pub const App = struct {
                 }
             },
             .action => |action| switch (action) {
+                .start_search => {
+                    switch (self.state) {
+                        .bookmark => |b| switch (b) {
+                            .view => {
+                                self.state = .{ .bookmark = .search };
+                                return;
+                            },
+                            else => {},
+                        },
+                        else => {},
+                    }
+
+                    unreachable;
+                },
+                .end_search => |v| {
+                    switch (self.state) {
+                        .bookmark => |b| switch (b) {
+                            .search => {
+                                if (v.reset) {
+                                    self.text_input.reset();
+                                }
+                                self.state = .{ .bookmark = .view };
+                                return;
+                            },
+                            else => {},
+                        },
+                        else => {},
+                    }
+
+                    unreachable;
+                },
                 .fancy_terminal_features_that_break_gdb => |set| switch (set) {
                     .disable => try self.screen.term.fancy_features_that_break_gdb(.disable, .{}),
                     .enable => try self.screen.term.fancy_features_that_break_gdb(.enable, .{}),

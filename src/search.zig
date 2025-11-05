@@ -51,6 +51,7 @@ pub const SearchCollector = struct {
 pub const SublimeSearcher = struct {
     occ: [256]std.ArrayListUnmanaged(Occurrence),
     match_cache: MatchCache,
+    matches: std.ArrayListUnmanaged(u32),
     alloc: std.mem.Allocator,
     config: Config = .{},
 
@@ -62,7 +63,7 @@ pub const SublimeSearcher = struct {
             penalty_distance: i32 = 4,
         } = .{},
     };
-    const MatchCache = std.AutoHashMapUnmanaged(MatchKey, ?Match);
+    const MatchCache = std.AutoHashMapUnmanaged(MatchKey, ?InnerMatch);
     const MatchKey = struct {
         query_index: u32,
         target_index: u32,
@@ -76,6 +77,12 @@ pub const SublimeSearcher = struct {
     };
 
     const Match = struct {
+        score: i32,
+        consecutive: i32,
+        matches: []u32,
+    };
+
+    const InnerMatch = struct {
         /// Accumulative score
         score: i32,
         /// Count of current consecutive matched chars
@@ -83,6 +90,8 @@ pub const SublimeSearcher = struct {
 
         first_match_index: u32,
         last_match_index: u32,
+
+        next_key: ?MatchKey,
     };
 
     pub fn init(alloc: std.mem.Allocator, config: Config) @This() {
@@ -92,11 +101,13 @@ pub const SublimeSearcher = struct {
             .alloc = alloc,
             .occ = occ,
             .match_cache = .{},
+            .matches = .empty,
             .config = config,
         };
     }
 
     fn reset(self: *@This()) void {
+        self.matches.clearRetainingCapacity();
         self.match_cache.clearRetainingCapacity();
         for (&self.occ) |*occ| {
             occ.clearRetainingCapacity();
@@ -104,6 +115,7 @@ pub const SublimeSearcher = struct {
     }
 
     pub fn deinit(self: *@This()) void {
+        self.matches.deinit(self.alloc);
         self.match_cache.deinit(self.alloc);
         for (&self.occ) |*occ| {
             occ.deinit(self.alloc);
@@ -170,7 +182,7 @@ pub const SublimeSearcher = struct {
         }
     }
 
-    fn match(self: *@This(), query: []const u8, index: usize, occurrence: Occurrence, consecutive: i32, case: CaseSensitivity) !?Match {
+    fn match(self: *@This(), query: []const u8, index: usize, occurrence: Occurrence, consecutive: i32, case: CaseSensitivity) !?InnerMatch {
         const match_key = MatchKey{
             .query_index = @intCast(index),
             .target_index = occurrence.index,
@@ -189,11 +201,12 @@ pub const SublimeSearcher = struct {
             @intFromBool(case_bonus) * self.config.bonus.match_case;
 
         if (index + 1 >= query.len) {
-            const matched = Match{
+            const matched = InnerMatch{
                 .score = score,
                 .consecutive = consecutive,
                 .first_match_index = occurrence.index,
                 .last_match_index = occurrence.index,
+                .next_key = null,
             };
             try self.match_cache.putNoClobber(self.alloc, match_key, matched);
             return matched;
@@ -213,23 +226,31 @@ pub const SublimeSearcher = struct {
             return null;
         }
 
-        var max_match: ?Match = null;
+        var next_match_key: MatchKey = undefined;
+        var max_match: ?InnerMatch = null;
         for (occs) |occ| {
             if (occ.index <= occurrence.index) continue;
+            const _match_key = MatchKey{
+                .query_index = @intCast(index + 1),
+                .consecutive = if (occ.index - occurrence.index == 1) consecutive + 1 else 0,
+                .target_index = occ.index,
+            };
             const m = try self.match(
                 query,
-                index + 1,
+                _match_key.query_index,
                 occ,
-                if (occ.index - occurrence.index == 1) consecutive + 1 else 0,
+                _match_key.consecutive,
                 case,
             );
             if (m == null) continue;
             if (max_match) |mm| {
                 if (mm.score < m.?.score) {
                     max_match = m;
+                    next_match_key = _match_key;
                 }
             } else {
                 max_match = m;
+                next_match_key = _match_key;
             }
         }
 
@@ -238,11 +259,12 @@ pub const SublimeSearcher = struct {
             return null;
         }
 
-        var matched = Match{
+        var matched = InnerMatch{
             .score = score,
             .consecutive = consecutive,
             .first_match_index = occurrence.index,
             .last_match_index = occurrence.index,
+            .next_key = next_match_key,
         };
 
         matched.score += max_match.?.score;
@@ -260,8 +282,6 @@ pub const SublimeSearcher = struct {
                 matched.score -= penalty;
             },
         }
-        // TODO: to show the matched characters in UI, we need to store what we matched.
-        // matched.matches.extend(max_match.?.matches);
         matched.last_match_index = max_match.?.last_match_index;
 
         try self.match_cache.putNoClobber(self.alloc, match_key, matched);
@@ -288,7 +308,7 @@ pub const SublimeSearcher = struct {
             // if (occs.len == 0) continue;
             if (occs.len == 0) break;
 
-            var max_match: ?Match = null;
+            var max_match: ?InnerMatch = null;
             for (occs) |occ| {
                 const m = try self.match(query, i, occ, 0, case);
                 if (m == null) continue;
@@ -301,7 +321,24 @@ pub const SublimeSearcher = struct {
                 }
             }
 
-            return max_match;
+            if (max_match == null) return null;
+
+            self.matches.clearRetainingCapacity();
+            try self.matches.append(self.alloc, max_match.?.first_match_index);
+            var k = max_match.?.next_key;
+            while (k) |match_key| {
+                const m = self.match_cache.getPtr(match_key).?;
+                if (m.* == null) break;
+                k = m.*.?.next_key;
+                try self.matches.append(self.alloc, m.*.?.first_match_index);
+            }
+
+            const real_match = Match{
+                .score = max_match.?.score,
+                .consecutive = max_match.?.consecutive,
+                .matches = self.matches.items,
+            };
+            return real_match;
         }
 
         return null;
@@ -324,8 +361,23 @@ test "basic exact match" {
     const m = try searcher.best_match(target, query, .insensitive);
     try std.testing.expect(m != null);
     try std.testing.expect(m.?.score > 0);
-    try std.testing.expectEqual(@as(u32, 0), m.?.first_match_index);
-    try std.testing.expectEqual(@as(u32, 2), m.?.last_match_index);
+    try std.testing.expectEqual(@as(u32, 0), m.?.matches[0]);
+    try std.testing.expectEqual(@as(u32, 2), m.?.matches[2]);
+}
+
+test "match indices" {
+    var searcher = SublimeSearcher.init(std.testing.allocator, .{});
+    defer searcher.deinit();
+
+    const query = "abc";
+    const target = " a b c";
+
+    const m = try searcher.best_match(target, query, .insensitive);
+    try std.testing.expect(m != null);
+    try std.testing.expect(m.?.score > 0);
+    try std.testing.expectEqual(@as(u32, 1), m.?.matches[0]);
+    try std.testing.expectEqual(@as(u32, 3), m.?.matches[1]);
+    try std.testing.expectEqual(@as(u32, 5), m.?.matches[2]);
 }
 
 test "characters appear out of order should not match" {

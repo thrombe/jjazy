@@ -1254,6 +1254,8 @@ pub const State = union(enum(u8)) {
         none,
         fetch,
         push,
+        fetch_search,
+        push_search,
     },
     command,
     rebase: Where,
@@ -1832,6 +1834,8 @@ pub const App = struct {
                 .{ .git = .none },
                 .{ .git = .fetch },
                 .{ .git = .push },
+                .{ .git = .fetch_search },
+                .{ .git = .push_search },
                 .{ .rebase = .onto },
                 .{ .rebase = .after },
                 .{ .rebase = .before },
@@ -2253,18 +2257,24 @@ pub const App = struct {
             null,
             .apply_jj_new,
         );
-        try map.add_one_for_state(
-            .{ .bookmark = .search },
-            .{ .functional = .{ .key = .escape } },
-            null,
-            .{ .end_search = .{ .reset = true } },
-        );
-        try map.add_one_for_state(
-            .{ .bookmark = .search },
-            .{ .functional = .{ .key = .enter } },
-            null,
-            .{ .end_search = .{ .reset = false } },
-        );
+        {
+            defer map.reset();
+            try map.for_states(&[_]State{
+                .{ .bookmark = .search },
+                .{ .git = .fetch_search },
+                .{ .git = .push_search },
+            });
+            try map.add_one(
+                .{ .functional = .{ .key = .escape } },
+                null,
+                .{ .end_search = .{ .reset = true } },
+            );
+            try map.add_one(
+                .{ .functional = .{ .key = .enter } },
+                null,
+                .{ .end_search = .{ .reset = false } },
+            );
+        }
         try map.add_one_for_state(
             .command,
             .{ .functional = .{ .key = .enter } },
@@ -2338,12 +2348,19 @@ pub const App = struct {
             null,
             .{ .apply_jj_bookmark_forget = .{ .include_remotes = true } },
         );
-        try map.add_one_for_state(
-            .{ .bookmark = .view },
-            .{ .key = .{ .key = '/', .mod = .{} } },
-            null,
-            .start_search,
-        );
+        {
+            defer map.reset();
+            try map.for_states(&[_]State{
+                .{ .bookmark = .view },
+                .{ .git = .fetch },
+                .{ .git = .push },
+            });
+            try map.add_one(
+                .{ .key = .{ .key = '/', .mod = .{} } },
+                null,
+                .start_search,
+            );
+        }
         try map.add_one_for_state(
             .{ .bookmark = .create },
             .{ .functional = .{ .key = .enter } },
@@ -2474,6 +2491,14 @@ pub const App = struct {
                     .show_help = true,
                 },
                 .push => .{
+                    .show_help = true,
+                },
+                .fetch_search => .{
+                    .input_text = true,
+                    .show_help = true,
+                },
+                .push_search => .{
+                    .input_text = true,
                     .show_help = true,
                 },
             },
@@ -2632,9 +2657,20 @@ pub const App = struct {
             .action => |action| switch (action) {
                 .start_search => {
                     switch (self.state) {
-                        .bookmark => |b| switch (b) {
+                        .bookmark => |s| switch (s) {
                             .view => {
                                 self.state = .{ .bookmark = .search };
+                                return;
+                            },
+                            else => {},
+                        },
+                        .git => |s| switch (s) {
+                            .fetch => {
+                                self.state = .{ .git = .fetch_search };
+                                return;
+                            },
+                            .push => {
+                                self.state = .{ .git = .push_search };
                                 return;
                             },
                             else => {},
@@ -2645,13 +2681,22 @@ pub const App = struct {
                     unreachable;
                 },
                 .end_search => |v| {
+                    defer if (v.reset) self.text_input.reset();
                     switch (self.state) {
-                        .bookmark => |b| switch (b) {
+                        .bookmark => |s| switch (s) {
                             .search => {
-                                if (v.reset) {
-                                    self.text_input.reset();
-                                }
                                 self.state = .{ .bookmark = .view };
+                                return;
+                            },
+                            else => {},
+                        },
+                        .git => |s| switch (s) {
+                            .fetch_search => {
+                                self.state = .{ .git = .fetch };
+                                return;
+                            },
+                            .push_search => {
+                                self.state = .{ .git = .push };
                                 return;
                             },
                             else => {},

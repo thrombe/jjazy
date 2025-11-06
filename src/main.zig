@@ -404,7 +404,7 @@ const LogSlate = struct {
             self.y = i - 1;
         }
 
-        if (self.y >= i and !self.changes.ended()) {
+        if (self.y >= i and !self.changes.ended() and i > 0) {
             self.skip_y += 1;
             try app._send_event(.rerender);
         }
@@ -467,7 +467,7 @@ const OpLogSlate = struct {
             self.y = i - 1;
         }
 
-        if (self.y >= i and !self.ops.ended()) {
+        if (self.y >= i and !self.ops.ended() and i > 0) {
             self.skip_y += 1;
             try app._send_event(.rerender);
         }
@@ -688,7 +688,7 @@ const BookmarkSlate = struct {
             self.y = i - 1;
         }
 
-        if (self.y >= i and !ended) {
+        if (self.y >= i and !ended and i > 0) {
             self.skip_y += 1;
             try app._send_event(.rerender);
         }

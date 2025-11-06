@@ -3335,7 +3335,20 @@ pub const App = struct {
                 defer self._register_mouse_region(.bookmarks, &surface);
 
                 if (self.state == .bookmark) {
-                    try self.bookmarks.render(&surface, self, .{}, .{});
+                    if (self.state.bookmark == .search or self.text_input.text.items.len > 0) {
+                        var input_box = try surface.split_y(3, .none);
+                        std.mem.swap(@TypeOf(surface), &surface, &input_box);
+
+                        try input_box.clear();
+                        try input_box.draw_border(symbols.thin.rounded);
+
+                        try input_box.draw_border_heading(" Search ");
+
+                        try self.text_input.draw(&input_box);
+                        try self.bookmarks.render(&surface, self, .{}, .{});
+                    } else {
+                        try self.bookmarks.render(&surface, self, .{}, .{});
+                    }
                 } else if (std.meta.eql(self.state, .{ .git = .push })) {
                     try self.bookmarks.render(&surface, self, .{ .remotes = false }, .{});
                 } else if (std.meta.eql(self.state, .{ .git = .fetch })) {

@@ -3401,7 +3401,7 @@ pub const App = struct {
                 }
 
                 if (self.state == .bookmark) {
-                    try self.bookmarks.render(&surface, self, .{}, .{});
+                    try self.bookmarks.render(&surface, self, .{ .remotes = false }, .{});
                 } else if (std.meta.eql(self.state, .{ .git = .push }) or std.meta.eql(self.state, .{ .git = .push_search })) {
                     try self.bookmarks.render(&surface, self, .{ .remotes = false }, .{});
                 } else if (std.meta.eql(self.state, .{ .git = .fetch }) or std.meta.eql(self.state, .{ .git = .fetch_search })) {

@@ -2459,6 +2459,8 @@ pub const App = struct {
             colored_gutter_cursor: bool = false,
             input_text: bool = false,
             show_help: bool = false,
+            bookmarks_enabled: bool = false,
+            bookmark_search_enabled: bool = false,
         } = switch (self.state) {
             .new, .squash, .abandon => .{
                 .colored_gutter_cursor = true,
@@ -2472,13 +2474,17 @@ pub const App = struct {
             },
             .bookmark => |state| switch (state) {
                 .create => .{
+                    .bookmarks_enabled = true,
                     .input_text = true,
                     .show_help = true,
                 },
                 .view => .{
+                    .bookmarks_enabled = true,
                     .show_help = true,
                 },
                 .search => .{
+                    .bookmarks_enabled = true,
+                    .bookmark_search_enabled = true,
                     .input_text = true,
                     .show_help = true,
                 },
@@ -2488,16 +2494,22 @@ pub const App = struct {
                     .show_help = true,
                 },
                 .fetch => .{
+                    .bookmarks_enabled = true,
                     .show_help = true,
                 },
                 .push => .{
+                    .bookmarks_enabled = true,
                     .show_help = true,
                 },
                 .fetch_search => .{
+                    .bookmarks_enabled = true,
+                    .bookmark_search_enabled = true,
                     .input_text = true,
                     .show_help = true,
                 },
                 .push_search => .{
+                    .bookmarks_enabled = true,
+                    .bookmark_search_enabled = true,
                     .input_text = true,
                     .show_help = true,
                 },
@@ -3369,34 +3381,30 @@ pub const App = struct {
                 .split_y(1, false).bottom
                 .border_sub(.{ .x = 2 });
 
-            if (self.state == .bookmark or
-                std.meta.eql(self.state, .{ .git = .push }) or
-                std.meta.eql(self.state, .{ .git = .fetch }))
-            {
+            if (tropes.bookmarks_enabled) {
                 const popup_size = Vec2{ .x = 60, .y = 30 };
                 const origin = max_popup_region.origin.add(max_popup_region.size.mul(0.5)).sub(popup_size.mul(0.5));
                 const region = max_popup_region.clamp(.{ .origin = origin, .size = popup_size });
                 var surface = try Surface.init(&self.screen, 1, .{ .origin = region.origin, .size = region.size });
                 defer self._register_mouse_region(.bookmarks, &surface);
 
+                if (tropes.bookmark_search_enabled or self.text_input.text.items.len > 0) {
+                    var input_box = try surface.split_y(3, .none);
+                    std.mem.swap(@TypeOf(surface), &surface, &input_box);
+
+                    try input_box.clear();
+                    try input_box.draw_border(symbols.thin.rounded);
+
+                    try input_box.draw_border_heading(" Search ");
+
+                    try self.text_input.draw(&input_box);
+                }
+
                 if (self.state == .bookmark) {
-                    if (self.state.bookmark == .search or self.text_input.text.items.len > 0) {
-                        var input_box = try surface.split_y(3, .none);
-                        std.mem.swap(@TypeOf(surface), &surface, &input_box);
-
-                        try input_box.clear();
-                        try input_box.draw_border(symbols.thin.rounded);
-
-                        try input_box.draw_border_heading(" Search ");
-
-                        try self.text_input.draw(&input_box);
-                        try self.bookmarks.render(&surface, self, .{}, .{});
-                    } else {
-                        try self.bookmarks.render(&surface, self, .{}, .{});
-                    }
-                } else if (std.meta.eql(self.state, .{ .git = .push })) {
+                    try self.bookmarks.render(&surface, self, .{}, .{});
+                } else if (std.meta.eql(self.state, .{ .git = .push }) or std.meta.eql(self.state, .{ .git = .push_search })) {
                     try self.bookmarks.render(&surface, self, .{ .remotes = false }, .{});
-                } else if (std.meta.eql(self.state, .{ .git = .fetch })) {
+                } else if (std.meta.eql(self.state, .{ .git = .fetch }) or std.meta.eql(self.state, .{ .git = .fetch_search })) {
                     try self.bookmarks.render(&surface, self, .{ .remotes = false }, .{ .targets = false });
                 } else unreachable;
             }

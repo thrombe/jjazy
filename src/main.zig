@@ -263,15 +263,15 @@ pub const TextInput = struct {
         }
     }
 
-    fn draw(self: *const @This(), surf: *Surface) !void {
+    fn draw(self: *const @This(), surf: *Surface, cursor: bool) !void {
         try surf.draw_buf(self.text.items[0..self.cursor]);
-        try surf.apply_style(.invert);
+        if (cursor) try surf.apply_style(.invert);
         if (self.text.items.len > self.cursor) {
             try surf.draw_buf(self.text.items[self.cursor..][0..1]);
         } else {
             try surf.draw_buf(" ");
         }
-        try surf.apply_style(.reset);
+        if (cursor) try surf.apply_style(.reset);
         if (self.text.items.len > self.cursor + 1) {
             try surf.draw_buf(self.text.items[self.cursor + 1 ..]);
         }
@@ -3397,7 +3397,7 @@ pub const App = struct {
 
                     try input_box.draw_border_heading(" Search ");
 
-                    try self.text_input.draw(&input_box);
+                    try self.text_input.draw(&input_box, tropes.bookmark_search_enabled);
                 }
 
                 if (self.state == .bookmark) {
@@ -3424,7 +3424,7 @@ pub const App = struct {
                     try input_box.draw_border_heading(" Enter new bookmark name ");
                 }
 
-                try self.text_input.draw(&input_box);
+                try self.text_input.draw(&input_box, true);
             }
 
             {

@@ -184,11 +184,14 @@ const Surface = struct {
 };
 
 pub const TextInput = struct {
+    hash: u64 = 0,
     cursor: u32 = 0,
     text: std.ArrayList(u8),
 
     fn init(alloc: std.mem.Allocator) @This() {
-        return .{ .text = .init(alloc) };
+        var self = @This(){ .text = .init(alloc) };
+        self.update_hash();
+        return self;
     }
 
     fn deinit(self: *@This()) void {
@@ -196,8 +199,10 @@ pub const TextInput = struct {
     }
 
     fn reset(self: *@This()) void {
+        self.hash = 0;
         self.cursor = 0;
         self.text.clearRetainingCapacity();
+        self.update_hash();
     }
 
     fn left(self: *@This()) void {
@@ -233,7 +238,16 @@ pub const TextInput = struct {
         }
     }
 
+    fn update_hash(self: *@This()) void {
+        var hasher = std.hash.Wyhash.init(0);
+        // we don't want it to be 0 ever
+        hasher.update(&.{42});
+        hasher.update(self.text.items);
+        self.hash = hasher.final();
+    }
+
     fn write(self: *@This(), byte: u8) !void {
+        defer self.update_hash();
         try self.text.insert(self.cursor, byte);
         self.cursor += 1;
     }
@@ -255,6 +269,7 @@ pub const TextInput = struct {
     }
 
     fn back(self: *@This()) ?u8 {
+        defer self.update_hash();
         if (self.text.items.len >= self.cursor and self.cursor > 0) {
             defer self.cursor -= 1;
             return self.text.orderedRemove(self.cursor - 1);
@@ -539,6 +554,8 @@ const BookmarkSlate = struct {
     // ArrayXar prevents memory wastage through realloc in arena allocators
     bookmarks: std.StringHashMap(utils_mod.ArrayXar(jj_mod.Bookmark.Parsed, 2)),
     selected_bookmark: ?jj_mod.Bookmark.Parsed = null,
+
+    input_hash: u64 = 0,
     bookmark_searcher: search_mod.SublimeSearcher,
     bookmark_search_collector: search_mod.SearchCollector,
     searched_bookmarks: []const search_mod.SearchCollector.Match = &.{},
@@ -572,7 +589,9 @@ const BookmarkSlate = struct {
         self.selected_bookmark = null;
         self.y = 0;
         self.buf = buf;
+        self.input_hash = 0;
         try self._update_cache(app);
+        try self.maybe_update_search(app);
     }
 
     fn _update_cache(self: *@This(), app: *App) !void {
@@ -599,6 +618,17 @@ const BookmarkSlate = struct {
         }
     }
 
+    fn maybe_update_search(self: *@This(), app: *App) !void {
+        if (app.text_input.hash == self.input_hash) return;
+        self.input_hash = app.text_input.hash;
+        self.searched_bookmarks = try self.bookmark_search_collector.reorder_strings(
+            self.bookmarks_order.items,
+            app.text_input.text.items,
+            &self.bookmark_searcher,
+            .insensitive,
+        );
+    }
+
     fn reset(self: *@This()) void {
         self.y = 0;
         self.it.reset(self.buf);
@@ -616,13 +646,7 @@ const BookmarkSlate = struct {
     }, show: struct {
         targets: bool = true,
     }) !void {
-        self.searched_bookmarks = try self.bookmark_search_collector.reorder_strings(
-            self.bookmarks_order.items,
-            app.text_input.text.items,
-            &self.bookmark_searcher,
-            .insensitive,
-        );
-
+        try self.maybe_update_search(app);
         try surface.clear();
 
         try surface.apply_style(.bold);

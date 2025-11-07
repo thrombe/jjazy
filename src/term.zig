@@ -895,8 +895,10 @@ pub const TermInputIterator = struct {
 
         const c = self.pop() orelse return null;
         switch (c) {
-            0x1B => switch (try self.expect()) {
+            0x1B => switch (try self.peek_expect()) {
                 '[' => {
+                    _ = self.pop();
+
                     const unicode_keycode = self.param() orelse {
                         // alacritty sends legacy codes even when using kitty :/
                         switch (try self.expect()) {
@@ -1016,25 +1018,27 @@ pub const TermInputIterator = struct {
                         } else return error.UnexpectedByte,
                     }
                 },
-                else => {
-                    // std.log.debug("non kitty kb event: {d}", .{c});
+                else => |c2| {
+                    std.log.debug("non kitty kb event: {d} {d}", .{ c, c2 });
 
-                    switch (c) {
-                        // TODO: pressing escape in non-kitty sends 0x1b once. which is kinda ignored by the input handling code.
-                        //   this line only executes when escape is pressed twice
-                        //   - look up how helix does this
-                        0x1B => {
-                            // OOF: zellij alt + backspace sends (27 0x1b) twice
-                            if (self.features.kitty_kb and self.emu.zellij) {
-                                return Input{ .functional = .{ .key = .backspace, .mod = .{ .alt = true } } };
-                            } else {
-                                return Input{ .functional = .{ .key = .escape } };
-                            }
+                    switch (c2) {
+                        // OOF: zellij alt + backspace sends (27 127)
+                        127 => {
+                            _ = self.pop();
+                            return Input{ .functional = .{ .key = .backspace, .mod = .{ .alt = true } } };
                         },
-                        else => {
-                            std.log.debug("unexpected byte: {d}", .{c});
-                            return error.UnsupportedEscapeCode;
+
+                        // NOTE: this is just a hack to parse single 0x1B .escape bytes.
+                        // we insert an extra null byte from the input handling side when we think it's actually .escape
+                        // we need the extra byte in cases where user presses .escape, and no extra byte.
+                        // if that happens, we can never be sure if next byte is '[' or whatever.
+                        0x00 => {
+                            _ = self.pop();
+                            return .{ .functional = .{ .key = .escape } };
                         },
+
+                        // c2 is not popped, but we accept the other byte as escape
+                        else => return .{ .functional = .{ .key = .escape } },
                     }
                 },
             },
@@ -1068,6 +1072,16 @@ pub const TermInputIterator = struct {
 
     fn pop(self: *@This()) ?u8 {
         return self.input.pop_front();
+    }
+
+    fn peek(self: *@This()) ?u8 {
+        const bak = self.*;
+        defer self.* = bak;
+        return self.pop();
+    }
+
+    fn peek_expect(self: *@This()) !u8 {
+        return self.peek() orelse error.ExpectedByte;
     }
 
     fn expect(self: *@This()) !u8 {

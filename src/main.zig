@@ -1677,91 +1677,12 @@ pub const App = struct {
         self.input_loop() catch |e| utils_mod.dump_error(e);
     }
 
-    // poll + /dev/tty is broken on macos
-    // - [Add `select()` to `std` for darwin. · Issue #16382 · ziglang/zig](https://github.com/ziglang/zig/issues/16382)
-    // - [macOS doesn't like polling /dev/tty](https://nathancraddock.com/blog/macos-dev-tty-polling/)
-    // const input_loop = if (builtin.os.tag.isDarwin()) @This().input_loop_darwin else @This().input_loop_linux;
-    const input_loop = @This().input_loop_darwin;
-    // const input_loop = @This().input_loop_linux;
-
-    fn input_loop_darwin(self: *@This()) !void {
-        const c = @cImport({
-            @cInclude("unistd.h");
-            @cInclude("fcntl.h");
-            @cInclude("sys/select.h");
-            @cInclude("errno.h");
-        });
-        const tty_fd = self.screen.term.tty.handle;
-        const fd_arr_type = if (builtin.os.tag.isDarwin()) c_int else c_long;
-        const fd_field_name = if (builtin.os.tag.isDarwin()) "fds_bits" else "__fds_bits";
-
+    fn input_loop(self: *@This()) !void {
         var waiting_for_input_after_escape: bool = false;
         while (true) {
             if (self.quit_input_loop.check()) break;
 
-            // prepare the read fd_set
-            var readfds: c.fd_set = std.mem.zeroes(c.fd_set);
-            const fd_index: usize = @intCast(@divFloor(tty_fd, (8 * @sizeOf(fd_arr_type))));
-            const fd_bid = @as(fd_arr_type, (@as(fd_arr_type, 1) << @intCast(@rem(tty_fd, (8 * @sizeOf(fd_arr_type))))));
-            @field(readfds, fd_field_name)[fd_index] |= fd_bid;
-
-            // timeout of 20ms
-            var tv: c.struct_timeval = .{
-                .tv_sec = 0,
-                .tv_usec = 20 * 1000,
-            };
-
-            const nfds = tty_fd + 1;
-            const sel = c.select(nfds, &readfds, null, null, &tv);
-
-            if (sel < 0) {
-                const err = std.posix.errno(sel);
-                if (err == .INTR) {
-                    // interrupted by signal, just continue
-                    continue;
-                } else {
-                    return error.SelectError;
-                }
-            } else {
-                // sel == 0, timeout, nothing to read
-                // sel > 0, so some FD is ready
-                const has_input = @field(readfds, fd_field_name)[fd_index] & fd_bid != 0;
-
-                if (has_input) {
-                    var buf = std.mem.zeroes([256]u8);
-                    const n = try self.screen.term.tty.read(&buf);
-                    for (buf[0..n]) |char| try self.input_iterator.input.push_back(char);
-
-                    waiting_for_input_after_escape = buf[n - 1] == 0x1b;
-                } else if (waiting_for_input_after_escape) {
-                    waiting_for_input_after_escape = false;
-
-                    // NOTE:(1007) we push extra null byte just so we can recognise the last 0x1B byte as .escape without waiting for more input
-                    try self.input_iterator.input.push_back(0x00);
-                } else continue;
-
-                while (self.input_iterator.next() catch |e| switch (e) {
-                    error.ExpectedByte => null,
-                    else => {
-                        try self.events.send(.{ .err = e });
-                        return;
-                    },
-                }) |input| {
-                    try self.events.send(.{ .input = input });
-                }
-            }
-        }
-    }
-
-    fn input_loop_linux(self: *@This()) !void {
-        var waiting_for_input_after_escape: bool = false;
-        while (true) {
-            if (self.quit_input_loop.check()) break;
-
-            var fds = [1]std.posix.pollfd{.{ .fd = self.screen.term.tty.handle, .events = std.posix.POLL.IN, .revents = 0 }};
-            const has_input = try std.posix.poll(&fds, 20) > 0;
-
-            if (has_input) {
+            if (try self.has_input(20)) {
                 var buf = std.mem.zeroes([256]u8);
                 const n = try self.screen.term.tty.read(&buf);
                 for (buf[0..n]) |c| try self.input_iterator.input.push_back(c);
@@ -1784,6 +1705,61 @@ pub const App = struct {
                 try self.events.send(.{ .input = input });
             }
         }
+    }
+
+    // poll + /dev/tty is broken on macos
+    // - [Add `select()` to `std` for darwin. · Issue #16382 · ziglang/zig](https://github.com/ziglang/zig/issues/16382)
+    // - [macOS doesn't like polling /dev/tty](https://nathancraddock.com/blog/macos-dev-tty-polling/)
+    const has_input = if (builtin.os.tag.isDarwin()) @This().has_input_darwin else @This().has_input_linux;
+    // const has_input = @This().has_input_darwin;
+    // const has_input = @This().has_input_linux;
+
+    fn has_input_darwin(self: *@This(), wait_ms: u32) !bool {
+        const c = @cImport({
+            @cInclude("unistd.h");
+            @cInclude("fcntl.h");
+            @cInclude("sys/select.h");
+            @cInclude("errno.h");
+        });
+        const tty_fd = self.screen.term.tty.handle;
+        const fd_arr_type = if (builtin.os.tag.isDarwin()) c_int else c_long;
+        const fd_field_name = if (builtin.os.tag.isDarwin()) "fds_bits" else "__fds_bits";
+
+        // prepare the read fd_set
+        var readfds: c.fd_set = std.mem.zeroes(c.fd_set);
+        const fd_index: usize = @intCast(@divFloor(tty_fd, (8 * @sizeOf(fd_arr_type))));
+        const fd_bid = @as(fd_arr_type, (@as(fd_arr_type, 1) << @intCast(@rem(tty_fd, (8 * @sizeOf(fd_arr_type))))));
+        @field(readfds, fd_field_name)[fd_index] |= fd_bid;
+
+        // timeout of 20ms
+        var tv: c.struct_timeval = .{
+            .tv_sec = 0,
+            .tv_usec = @as(c_long, @intCast(wait_ms)) * 1000,
+        };
+
+        const nfds = tty_fd + 1;
+        const sel = c.select(nfds, &readfds, null, null, &tv);
+
+        if (sel < 0) {
+            const err = std.posix.errno(sel);
+            if (err == .INTR) {
+                // interrupted by signal, just continue
+                return false;
+            } else {
+                return error.SelectError;
+            }
+        } else if (sel == 0) {
+            // sel == 0, timeout, nothing to read
+            return false;
+        } else {
+            // sel > 0, so some FD is ready
+            return @field(readfds, fd_field_name)[fd_index] & fd_bid != 0;
+        }
+    }
+
+    fn has_input_linux(self: *@This(), wait_ms: u32) !bool {
+        var fds = [1]std.posix.pollfd{.{ .fd = self.screen.term.tty.handle, .events = std.posix.POLL.IN, .revents = 0 }};
+        return try std.posix.poll(&fds, @intCast(wait_ms)) > 0;
     }
 
     fn restore_terminal_for_command(self: *@This()) !void {

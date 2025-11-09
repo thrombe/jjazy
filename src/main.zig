@@ -542,6 +542,59 @@ const DiffSlate = struct {
     }
 };
 
+const OpShowSlate = struct {
+    alloc: std.mem.Allocator,
+    opshowcache: OpShowCache,
+
+    const Hash = jj_mod.Operation.Hash;
+    const CachedDiff = struct {
+        y: i32 = 0,
+        len: i32 = 0,
+        diff: ?[]const u8 = null,
+    };
+    const OpShowCache = std.HashMap(Hash, CachedDiff, struct {
+        pub fn hash(self: @This(), s: Hash) u64 {
+            _ = self;
+            return std.hash_map.StringContext.hash(.{}, s[0..]);
+        }
+        pub fn eql(self: @This(), a: Hash, b: Hash) bool {
+            _ = self;
+            return std.hash_map.StringContext.eql(.{}, a[0..], b[0..]);
+        }
+    }, std.hash_map.default_max_load_percentage);
+
+    fn deinit(self: *@This()) void {
+        var it = self.opshowcache.iterator();
+        while (it.next()) |e| if (e.value_ptr.diff) |diff| {
+            self.alloc.free(diff);
+        };
+        self.opshowcache.deinit();
+    }
+
+    fn render(self: *@This(), surface: *Surface, app: *App, focused: jj_mod.Operation) !void {
+        _ = app;
+        if (self.opshowcache.getPtr(focused.id)) |cdiff| if (cdiff.diff) |diff| {
+            cdiff.y = @max(0, cdiff.y);
+            // +2 just so it is visually obvious in the UI that the diff has ended
+            cdiff.y = @min(cdiff.y, cdiff.len - surface.region.size.y + 2);
+
+            var skip_y = cdiff.y;
+            var it = utils_mod.LineIterator.init(diff);
+            while (it.next()) |line| {
+                if (surface.y < skip_y) {
+                    skip_y -= 1;
+                    continue;
+                }
+                try surface.draw_bufln(line);
+
+                if (surface.is_full()) break;
+            }
+        } else {
+            try surface.draw_buf(" loading ... ");
+        };
+    }
+};
+
 const BookmarkSlate = struct {
     alloc: std.mem.Allocator,
     buf: []const u8,
@@ -1324,6 +1377,7 @@ pub const Event = union(enum) {
     rerender,
     scroll_update,
     diff_update: jj_mod.Change,
+    opshow_update: jj_mod.Operation,
     op_update,
     quit,
     input: term_mod.TermInputIterator.Input,
@@ -1521,6 +1575,7 @@ pub const App = struct {
     log: LogSlate,
     oplog: OpLogSlate,
     diff: DiffSlate,
+    opshow: OpShowSlate,
     bookmarks: BookmarkSlate,
     help: HelpSlate,
     toaster: Toaster,
@@ -1612,6 +1667,10 @@ pub const App = struct {
                 .alloc = alloc,
                 .diffcache = .init(alloc),
             },
+            .opshow = .{
+                .alloc = alloc,
+                .opshowcache = .init(alloc),
+            },
             .bookmarks = .init(alloc),
             .help = help,
             .toaster = .{
@@ -1631,6 +1690,7 @@ pub const App = struct {
         }
 
         try self.diff.diffcache.put(self.log.focused_change.hash, .{ .diff = &.{} });
+        try self.opshow.opshowcache.put(self.oplog.focused_op.id, .{ .diff = &.{} });
 
         self.input_thread = input_thread;
         app = self;
@@ -1643,6 +1703,7 @@ pub const App = struct {
         defer self.log.deinit();
         defer self.oplog.deinit();
         defer self.diff.deinit();
+        defer self.opshow.deinit();
         defer self.bookmarks.deinit();
         defer self.help.deinit();
         defer self.toaster.deinit();
@@ -1914,6 +1975,65 @@ pub const App = struct {
                 .status,
                 .{ .scroll = .{ .target = .log, .dir = .down } },
             );
+        }
+        {
+            defer map.reset();
+            try map.for_states(&[_]State{
+                .oplog,
+            });
+            try map.add_many(
+                &[_]Key{
+                    .{ .key = .{ .key = 'j', .action = .press } },
+                    .{ .key = .{ .key = 'j', .action = .repeat } },
+                    .{ .functional = .{ .key = .down, .action = .press } },
+                    .{ .functional = .{ .key = .down, .action = .repeat } },
+                },
+                null,
+                .{ .scroll = .{ .target = .oplog, .dir = .down } },
+            );
+            try map.add_many(
+                &[_]Key{
+                    .{ .key = .{ .key = 'k', .action = .press } },
+                    .{ .key = .{ .key = 'k', .action = .repeat } },
+                    .{ .functional = .{ .key = .up, .action = .press } },
+                    .{ .functional = .{ .key = .up, .action = .repeat } },
+                },
+                null,
+                .{ .scroll = .{ .target = .oplog, .dir = .up } },
+            );
+
+            try map.add_many(
+                &[_]Key{
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .press } },
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .repeat } },
+                },
+                .status,
+                .{ .scroll = .{ .target = .oplog, .dir = .up } },
+            );
+            try map.add_many(
+                &[_]Key{
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .press } },
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .repeat } },
+                },
+                .status,
+                .{ .scroll = .{ .target = .oplog, .dir = .down } },
+            );
+        }
+        {
+            defer map.reset();
+            try map.for_states(&[_]State{
+                .log,
+                .{ .rebase = .onto },
+                .{ .rebase = .after },
+                .{ .rebase = .before },
+                .{ .duplicate = .onto },
+                .{ .duplicate = .after },
+                .{ .duplicate = .before },
+                .new,
+                .squash,
+                .abandon,
+                .oplog,
+            });
 
             try map.add_many(
                 &[_]Key{
@@ -1963,49 +2083,6 @@ pub const App = struct {
                 },
                 null,
                 .{ .resize_master = .right },
-            );
-        }
-        {
-            defer map.reset();
-            try map.for_states(&[_]State{
-                .oplog,
-            });
-            try map.add_many(
-                &[_]Key{
-                    .{ .key = .{ .key = 'j', .action = .press } },
-                    .{ .key = .{ .key = 'j', .action = .repeat } },
-                    .{ .functional = .{ .key = .down, .action = .press } },
-                    .{ .functional = .{ .key = .down, .action = .repeat } },
-                },
-                null,
-                .{ .scroll = .{ .target = .oplog, .dir = .down } },
-            );
-            try map.add_many(
-                &[_]Key{
-                    .{ .key = .{ .key = 'k', .action = .press } },
-                    .{ .key = .{ .key = 'k', .action = .repeat } },
-                    .{ .functional = .{ .key = .up, .action = .press } },
-                    .{ .functional = .{ .key = .up, .action = .repeat } },
-                },
-                null,
-                .{ .scroll = .{ .target = .oplog, .dir = .up } },
-            );
-
-            try map.add_many(
-                &[_]Key{
-                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .press } },
-                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .repeat } },
-                },
-                .status,
-                .{ .scroll = .{ .target = .oplog, .dir = .up } },
-            );
-            try map.add_many(
-                &[_]Key{
-                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .press } },
-                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .repeat } },
-                },
-                .status,
-                .{ .scroll = .{ .target = .oplog, .dir = .down } },
             );
         }
         {
@@ -2563,13 +2640,46 @@ pub const App = struct {
                     try self.sleeper.delay_event(20, .{ .diff_update = self.log.focused_change });
                 }
             },
+            .op_update => {
+                self.oplog.ops.reset(self.oplog.oplog);
+                var i: i32 = 0;
+                while (try self.oplog.ops.next()) |parsed| {
+                    const op = jj_mod.Operation.from_parsed(&parsed);
+
+                    // const n: i32 = 3;
+                    const n: i32 = 0;
+                    if (self.oplog.y == i) {
+                        self.oplog.focused_op = op;
+                    } else if (@abs(self.log.y - i) < n) {
+                        if (self.opshow.opshowcache.get(op.id) == null) {
+                            try self.opshow.opshowcache.put(op.id, .{});
+                            try self.jj.requests.send(.{ .opshow = op });
+                        }
+                    } else if (self.oplog.y + n < i) {
+                        break;
+                    }
+                    i += 1;
+                }
+
+                if (self.opshow.opshowcache.get(self.oplog.focused_op.id)) |_| {
+                    try self._send_event(.rerender);
+                } else {
+                    // debounce op show requests
+                    try self.sleeper.delay_event(20, .{ .opshow_update = self.oplog.focused_op });
+                }
+            },
             .diff_update => |change| {
                 if (std.mem.eql(u8, change.hash[0..], self.log.focused_change.hash[0..])) {
                     try self.diff.diffcache.put(change.hash, .{});
                     try self.jj.requests.send(.{ .diff = change });
                 }
             },
-            .op_update => try self.request_jj_op(),
+            .opshow_update => |op| {
+                if (std.mem.eql(u8, op.id[0..], self.oplog.focused_op.id[0..])) {
+                    try self.opshow.opshowcache.put(op.id, .{});
+                    try self.jj.requests.send(.{ .opshow = op });
+                }
+            },
             .toast => |toast| {
                 const id = try self.toaster.add(toast);
                 try self.sleeper.delay_event(500, .{ .pop_toast = id });
@@ -2744,11 +2854,23 @@ pub const App = struct {
                         try self._send_event(.op_update);
                     },
                     .diff => {
-                        if (self.diff.diffcache.getPtr(self.log.focused_change.hash)) |diff| {
-                            switch (target.dir) {
-                                .up => diff.y -= 10,
-                                .down => diff.y += 10,
-                            }
+                        switch (self.state) {
+                            .oplog => {
+                                if (self.opshow.opshowcache.getPtr(self.oplog.focused_op.id)) |opshow| {
+                                    switch (target.dir) {
+                                        .up => opshow.y -= 10,
+                                        .down => opshow.y += 10,
+                                    }
+                                }
+                            },
+                            else => {
+                                if (self.diff.diffcache.getPtr(self.log.focused_change.hash)) |diff| {
+                                    switch (target.dir) {
+                                        .up => diff.y -= 10,
+                                        .down => diff.y += 10,
+                                    }
+                                }
+                            },
                         }
                     },
                     .bookmarks => {
@@ -3208,10 +3330,26 @@ pub const App = struct {
                             self.alloc.free(self.oplog.oplog);
                             self.oplog.oplog = buf;
                             self.oplog.ops.reset(buf);
-                            try self._send_event(.rerender);
+                            try self._send_event(.op_update);
                         },
                         .err => |buf| try self._toast(.{ .err = error.JJOpLogFailed }, buf),
                     }
+
+                    try self._send_event(.rerender);
+                },
+                .opshow => |req| {
+                    switch (res.res) {
+                        .ok => |buf| {
+                            self.opshow.opshowcache.getPtr(req.id).?.diff = buf;
+
+                            var it = utils_mod.LineIterator.init(buf);
+                            var len: i32 = 0;
+                            while (it.next()) |_| len += 1;
+                            self.opshow.opshowcache.getPtr(req.id).?.len = len;
+                        },
+                        .err => |buf| try self._toast(.{ .err = error.JJOpShowFailed }, buf),
+                    }
+                    try self._send_event(.rerender);
                 },
                 .evolog => |req| {
                     _ = req;
@@ -3254,6 +3392,9 @@ pub const App = struct {
                     hasher.update(&std.mem.toBytes(diff.y));
                 }
                 hasher.update(&std.mem.toBytes(self.oplog.y));
+                if (self.opshow.opshowcache.getPtr(self.oplog.focused_op.id)) |opshow| {
+                    hasher.update(&std.mem.toBytes(opshow.y));
+                }
                 var it = self.log.selected_changes.iterator();
                 while (it.next()) |e| {
                     hasher.update(&e.key_ptr.id);
@@ -3289,23 +3430,6 @@ pub const App = struct {
             .depth = surface.depth,
             .region = surface.region,
         }) catch |e| utils_mod.dump_error(e);
-    }
-
-    fn request_jj_op(self: *@This()) !void {
-        self.oplog.ops.reset(self.oplog.oplog);
-        var i: i32 = 0;
-        while (try self.oplog.ops.next()) |parsed| {
-            const op = jj_mod.Operation.from_parsed(&parsed);
-
-            if (self.oplog.y == i) {
-                self.oplog.focused_op = op;
-            } else if (self.log.y < i) {
-                break;
-            }
-            i += 1;
-        }
-
-        // TODO: jj op show in diff area + cache for it
     }
 
     fn render_status_bar(self: *@This(), surface: *Surface) !void {
@@ -3369,10 +3493,15 @@ pub const App = struct {
             defer self._register_mouse_region(.diff, &diffs);
 
             switch (self.state) {
-                .oplog => try self.oplog.render(&status, self),
-                else => try self.log.render(&status, self, self.state, tropes),
+                .oplog => {
+                    try self.oplog.render(&status, self);
+                    try self.opshow.render(&diffs, self, self.oplog.focused_op);
+                },
+                else => {
+                    try self.log.render(&status, self, self.state, tropes);
+                    try self.diff.render(&diffs, self, self.log.focused_change);
+                },
             }
-            try self.diff.render(&diffs, self, self.log.focused_change);
 
             const max_popup_region = self.screen.term.screen
                 .split_y(-2, false).top

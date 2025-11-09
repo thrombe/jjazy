@@ -67,6 +67,7 @@ pub const JujutsuServer = struct {
         oplog,
         bookmark,
         diff: Change,
+        opshow: Operation,
         evolog: Change,
     };
 
@@ -202,6 +203,24 @@ pub const JujutsuServer = struct {
                     try output.appendSlice(diff);
 
                     try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = try output.toOwnedSlice() } } });
+                },
+                .opshow => |op| {
+                    const stat = self.jjcall(&[_][]const u8{
+                        "jj",
+                        "--color",
+                        "always",
+                        "op",
+                        "show",
+                        "--stat",
+                        "--tool",
+                        "delta",
+                        op.id[0..],
+                    }) catch |e| {
+                        utils_mod.dump_error(e);
+                        continue;
+                    };
+
+                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = stat } } });
                 },
                 .bookmark => {
                     const res = self.jjcall(&[_][]const u8{

@@ -214,7 +214,7 @@ pub const JujutsuServer = struct {
                         "--stat",
                         "--tool",
                         "delta",
-                        op.id[0..],
+                        op.hash[0..],
                     }) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
@@ -468,7 +468,7 @@ pub const Change = struct {
 };
 
 pub const Operation = struct {
-    id: Hash = [1]u8{'0'} ** 12,
+    hash: Hash = [1]u8{'0'} ** 12,
 
     pub const Hash = [12]u8;
 
@@ -480,11 +480,11 @@ pub const Operation = struct {
 
     pub fn from_parsed(parsed: *const Parsed) @This() {
         var self: @This() = .{};
-        @memcpy(self.id[0..], parsed.parsed.id[0..self.id.len]);
+        @memcpy(self.hash[0..], parsed.parsed.id[0..self.hash.len]);
         return self;
     }
 
     pub fn is_root(self: *@This()) bool {
-        return std.mem.allEqual(u8, self.id, '0');
+        return std.mem.allEqual(u8, self.hash, '0');
     }
 };

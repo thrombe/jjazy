@@ -489,111 +489,60 @@ const OpLogSlate = struct {
     }
 };
 
-const DiffSlate = struct {
-    alloc: std.mem.Allocator,
-    diffcache: DiffCache,
+fn DiffSlate(Op: type) type {
+    return struct {
+        alloc: std.mem.Allocator,
+        diffcache: DiffCache,
 
-    const Hash = jj_mod.Change.Hash;
-    const CachedDiff = struct {
-        y: i32 = 0,
-        len: i32 = 0,
-        diff: ?[]const u8 = null,
-    };
-    const DiffCache = std.HashMap(Hash, CachedDiff, struct {
-        pub fn hash(self: @This(), s: Hash) u64 {
-            _ = self;
-            return std.hash_map.StringContext.hash(.{}, s[0..]);
-        }
-        pub fn eql(self: @This(), a: Hash, b: Hash) bool {
-            _ = self;
-            return std.hash_map.StringContext.eql(.{}, a[0..], b[0..]);
-        }
-    }, std.hash_map.default_max_load_percentage);
-
-    fn deinit(self: *@This()) void {
-        var it = self.diffcache.iterator();
-        while (it.next()) |e| if (e.value_ptr.diff) |diff| {
-            self.alloc.free(diff);
+        const Hash = Op.Hash;
+        const CachedDiff = struct {
+            y: i32 = 0,
+            len: i32 = 0,
+            diff: ?[]const u8 = null,
         };
-        self.diffcache.deinit();
-    }
-
-    fn render(self: *@This(), surface: *Surface, app: *App, focused: jj_mod.Change) !void {
-        _ = app;
-        if (self.diffcache.getPtr(focused.hash)) |cdiff| if (cdiff.diff) |diff| {
-            cdiff.y = @max(0, cdiff.y);
-            // +2 just so it is visually obvious in the UI that the diff has ended
-            cdiff.y = @min(cdiff.y, cdiff.len - surface.region.size.y + 2);
-
-            var skip_y = cdiff.y;
-            var it = utils_mod.LineIterator.init(diff);
-            while (it.next()) |line| {
-                if (surface.y < skip_y) {
-                    skip_y -= 1;
-                    continue;
-                }
-                try surface.draw_bufln(line);
-
-                if (surface.is_full()) break;
+        const DiffCache = std.HashMap(Hash, CachedDiff, struct {
+            pub fn hash(self: @This(), s: Hash) u64 {
+                _ = self;
+                return std.hash_map.StringContext.hash(.{}, s[0..]);
             }
-        } else {
-            try surface.draw_buf(" loading ... ");
-        };
-    }
-};
-
-const OpShowSlate = struct {
-    alloc: std.mem.Allocator,
-    opshowcache: OpShowCache,
-
-    const Hash = jj_mod.Operation.Hash;
-    const CachedDiff = struct {
-        y: i32 = 0,
-        len: i32 = 0,
-        diff: ?[]const u8 = null,
-    };
-    const OpShowCache = std.HashMap(Hash, CachedDiff, struct {
-        pub fn hash(self: @This(), s: Hash) u64 {
-            _ = self;
-            return std.hash_map.StringContext.hash(.{}, s[0..]);
-        }
-        pub fn eql(self: @This(), a: Hash, b: Hash) bool {
-            _ = self;
-            return std.hash_map.StringContext.eql(.{}, a[0..], b[0..]);
-        }
-    }, std.hash_map.default_max_load_percentage);
-
-    fn deinit(self: *@This()) void {
-        var it = self.opshowcache.iterator();
-        while (it.next()) |e| if (e.value_ptr.diff) |diff| {
-            self.alloc.free(diff);
-        };
-        self.opshowcache.deinit();
-    }
-
-    fn render(self: *@This(), surface: *Surface, app: *App, focused: jj_mod.Operation) !void {
-        _ = app;
-        if (self.opshowcache.getPtr(focused.id)) |cdiff| if (cdiff.diff) |diff| {
-            cdiff.y = @max(0, cdiff.y);
-            // +2 just so it is visually obvious in the UI that the diff has ended
-            cdiff.y = @min(cdiff.y, cdiff.len - surface.region.size.y + 2);
-
-            var skip_y = cdiff.y;
-            var it = utils_mod.LineIterator.init(diff);
-            while (it.next()) |line| {
-                if (surface.y < skip_y) {
-                    skip_y -= 1;
-                    continue;
-                }
-                try surface.draw_bufln(line);
-
-                if (surface.is_full()) break;
+            pub fn eql(self: @This(), a: Hash, b: Hash) bool {
+                _ = self;
+                return std.hash_map.StringContext.eql(.{}, a[0..], b[0..]);
             }
-        } else {
-            try surface.draw_buf(" loading ... ");
-        };
-    }
-};
+        }, std.hash_map.default_max_load_percentage);
+
+        fn deinit(self: *@This()) void {
+            var it = self.diffcache.iterator();
+            while (it.next()) |e| if (e.value_ptr.diff) |diff| {
+                self.alloc.free(diff);
+            };
+            self.diffcache.deinit();
+        }
+
+        fn render(self: *@This(), surface: *Surface, app: *App, focused: Op) !void {
+            _ = app;
+            if (self.diffcache.getPtr(focused.hash)) |cdiff| if (cdiff.diff) |diff| {
+                cdiff.y = @max(0, cdiff.y);
+                // +2 just so it is visually obvious in the UI that the diff has ended
+                cdiff.y = @min(cdiff.y, cdiff.len - surface.region.size.y + 2);
+
+                var skip_y = cdiff.y;
+                var it = utils_mod.LineIterator.init(diff);
+                while (it.next()) |line| {
+                    if (surface.y < skip_y) {
+                        skip_y -= 1;
+                        continue;
+                    }
+                    try surface.draw_bufln(line);
+
+                    if (surface.is_full()) break;
+                }
+            } else {
+                try surface.draw_buf(" loading ... ");
+            };
+        }
+    };
+}
 
 const BookmarkSlate = struct {
     alloc: std.mem.Allocator,
@@ -1574,8 +1523,8 @@ pub const App = struct {
 
     log: LogSlate,
     oplog: OpLogSlate,
-    diff: DiffSlate,
-    opshow: OpShowSlate,
+    diff: DiffSlate(jj_mod.Change),
+    opshow: DiffSlate(jj_mod.Operation),
     bookmarks: BookmarkSlate,
     help: HelpSlate,
     toaster: Toaster,
@@ -1669,7 +1618,7 @@ pub const App = struct {
             },
             .opshow = .{
                 .alloc = alloc,
-                .opshowcache = .init(alloc),
+                .diffcache = .init(alloc),
             },
             .bookmarks = .init(alloc),
             .help = help,
@@ -1690,7 +1639,7 @@ pub const App = struct {
         }
 
         try self.diff.diffcache.put(self.log.focused_change.hash, .{ .diff = &.{} });
-        try self.opshow.opshowcache.put(self.oplog.focused_op.id, .{ .diff = &.{} });
+        try self.opshow.diffcache.put(self.oplog.focused_op.hash, .{ .diff = &.{} });
 
         self.input_thread = input_thread;
         app = self;
@@ -2651,8 +2600,8 @@ pub const App = struct {
                     if (self.oplog.y == i) {
                         self.oplog.focused_op = op;
                     } else if (@abs(self.log.y - i) < n) {
-                        if (self.opshow.opshowcache.get(op.id) == null) {
-                            try self.opshow.opshowcache.put(op.id, .{});
+                        if (self.opshow.diffcache.get(op.hash) == null) {
+                            try self.opshow.diffcache.put(op.hash, .{});
                             try self.jj.requests.send(.{ .opshow = op });
                         }
                     } else if (self.oplog.y + n < i) {
@@ -2661,7 +2610,7 @@ pub const App = struct {
                     i += 1;
                 }
 
-                if (self.opshow.opshowcache.get(self.oplog.focused_op.id)) |_| {
+                if (self.opshow.diffcache.get(self.oplog.focused_op.hash)) |_| {
                     try self._send_event(.rerender);
                 } else {
                     // debounce op show requests
@@ -2675,8 +2624,8 @@ pub const App = struct {
                 }
             },
             .opshow_update => |op| {
-                if (std.mem.eql(u8, op.id[0..], self.oplog.focused_op.id[0..])) {
-                    try self.opshow.opshowcache.put(op.id, .{});
+                if (std.mem.eql(u8, op.hash[0..], self.oplog.focused_op.hash[0..])) {
+                    try self.opshow.diffcache.put(op.hash, .{});
                     try self.jj.requests.send(.{ .opshow = op });
                 }
             },
@@ -2856,7 +2805,7 @@ pub const App = struct {
                     .diff => {
                         switch (self.state) {
                             .oplog => {
-                                if (self.opshow.opshowcache.getPtr(self.oplog.focused_op.id)) |opshow| {
+                                if (self.opshow.diffcache.getPtr(self.oplog.focused_op.hash)) |opshow| {
                                     switch (target.dir) {
                                         .up => opshow.y -= 10,
                                         .down => opshow.y += 10,
@@ -3115,7 +3064,7 @@ pub const App = struct {
                         "jj",
                         "op",
                         "restore",
-                        self.oplog.focused_op.id[0..],
+                        self.oplog.focused_op.hash[0..],
                     });
                     self.oplog.y = 0;
                     try self.jj.requests.send(.oplog);
@@ -3340,12 +3289,12 @@ pub const App = struct {
                 .opshow => |req| {
                     switch (res.res) {
                         .ok => |buf| {
-                            self.opshow.opshowcache.getPtr(req.id).?.diff = buf;
+                            self.opshow.diffcache.getPtr(req.hash).?.diff = buf;
 
                             var it = utils_mod.LineIterator.init(buf);
                             var len: i32 = 0;
                             while (it.next()) |_| len += 1;
-                            self.opshow.opshowcache.getPtr(req.id).?.len = len;
+                            self.opshow.diffcache.getPtr(req.hash).?.len = len;
                         },
                         .err => |buf| try self._toast(.{ .err = error.JJOpShowFailed }, buf),
                     }
@@ -3392,7 +3341,7 @@ pub const App = struct {
                     hasher.update(&std.mem.toBytes(diff.y));
                 }
                 hasher.update(&std.mem.toBytes(self.oplog.y));
-                if (self.opshow.opshowcache.getPtr(self.oplog.focused_op.id)) |opshow| {
+                if (self.opshow.diffcache.getPtr(self.oplog.focused_op.hash)) |opshow| {
                     hasher.update(&std.mem.toBytes(opshow.y));
                 }
                 var it = self.log.selected_changes.iterator();

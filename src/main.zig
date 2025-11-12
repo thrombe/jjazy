@@ -500,20 +500,10 @@ fn DiffSlate(Op: type) type {
             len: i32 = 0,
             diff: ?[]const u8 = null,
         };
-        const DiffCache = std.HashMap(Hash, CachedDiff, struct {
-            pub fn hash(self: @This(), s: Hash) u64 {
-                _ = self;
-                return std.hash_map.StringContext.hash(.{}, s[0..]);
-            }
-            pub fn eql(self: @This(), a: Hash, b: Hash) bool {
-                _ = self;
-                return std.hash_map.StringContext.eql(.{}, a[0..], b[0..]);
-            }
-        }, std.hash_map.default_max_load_percentage);
+        const DiffCache = utils_mod.DllLruCache(Hash, CachedDiff, .{ .ptr = .follow });
 
         fn deinit(self: *@This()) void {
-            var it = self.diffcache.iterator();
-            while (it.next()) |e| if (e.value_ptr.diff) |diff| {
+            while (self.diffcache.pop()) |e| if (e.val.diff) |diff| {
                 self.alloc.free(diff);
             };
             self.diffcache.deinit();
@@ -521,7 +511,10 @@ fn DiffSlate(Op: type) type {
 
         fn render(self: *@This(), surface: *Surface, app: *App, focused: Op) !void {
             _ = app;
-            if (self.diffcache.getPtr(focused.hash)) |cdiff| if (cdiff.diff) |diff| {
+            defer while (self.diffcache.retaining_pop(100)) |diff| if (diff.val.diff) |buf| {
+                self.alloc.free(buf);
+            };
+            if (self.diffcache.get(focused.hash, .touch)) |cdiff| if (cdiff.diff) |diff| {
                 cdiff.y = @max(0, cdiff.y);
                 // +2 just so it is visually obvious in the UI that the diff has ended
                 cdiff.y = @min(cdiff.y, cdiff.len - surface.region.size.y + 2);
@@ -1638,8 +1631,8 @@ pub const App = struct {
             input_thread.join();
         }
 
-        try self.diff.diffcache.put(self.log.focused_change.hash, .{ .diff = &.{} });
-        try self.opshow.diffcache.put(self.oplog.focused_op.hash, .{ .diff = &.{} });
+        (try self.diff.diffcache.getOrPut(self.log.focused_change.hash)).val.* = .{ .diff = &.{} };
+        (try self.opshow.diffcache.getOrPut(self.oplog.focused_op.hash)).val.* = .{ .diff = &.{} };
 
         self.input_thread = input_thread;
         app = self;
@@ -2572,8 +2565,9 @@ pub const App = struct {
                     if (self.log.y == i) {
                         self.log.focused_change = change;
                     } else if (@abs(self.log.y - i) < n) {
-                        if (self.diff.diffcache.get(change.hash) == null) {
-                            try self.diff.diffcache.put(change.hash, .{});
+                        const diff = try self.diff.diffcache.getOrPut(change.hash);
+                        if (!diff.found_existing) {
+                            diff.val.* = .{};
                             try self.jj.requests.send(.{ .diff = change });
                         }
                     } else if (self.log.y + n < i) {
@@ -2582,7 +2576,7 @@ pub const App = struct {
                     i += 1;
                 }
 
-                if (self.diff.diffcache.get(self.log.focused_change.hash)) |_| {
+                if (self.diff.diffcache.get(self.log.focused_change.hash, .touch)) |_| {
                     try self._send_event(.rerender);
                 } else {
                     // debounce diff requests
@@ -2600,8 +2594,9 @@ pub const App = struct {
                     if (self.oplog.y == i) {
                         self.oplog.focused_op = op;
                     } else if (@abs(self.log.y - i) < n) {
-                        if (self.opshow.diffcache.get(op.hash) == null) {
-                            try self.opshow.diffcache.put(op.hash, .{});
+                        const diff = try self.opshow.diffcache.getOrPut(op.hash);
+                        if (!diff.found_existing) {
+                            diff.val.* = .{};
                             try self.jj.requests.send(.{ .opshow = op });
                         }
                     } else if (self.oplog.y + n < i) {
@@ -2610,7 +2605,7 @@ pub const App = struct {
                     i += 1;
                 }
 
-                if (self.opshow.diffcache.get(self.oplog.focused_op.hash)) |_| {
+                if (self.opshow.diffcache.get(self.oplog.focused_op.hash, .touch)) |_| {
                     try self._send_event(.rerender);
                 } else {
                     // debounce op show requests
@@ -2619,14 +2614,20 @@ pub const App = struct {
             },
             .diff_update => |change| {
                 if (std.mem.eql(u8, change.hash[0..], self.log.focused_change.hash[0..])) {
-                    try self.diff.diffcache.put(change.hash, .{});
-                    try self.jj.requests.send(.{ .diff = change });
+                    const diff = try self.diff.diffcache.getOrPut(change.hash);
+                    if (!diff.found_existing) {
+                        diff.val.* = .{};
+                        try self.jj.requests.send(.{ .diff = change });
+                    }
                 }
             },
             .opshow_update => |op| {
                 if (std.mem.eql(u8, op.hash[0..], self.oplog.focused_op.hash[0..])) {
-                    try self.opshow.diffcache.put(op.hash, .{});
-                    try self.jj.requests.send(.{ .opshow = op });
+                    const diff = try self.opshow.diffcache.getOrPut(op.hash);
+                    if (!diff.found_existing) {
+                        diff.val.* = .{};
+                        try self.jj.requests.send(.{ .opshow = op });
+                    }
                 }
             },
             .toast => |toast| {
@@ -2805,7 +2806,7 @@ pub const App = struct {
                     .diff => {
                         switch (self.state) {
                             .oplog => {
-                                if (self.opshow.diffcache.getPtr(self.oplog.focused_op.hash)) |opshow| {
+                                if (self.opshow.diffcache.get(self.oplog.focused_op.hash, .touch)) |opshow| {
                                     switch (target.dir) {
                                         .up => opshow.y -= 10,
                                         .down => opshow.y += 10,
@@ -2813,7 +2814,7 @@ pub const App = struct {
                                 }
                             },
                             else => {
-                                if (self.diff.diffcache.getPtr(self.log.focused_change.hash)) |diff| {
+                                if (self.diff.diffcache.get(self.log.focused_change.hash, .touch)) |diff| {
                                     switch (target.dir) {
                                         .up => diff.y -= 10,
                                         .down => diff.y += 10,
@@ -3262,12 +3263,12 @@ pub const App = struct {
                 .diff => |req| {
                     switch (res.res) {
                         .ok => |buf| {
-                            self.diff.diffcache.getPtr(req.hash).?.diff = buf;
+                            self.diff.diffcache.get(req.hash, .touch).?.diff = buf;
 
                             var it = utils_mod.LineIterator.init(buf);
                             var len: i32 = 0;
                             while (it.next()) |_| len += 1;
-                            self.diff.diffcache.getPtr(req.hash).?.len = len;
+                            self.diff.diffcache.get(req.hash, .touch).?.len = len;
                         },
                         .err => |buf| try self._toast(.{ .err = error.JJDiffFailed }, buf),
                     }
@@ -3289,12 +3290,12 @@ pub const App = struct {
                 .opshow => |req| {
                     switch (res.res) {
                         .ok => |buf| {
-                            self.opshow.diffcache.getPtr(req.hash).?.diff = buf;
+                            self.opshow.diffcache.get(req.hash, .touch).?.diff = buf;
 
                             var it = utils_mod.LineIterator.init(buf);
                             var len: i32 = 0;
                             while (it.next()) |_| len += 1;
-                            self.opshow.diffcache.getPtr(req.hash).?.len = len;
+                            self.opshow.diffcache.get(req.hash, .touch).?.len = len;
                         },
                         .err => |buf| try self._toast(.{ .err = error.JJOpShowFailed }, buf),
                     }
@@ -3337,11 +3338,11 @@ pub const App = struct {
                 hasher.update(&std.mem.toBytes(self.show_help));
                 hasher.update(&std.mem.toBytes(self.x_split));
                 hasher.update(&std.mem.toBytes(self.log.y));
-                if (self.diff.diffcache.getPtr(self.log.focused_change.hash)) |diff| {
+                if (self.diff.diffcache.get(self.log.focused_change.hash, .touch)) |diff| {
                     hasher.update(&std.mem.toBytes(diff.y));
                 }
                 hasher.update(&std.mem.toBytes(self.oplog.y));
-                if (self.opshow.diffcache.getPtr(self.oplog.focused_op.hash)) |opshow| {
+                if (self.opshow.diffcache.get(self.oplog.focused_op.hash, .touch)) |opshow| {
                     hasher.update(&std.mem.toBytes(opshow.y));
                 }
                 var it = self.log.selected_changes.iterator();

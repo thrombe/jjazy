@@ -394,22 +394,17 @@ pub fn DllLruCache(K: type, V: type, comptime v: struct { ptr: PtrFollow = .disa
 
             if (entry.prev) |prev_key| {
                 const prev = self.map.getPtr(prev_key).?;
-
-                if (auto_eql(self.last, prev_key, .{ .pointer_eq = v.ptr })) {
-                    prev.next = key;
-                } else {
-                    prev.next = entry.next;
-                }
+                prev.next = entry.next;
             } else {
                 self.first = entry.next;
             }
             if (entry.next) |next_key| {
                 const next = self.map.getPtr(next_key).?;
                 next.prev = entry.prev;
-
-                if (auto_eql(self.last, next_key, .{ .pointer_eq = v.ptr })) {
-                    next.next = key;
-                }
+            }
+            if (self.last) |last_key| {
+                const last = self.map.getPtr(last_key).?;
+                last.next = key;
             }
 
             entry.prev = self.last;

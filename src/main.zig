@@ -537,6 +537,143 @@ fn DiffSlate(Op: type) type {
     };
 }
 
+const FileTreeSlate = struct {
+    y: i32 = 0,
+    skip_y: i32 = 0,
+    alloc: std.mem.Allocator,
+    files: []const u8 = &.{},
+
+    fn deinit(self: *@This()) void {
+        self.alloc.free(self.files);
+    }
+
+    fn get_focused_file(self: *@This()) ?[]const u8 {
+        var it = utils_mod.LineIterator.init(self.files);
+        var i: i32 = 0;
+        while (it.next()) |line| {
+            if (i == self.y) {
+                return line;
+            }
+            i += 1;
+        }
+        return null;
+    }
+
+    fn update(self: *@This(), files: []const u8, app: *App) !void {
+        _ = app;
+        self.alloc.free(self.files);
+        self.y = 0;
+        self.skip_y = 0;
+        self.files = files;
+    }
+
+    fn render(
+        self: *@This(),
+        surface: *Surface,
+        app: *App,
+    ) !void {
+        self.y = @max(0, self.y);
+        if (self.skip_y > self.y) {
+            self.skip_y = self.y;
+        }
+
+        var gutter = try surface.split_x(3, .none);
+        std.mem.swap(Surface, surface, &gutter);
+
+        var i: i32 = 0;
+        var it = utils_mod.LineIterator.init(self.files);
+        var ended = false;
+        while (it.next()) |line| {
+            defer i += 1;
+            if (self.skip_y > i) {
+                continue;
+            }
+
+            if (i == self.y) {
+                try gutter.draw_bufln("->");
+                try surface.draw_bufln(line);
+            } else {
+                try gutter.draw_bufln("  ");
+                try surface.draw_bufln(line);
+            }
+
+            if (surface.is_full()) break;
+        }
+        ended = it.ended();
+
+        if (ended and self.y >= i and i > 0) {
+            self.y = i - 1;
+        }
+
+        if (self.y >= i and !ended and i > 0) {
+            self.skip_y += 1;
+            try app._send_event(.rerender);
+        }
+    }
+};
+
+const FileShowSlate = struct {
+    alloc: std.mem.Allocator,
+    filecache: FileCache,
+
+    const Key = struct {
+        change_hash: jj_mod.Change.Hash,
+        path: []const u8,
+    };
+
+    const CachedFile = struct {
+        y: i32 = 0,
+        len: i32 = 0,
+        content: ?[]const u8 = null,
+    };
+    const FileCache = utils_mod.DllLruCache(Key, CachedFile, .{ .ptr = .follow });
+
+    fn deinit(self: *@This()) void {
+        while (self.filecache.pop()) |e| {
+            self.alloc.free(e.key.path);
+            if (e.val.content) |content| {
+                self.alloc.free(content);
+            }
+        }
+        self.filecache.deinit();
+    }
+
+    fn render(self: *@This(), surface: *Surface, app: *App, focused_change: jj_mod.Change, focused_file: ?[]const u8) !void {
+        _ = app;
+        if (focused_file == null) {
+            try surface.draw_buf(" no file selected ");
+            return;
+        }
+        const key = Key{ .change_hash = focused_change.hash, .path = focused_file.? };
+
+        defer while (self.filecache.retaining_pop(100)) |e| {
+            self.alloc.free(e.key.path);
+            if (e.val.content) |buf| {
+                self.alloc.free(buf);
+            }
+        };
+
+        if (self.filecache.get(key, .touch)) |cfile| if (cfile.content) |content| {
+            cfile.y = @max(0, cfile.y);
+            cfile.y = @min(cfile.y, cfile.len - surface.region.size.y + 2);
+
+            var skip_y = cfile.y;
+            var it = utils_mod.LineIterator.init(content);
+            while (it.next()) |line| {
+                if (surface.y < skip_y) {
+                    skip_y -= 1;
+                    continue;
+                }
+                try surface.draw_bufln(line);
+
+                if (surface.is_full()) break;
+            }
+        } else {
+            try surface.draw_buf(" loading ... ");
+        };
+    }
+};
+
 const BookmarkSlate = struct {
     alloc: std.mem.Allocator,
     buf: []const u8,
@@ -773,6 +910,14 @@ const HelpSlate = struct {
             .help = "Scroll up diff",
         },
         .{
+            .action = .{ .scroll = .{ .target = .file_tree, .dir = .up } },
+            .help = "Scroll up file tree",
+        },
+        .{
+            .action = .{ .scroll = .{ .target = .file_tree, .dir = .down } },
+            .help = "Scroll down file tree",
+        },
+        .{
             .action = .{ .resize_master = .left },
             .help = "Decrease master area",
         },
@@ -839,6 +984,10 @@ const HelpSlate = struct {
         .{
             .action = .switch_state_to_bookmarks_view,
             .help = "View bookmarks",
+        },
+        .{
+            .action = .switch_state_to_file_tree,
+            .help = "View file tree for change",
         },
         .{
             .action = .toggle_help,
@@ -1264,6 +1413,7 @@ pub const Sleeper = struct {
 pub const State = union(enum(u8)) {
     log,
     oplog,
+    file_tree,
     bookmark: enum {
         view,
         create,
@@ -1334,7 +1484,7 @@ pub const Action = union(enum) {
     fancy_terminal_features_that_break_gdb: enum { enable, disable },
     trigger_breakpoint,
     refresh_master_content,
-    scroll: struct { target: enum { log, oplog, diff, bookmarks }, dir: enum { up, down } },
+    scroll: struct { target: enum { log, oplog, diff, bookmarks, file_tree }, dir: enum { up, down } },
     resize_master: enum { left, right },
     switch_state_to_log,
     select_focused_change,
@@ -1349,6 +1499,7 @@ pub const Action = union(enum) {
     switch_state_to_oplog,
     switch_state_to_duplicate,
     switch_state_to_bookmarks_view,
+    switch_state_to_file_tree,
     toggle_help,
     jj_split,
     jj_describe,
@@ -1518,6 +1669,8 @@ pub const App = struct {
     oplog: OpLogSlate,
     diff: DiffSlate(jj_mod.Change),
     opshow: DiffSlate(jj_mod.Operation),
+    file_tree: FileTreeSlate,
+    file_show: FileShowSlate,
     bookmarks: BookmarkSlate,
     help: HelpSlate,
     toaster: Toaster,
@@ -1613,6 +1766,13 @@ pub const App = struct {
                 .alloc = alloc,
                 .diffcache = .init(alloc),
             },
+            .file_tree = .{
+                .alloc = alloc,
+            },
+            .file_show = .{
+                .alloc = alloc,
+                .filecache = .init(alloc),
+            },
             .bookmarks = .init(alloc),
             .help = help,
             .toaster = .{
@@ -1646,6 +1806,8 @@ pub const App = struct {
         defer self.oplog.deinit();
         defer self.diff.deinit();
         defer self.opshow.deinit();
+        defer self.file_tree.deinit();
+        defer self.file_show.deinit();
         defer self.bookmarks.deinit();
         defer self.help.deinit();
         defer self.toaster.deinit();
@@ -1793,6 +1955,7 @@ pub const App = struct {
             try map.for_states(&[_]State{
                 .log,
                 .oplog,
+                .file_tree,
                 .command,
                 .{ .bookmark = .view },
                 .{ .bookmark = .create },
@@ -1830,6 +1993,7 @@ pub const App = struct {
             try map.for_states(&[_]State{
                 .log,
                 .oplog,
+                .file_tree,
                 .{ .bookmark = .view },
                 .{ .bookmark = .search },
                 .{ .git = .none },
@@ -1870,6 +2034,7 @@ pub const App = struct {
             defer map.reset();
             try map.for_states(&[_]State{
                 .log,
+                .file_tree,
                 .{ .rebase = .onto },
                 .{ .rebase = .after },
                 .{ .rebase = .before },
@@ -1920,6 +2085,47 @@ pub const App = struct {
         }
         {
             defer map.reset();
+            try map.for_state(.file_tree);
+            try map.add_many(
+                &[_]Key{
+                    .{ .key = .{ .key = 'j', .action = .press } },
+                    .{ .key = .{ .key = 'j', .action = .repeat } },
+                    .{ .functional = .{ .key = .down, .action = .press } },
+                    .{ .functional = .{ .key = .down, .action = .repeat } },
+                },
+                null,
+                .{ .scroll = .{ .target = .file_tree, .dir = .down } },
+            );
+            try map.add_many(
+                &[_]Key{
+                    .{ .key = .{ .key = 'k', .action = .press } },
+                    .{ .key = .{ .key = 'k', .action = .repeat } },
+                    .{ .functional = .{ .key = .up, .action = .press } },
+                    .{ .functional = .{ .key = .up, .action = .repeat } },
+                },
+                null,
+                .{ .scroll = .{ .target = .file_tree, .dir = .up } },
+            );
+
+            try map.add_many(
+                &[_]Key{
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .press } },
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .repeat } },
+                },
+                .status,
+                .{ .scroll = .{ .target = .file_tree, .dir = .up } },
+            );
+            try map.add_many(
+                &[_]Key{
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .press } },
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .repeat } },
+                },
+                .status,
+                .{ .scroll = .{ .target = .file_tree, .dir = .down } },
+            );
+        }
+        {
+            defer map.reset();
             try map.for_states(&[_]State{
                 .oplog,
             });
@@ -1965,6 +2171,7 @@ pub const App = struct {
             defer map.reset();
             try map.for_states(&[_]State{
                 .log,
+                .file_tree,
                 .{ .rebase = .onto },
                 .{ .rebase = .after },
                 .{ .rebase = .before },
@@ -2180,6 +2387,12 @@ pub const App = struct {
             .{ .key = .{ .key = 'b' } },
             null,
             .switch_state_to_bookmarks_view,
+        );
+        try map.add_one_for_state(
+            .log,
+            .{ .key = .{ .key = 'f' } },
+            null,
+            .switch_state_to_file_tree,
         );
         try map.add_one_for_state(
             .log,
@@ -2531,7 +2744,7 @@ pub const App = struct {
                     .show_help = true,
                 },
             },
-            .oplog, .log => .{},
+            .oplog, .log, .file_tree => .{},
         };
 
         switch (event) {
@@ -2790,11 +3003,46 @@ pub const App = struct {
                 },
                 .scroll => |target| switch (target.target) {
                     .log => {
+                        if (self.state == .file_tree) {
+                            try self._handle_event(.{ .action = .{
+                                .scroll = .{
+                                    .target = .file_tree,
+                                    .dir = target.dir,
+                                },
+                            } });
+                            return;
+                        }
                         switch (target.dir) {
                             .up => self.log.y -= 1,
                             .down => self.log.y += 1,
                         }
                         try self._send_event(.scroll_update);
+                    },
+                    .file_tree => {
+                        switch (target.dir) {
+                            .up => self.file_tree.y -= 1,
+                            .down => self.file_tree.y += 1,
+                        }
+                        if (self.file_tree.get_focused_file()) |focused_file| {
+                            const change = self.log.focused_change;
+                            const key_lookup = FileShowSlate.Key{ .change_hash = change.hash, .path = focused_file };
+                            if (self.file_show.filecache.get(key_lookup, .touch) == null) {
+                                const path = try self.alloc.dupe(u8, focused_file);
+                                const file = try self.file_show.filecache.getOrPut(.{
+                                    .change_hash = change.hash,
+                                    .path = path,
+                                });
+                                if (!file.found_existing) {
+                                    file.val.* = .{};
+                                    try self.jj.requests.send(.{ .file_show = .{
+                                        .change = change,
+                                        .path = path,
+                                    } });
+                                } else {
+                                    self.alloc.free(path);
+                                }
+                            }
+                        }
                     },
                     .oplog => {
                         switch (target.dir) {
@@ -2810,6 +3058,17 @@ pub const App = struct {
                                     switch (target.dir) {
                                         .up => opshow.y -= 10,
                                         .down => opshow.y += 10,
+                                    }
+                                }
+                            },
+                            .file_tree => {
+                                if (self.file_tree.get_focused_file()) |focused_file| {
+                                    const key_lookup = FileShowSlate.Key{ .change_hash = self.log.focused_change.hash, .path = focused_file };
+                                    if (self.file_show.filecache.get(key_lookup, .touch)) |cfile| {
+                                        switch (target.dir) {
+                                            .up => cfile.y -= 10,
+                                            .down => cfile.y += 10,
+                                        }
                                     }
                                 }
                             },
@@ -2896,6 +3155,10 @@ pub const App = struct {
                 .switch_state_to_bookmarks_view => {
                     self.state = .{ .bookmark = .view };
                     try self.jj.requests.send(.bookmark);
+                },
+                .switch_state_to_file_tree => {
+                    self.state = .file_tree;
+                    try self.jj.requests.send(.{ .file_list = self.log.focused_change });
                 },
                 .toggle_help => {
                     self.show_help = !self.show_help;
@@ -3319,6 +3582,35 @@ pub const App = struct {
                         .err => |buf| try self._toast(.{ .err = error.JJBookmarkFailed }, buf),
                     }
                 },
+                .file_list => |req| {
+                    switch (res.res) {
+                        .ok => |buf| {
+                            if (std.mem.eql(u8, req.id[0..], self.log.focused_change.id[0..])) {
+                                try self.file_tree.update(buf, self);
+                            } else {
+                                self.alloc.free(buf);
+                            }
+                        },
+                        .err => |buf| try self._toast(.{ .err = error.JJFileListFailed }, buf),
+                    }
+                    try self._send_event(.rerender);
+                },
+                .file_show => |req| {
+                    switch (res.res) {
+                        .ok => |buf| {
+                            const key = FileShowSlate.Key{ .change_hash = req.change.hash, .path = req.path };
+                            const entry = self.file_show.filecache.get(key, .touch).?;
+                            entry.content = buf;
+
+                            var it = utils_mod.LineIterator.init(buf);
+                            var len: i32 = 0;
+                            while (it.next()) |_| len += 1;
+                            entry.len = len;
+                        },
+                        .err => |buf| try self._toast(.{ .err = error.JJFileShowFailed }, buf),
+                    }
+                    try self._send_event(.rerender);
+                },
             },
         }
     }
@@ -3344,6 +3636,15 @@ pub const App = struct {
                 hasher.update(&std.mem.toBytes(self.oplog.y));
                 if (self.opshow.diffcache.get(self.oplog.focused_op.hash, .touch)) |opshow| {
                     hasher.update(&std.mem.toBytes(opshow.y));
+                }
+                hasher.update(&std.mem.toBytes(self.file_tree.y));
+                if (self.file_tree.get_focused_file()) |path| {
+                    hasher.update(path);
+                    const file = self.file_show.filecache.get(.{
+                        .path = path,
+                        .change_hash = self.log.focused_change.hash,
+                    }, .touch);
+                    if (file) |f| hasher.update(&std.mem.toBytes(f.y));
                 }
                 var it = self.log.selected_changes.iterator();
                 while (it.next()) |e| {
@@ -3446,6 +3747,11 @@ pub const App = struct {
                 .oplog => {
                     try self.oplog.render(&status, self);
                     try self.opshow.render(&diffs, self, self.oplog.focused_op);
+                },
+                .file_tree => {
+                    try self.file_tree.render(&status, self);
+                    const focused_file = self.file_tree.get_focused_file();
+                    try self.file_show.render(&diffs, self, self.log.focused_change, focused_file);
                 },
                 else => {
                     try self.log.render(&status, self, self.state, tropes);

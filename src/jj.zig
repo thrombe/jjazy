@@ -69,6 +69,11 @@ pub const JujutsuServer = struct {
         diff: Change,
         opshow: Operation,
         evolog: Change,
+        file_list: Change,
+        file_show: struct {
+            change: Change,
+            path: []const u8,
+        },
     };
 
     pub const Result = union(enum) {
@@ -230,6 +235,36 @@ pub const JujutsuServer = struct {
                         "-a",
                         "--template",
                         Bookmark.Parsed.template,
+                    }) catch |e| {
+                        utils_mod.dump_error(e);
+                        continue;
+                    };
+                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = res } } });
+                },
+                .file_list => |change| {
+                    const res = self.jjcall(&[_][]const u8{
+                        "jj",
+                        "file",
+                        "list",
+                        "-r",
+                        change.id[0..],
+                    }) catch |e| {
+                        utils_mod.dump_error(e);
+                        continue;
+                    };
+                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = res } } });
+                },
+                .file_show => |payload| {
+                    const cmd = try std.fmt.allocPrint(self.alloc, "jj file show -r {s} {s} | bat --color=always --style numbers,plain --file-name {s}", .{
+                        payload.change.id[0..],
+                        payload.path,
+                        payload.path,
+                    });
+                    defer self.alloc.free(cmd);
+                    const res = self.jjcall(&[_][]const u8{
+                        "sh",
+                        "-c",
+                        cmd,
                     }) catch |e| {
                         utils_mod.dump_error(e);
                         continue;

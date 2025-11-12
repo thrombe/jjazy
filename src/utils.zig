@@ -426,7 +426,7 @@ pub fn DllLruCache(K: type, V: type, comptime v: struct { ptr: PtrFollow = .disa
             }
         }
 
-        pub fn getOrPut(self: *@This(), key: K) !struct { found_existing: bool, val: *V } {
+        pub fn getOrPut(self: *@This(), key: K) !struct { found_existing: bool, key: *const K, val: *V } {
             const result = try self.map.getOrPut(key);
 
             if (result.found_existing) {
@@ -442,7 +442,7 @@ pub fn DllLruCache(K: type, V: type, comptime v: struct { ptr: PtrFollow = .disa
                 self.last = key;
             }
 
-            return .{ .found_existing = result.found_existing, .val = &result.value_ptr.val };
+            return .{ .found_existing = result.found_existing, .key = result.key_ptr, .val = &result.value_ptr.val };
         }
     };
 }

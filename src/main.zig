@@ -309,6 +309,26 @@ const LogSlate = struct {
         self.selected_changes.deinit();
     }
 
+    fn update(self: *@This(), status: []const u8) !void {
+        self.alloc.free(self.status);
+        self.status = status;
+        self.changes.reset(status);
+
+        if (std.mem.eql(u8, self.focused_change.id[0..], (jj_mod.Change{}).id[0..]) and self.y == 0) {
+            return;
+        }
+        defer self.changes.reset(status);
+        var i: i32 = 0;
+        while (try self.changes.next()) |parsed| {
+            defer i += 1;
+            const change = jj_mod.Change.from_parsed(&parsed);
+            if (std.mem.eql(u8, self.focused_change.id[0..], change.id[0..])) {
+                self.y = i;
+                return;
+            }
+        }
+    }
+
     fn render(
         self: *@This(),
         surface: *Surface,
@@ -3513,9 +3533,7 @@ pub const App = struct {
                 .log => {
                     switch (res.res) {
                         .ok => |buf| {
-                            self.alloc.free(self.log.status);
-                            self.log.status = buf;
-                            self.log.changes.reset(buf);
+                            try self.log.update(buf);
                             try self._send_event(.scroll_update);
                         },
                         .err => |buf| try self._toast(.{ .err = error.JJLogFailed }, buf),

@@ -1860,8 +1860,8 @@ pub const App = struct {
             input_thread.join();
         }
 
-        (try self.diff.cache.getOrPut(self.log.focused_change.hash)).val.* = .{ .diff = &.{} };
-        (try self.opshow.cache.getOrPut(self.oplog.focused_op.hash)).val.* = .{ .diff = &.{} };
+        try self.diff.cache.put(self.log.focused_change.hash, .{});
+        try self.opshow.cache.put(self.oplog.focused_op.hash, .{});
 
         self.input_thread = input_thread;
         app = self;

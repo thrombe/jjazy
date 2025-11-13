@@ -444,6 +444,15 @@ pub fn DllLruCache(K: type, V: type, comptime v: struct { ptr: PtrFollow = .disa
 
             return .{ .found_existing = result.found_existing, .key = result.key_ptr, .val = &result.value_ptr.val };
         }
+
+        pub fn put(self: *@This(), key: K, val: V) !void {
+            const e = try self.getOrPut(key);
+            if (e.found_existing) {
+                return error.FoundExisting;
+            } else {
+                e.val.* = val;
+            }
+        }
     };
 }
 

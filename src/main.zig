@@ -459,6 +459,26 @@ const OpLogSlate = struct {
         self.ops.deinit();
     }
 
+    fn update(self: *@This(), oplog: []const u8) !void {
+        self.alloc.free(self.oplog);
+        self.oplog = oplog;
+        self.ops.reset(oplog);
+
+        if (std.mem.eql(u8, self.focused_op.hash[0..], (jj_mod.Operation{}).hash[0..]) and self.y == 0) {
+            return;
+        }
+        defer self.ops.reset(oplog);
+        var i: i32 = 0;
+        while (try self.ops.next()) |parsed| {
+            defer i += 1;
+            const op = jj_mod.Operation.from_parsed(&parsed);
+            if (std.mem.eql(u8, self.focused_op.hash[0..], op.hash[0..])) {
+                self.y = i;
+                return;
+            }
+        }
+    }
+
     fn render(
         self: *@This(),
         surface: *Surface,
@@ -3166,6 +3186,7 @@ pub const App = struct {
                 .switch_state_to_oplog => {
                     self.state = .oplog;
                     self.oplog.y = 0;
+                    self.oplog.focused_op = .{};
                     try self.jj.requests.send(.oplog);
                 },
                 .switch_state_to_duplicate => {
@@ -3558,9 +3579,7 @@ pub const App = struct {
                 .oplog => {
                     switch (res.res) {
                         .ok => |buf| {
-                            self.alloc.free(self.oplog.oplog);
-                            self.oplog.oplog = buf;
-                            self.oplog.ops.reset(buf);
+                            try self.oplog.update(buf);
                             try self._send_event(.op_update);
                         },
                         .err => |buf| try self._toast(.{ .err = error.JJOpLogFailed }, buf),

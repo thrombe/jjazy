@@ -3629,27 +3629,37 @@ pub const App = struct {
                 hasher.update(&std.mem.toBytes(self.state));
                 hasher.update(&std.mem.toBytes(self.show_help));
                 hasher.update(&std.mem.toBytes(self.x_split));
-                hasher.update(&std.mem.toBytes(self.log.y));
-                if (self.diff.diffcache.get(self.log.focused_change.hash, .touch)) |diff| {
-                    hasher.update(&std.mem.toBytes(diff.y));
+
+                switch (self.state) {
+                    .log, .bookmark, .command, .rebase, .duplicate, .new, .squash, .abandon, .git => {
+                        hasher.update(&std.mem.toBytes(self.log.y));
+                        if (self.diff.diffcache.get(self.log.focused_change.hash, .peek)) |diff| {
+                            hasher.update(&std.mem.toBytes(diff.y));
+                        }
+                        var it = self.log.selected_changes.iterator();
+                        while (it.next()) |e| {
+                            hasher.update(&e.key_ptr.id);
+                        }
+                    },
+                    .oplog => {
+                        hasher.update(&std.mem.toBytes(self.oplog.y));
+                        if (self.opshow.diffcache.get(self.oplog.focused_op.hash, .peek)) |opshow| {
+                            hasher.update(&std.mem.toBytes(opshow.y));
+                        }
+                    },
+                    .file_tree => {
+                        hasher.update(&std.mem.toBytes(self.file_tree.y));
+                        if (self.file_tree.get_focused_file()) |path| {
+                            hasher.update(path);
+                            const file = self.file_show.filecache.get(.{
+                                .path = path,
+                                .change_hash = self.log.focused_change.hash,
+                            }, .peek);
+                            if (file) |f| hasher.update(&std.mem.toBytes(f.y));
+                        }
+                    },
                 }
-                hasher.update(&std.mem.toBytes(self.oplog.y));
-                if (self.opshow.diffcache.get(self.oplog.focused_op.hash, .touch)) |opshow| {
-                    hasher.update(&std.mem.toBytes(opshow.y));
-                }
-                hasher.update(&std.mem.toBytes(self.file_tree.y));
-                if (self.file_tree.get_focused_file()) |path| {
-                    hasher.update(path);
-                    const file = self.file_show.filecache.get(.{
-                        .path = path,
-                        .change_hash = self.log.focused_change.hash,
-                    }, .touch);
-                    if (file) |f| hasher.update(&std.mem.toBytes(f.y));
-                }
-                var it = self.log.selected_changes.iterator();
-                while (it.next()) |e| {
-                    hasher.update(&e.key_ptr.id);
-                }
+
                 hasher.update(&std.mem.toBytes(self.text_input.text.items.len));
                 hasher.update(&std.mem.toBytes(self.text_input.cursor));
                 hasher.update(&std.mem.toBytes(self.bookmarks.y));

@@ -586,27 +586,39 @@ fn DiffSlate(Op: type) type {
 }
 
 const FileTreeSlate = struct {
-    y: i32 = 0,
-    skip_y: i32 = 0,
     alloc: std.mem.Allocator,
-    change_status: jj_mod.Formatted = .{},
-    files: jj_mod.Formatted = .{},
+    cache: FileListCache,
+
+    const FileList = struct {
+        y: i32 = 0,
+        skip_y: i32 = 0,
+        change_status: jj_mod.Formatted = .{},
+        files: jj_mod.Formatted = .{},
+
+        fn deinit(self: *const @This(), alloc: std.mem.Allocator) void {
+            alloc.free(self.change_status.buf);
+            alloc.free(self.files.buf);
+        }
+
+        fn get_focused_file(self: *@This()) ?[]const u8 {
+            var it = utils_mod.LineIterator.init(self.files.buf);
+            var i: i32 = 0;
+            while (it.next()) |line| {
+                if (i == self.y) {
+                    return line;
+                }
+                i += 1;
+            }
+            return null;
+        }
+    };
+    const FileListCache = utils_mod.DllLruCache(jj_mod.Change, FileList, .{ .ptr = .follow });
 
     fn deinit(self: *@This()) void {
-        self.alloc.free(self.change_status.buf);
-        self.alloc.free(self.files.buf);
-    }
-
-    fn get_focused_file(self: *@This()) ?[]const u8 {
-        var it = utils_mod.LineIterator.init(self.files.buf);
-        var i: i32 = 0;
-        while (it.next()) |line| {
-            if (i == self.y) {
-                return line;
-            }
-            i += 1;
+        while (self.cache.pop()) |e| {
+            e.val.deinit(self.alloc);
         }
-        return null;
+        self.cache.deinit();
     }
 
     fn update(self: *@This(), status: jj_mod.Formatted, files: jj_mod.Formatted, app: *App) !void {
@@ -624,6 +636,10 @@ const FileTreeSlate = struct {
         surface: *Surface,
         app: *App,
     ) !void {
+        defer while (self.cache.retaining_pop(100)) |e| {
+            e.val.deinit(self.alloc);
+        };
+
         self.y = @max(0, self.y);
         if (self.skip_y > self.y) {
             self.skip_y = self.y;
@@ -1820,6 +1836,7 @@ pub const App = struct {
             },
             .file_tree = .{
                 .alloc = alloc,
+                .cache = .init(alloc),
             },
             .file_show = .{
                 .alloc = alloc,

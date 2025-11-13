@@ -441,11 +441,17 @@ fn Template(typ: type, _template: []const u8, _sep: []const u8) type {
         pub const Iterator = struct {
             state: utils_mod.LineIterator,
 
+            alloc: std.mem.Allocator,
             temp: std.heap.ArenaAllocator,
             scratch: std.ArrayList(u8),
 
             pub fn init(alloc: std.mem.Allocator, buf: []const u8) @This() {
-                return .{ .temp = .init(alloc), .state = .init(buf), .scratch = .init(alloc) };
+                return .{
+                    .alloc = alloc,
+                    .temp = .init(alloc),
+                    .state = .init(buf),
+                    .scratch = .init(alloc),
+                };
             }
 
             pub fn deinit(self: *@This()) void {

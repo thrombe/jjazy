@@ -672,12 +672,19 @@ const FileTreeSlate = struct {
                 continue;
             }
 
+            const path = parsed.parsed.path;
             if (i == tree.y) {
                 try gutter.draw_bufln("->");
-                tree.focused_file = parsed.parsed.path;
+                tree.focused_file = path;
             } else {
                 try gutter.draw_bufln("  ");
             }
+
+            const icon = app.icons.get_icon(path);
+            try surface.apply_style(.{ .foreground_color = icon.color });
+            try surface.draw_buf(icon.icon);
+            try surface.draw_buf(" ");
+            try surface.apply_style(.reset);
 
             try surface.apply_style(.bold);
             try surface.apply_style(.{ .foreground_color = .from_theme(.info) });
@@ -1756,6 +1763,55 @@ pub const InputActionMap = struct {
     };
 };
 
+pub const Icons = struct {
+    files: std.StringHashMap(Icon),
+    exts: std.StringHashMap(Icon),
+
+    const icons = @import("icons.zig");
+    const Icon = struct { icon: []const u8, color: Color };
+    const Color = term_mod.TermStyledGraphemeIterator.Color;
+    const ColorParser = @import("math.zig").ColorParse.Runtime;
+
+    pub fn init(alloc: std.mem.Allocator) !@This() {
+        var files = std.StringHashMap(Icon).init(alloc);
+        errdefer files.deinit();
+
+        for (icons.files) |file| {
+            const color = try ColorParser.hex_u8rgb(struct { r: u8, g: u8, b: u8 }, file.color);
+            try files.put(file.name, .{ .icon = file.icon, .color = .{ .bit24 = .{ color.r, color.g, color.b } } });
+        }
+
+        var exts = std.StringHashMap(Icon).init(alloc);
+        errdefer exts.deinit();
+
+        for (icons.exts) |ext| {
+            const color = try ColorParser.hex_u8rgb(struct { r: u8, g: u8, b: u8 }, ext.color);
+            try exts.put(ext.name, .{ .icon = ext.icon, .color = .{ .bit24 = .{ color.r, color.g, color.b } } });
+        }
+
+        return .{
+            .files = files,
+            .exts = exts,
+        };
+    }
+
+    pub fn deinit(self: *@This()) void {
+        self.files.deinit();
+        self.exts.deinit();
+    }
+
+    pub fn get_icon(self: *const @This(), path: []const u8) Icon {
+        const file_icon = self.files.get(std.fs.path.basename(path));
+        const ext = std.fs.path.extension(path);
+        const ext_icon = self.exts.get(ext[@min(1, ext.len)..]);
+        const icon = file_icon orelse ext_icon orelse Icons.Icon{
+            .icon = Icons.icons.file[0..],
+            .color = .from_theme(.info),
+        };
+        return icon;
+    }
+};
+
 pub const App = struct {
     screen: term_mod.Screen,
 
@@ -1765,6 +1821,7 @@ pub const App = struct {
     input_iterator: term_mod.TermInputIterator,
     events: utils_mod.Channel(Event),
     input_action_map: InputActionMap,
+    icons: Icons,
 
     sleeper: *Sleeper,
     jj: *jj_mod.JujutsuServer,
@@ -1836,6 +1893,9 @@ pub const App = struct {
         var input_action_map = try init_input_action_map(alloc);
         errdefer input_action_map.deinit();
 
+        var icons = try Icons.init(alloc);
+        errdefer icons.deinit();
+
         var help = try HelpSlate.init(alloc);
         errdefer help.deinit();
 
@@ -1857,6 +1917,7 @@ pub const App = struct {
                 .emu = screen.term.emulator,
                 .features = screen.term.features,
             },
+            .icons = icons,
             .events = events,
             .sleeper = sleeper,
             .jj = jj,
@@ -1929,6 +1990,7 @@ pub const App = struct {
         defer self.text_input.deinit();
         defer self.mouse_regions.deinit();
         defer self.input_action_map.deinit();
+        defer self.icons.deinit();
         defer self.arena.deinit();
         defer self.screen.deinit();
         defer self.screen.term.unregister_signal_handlers();

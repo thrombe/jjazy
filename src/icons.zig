@@ -1,3 +1,5 @@
+// source: https://github.com/sxyazi/yazi/blob/577065cbd05a282a1d6f923c89cdf74d5af2f3e9/yazi-config/preset/theme-dark.toml
+
 pub const open = "";
 pub const close = "";
 pub const right_arrow = "";
@@ -7,7 +9,10 @@ pub const err = "";
 pub const file = "";
 pub const folder = "";
 pub const command = "";
-pub const dirs = .{
+pub const dirs: []const struct {
+    name: []const u8,
+    icon: []const u8,
+} = &.{
     .{ .name = ".config", .icon = "" },
     .{ .name = ".git", .icon = "" },
     .{ .name = ".github", .icon = "" },
@@ -23,7 +28,11 @@ pub const dirs = .{
     .{ .name = "Public", .icon = "" },
     .{ .name = "Videos", .icon = "" },
 };
-pub const files = .{
+pub const files: []const struct {
+    name: []const u8,
+    icon: []const u8,
+    color: []const u8,
+} = &.{
     .{ .name = ".babelrc", .icon = "", .color = "#cbcb41" },
     .{ .name = ".bash_profile", .icon = "", .color = "#89e051" },
     .{ .name = ".bashrc", .icon = "", .color = "#89e051" },
@@ -210,7 +219,11 @@ pub const files = .{
     .{ .name = "xorg.conf", .icon = "", .color = "#e54d18" },
     .{ .name = "xsettingsd.conf", .icon = "", .color = "#e54d18" },
 };
-pub const exts = .{
+pub const exts: []const struct {
+    name: []const u8,
+    icon: []const u8,
+    color: []const u8,
+} = &.{
     .{ .name = "3gp", .icon = "", .color = "#fd971f" },
     .{ .name = "3mf", .icon = "󰆧", .color = "#888888" },
     .{ .name = "7z", .icon = "", .color = "#eca517" },
@@ -687,7 +700,10 @@ pub const exts = .{
     .{ .name = "zst", .icon = "", .color = "#eca517" },
     .{ .name = "🔥", .icon = "", .color = "#ff4c1f" },
 };
-pub const conds = .{
+pub const conds: []const struct {
+    name: []const u8,
+    icon: []const u8,
+} = &.{
     // Special files
     .{ .cond = "orphan", .icon = "" },
     .{ .cond = "link", .icon = "" },

@@ -415,9 +415,9 @@ pub fn DllLruCache(K: type, V: type, comptime v: struct { ptr: PtrFollow = .disa
         pub fn get(self: *@This(), key: K, op: enum { touch, peek }) ?*V {
             switch (op) {
                 .touch => {
-                    const entry = self.map.getPtr(key) orelse return null;
-                    self.touch(key, entry);
-                    return &entry.val;
+                    const entry = self.map.getEntry(key) orelse return null;
+                    self.touch(entry.key_ptr.*, entry.value_ptr);
+                    return &entry.value_ptr.val;
                 },
                 .peek => {
                     const entry = self.map.getPtr(key) orelse return null;
@@ -430,7 +430,7 @@ pub fn DllLruCache(K: type, V: type, comptime v: struct { ptr: PtrFollow = .disa
             const result = try self.map.getOrPut(key);
 
             if (result.found_existing) {
-                self.touch(key, result.value_ptr);
+                self.touch(result.key_ptr.*, result.value_ptr);
             } else {
                 if (self.last) |last_key| {
                     self.map.getPtr(last_key).?.next = key;

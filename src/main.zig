@@ -3037,9 +3037,12 @@ pub const App = struct {
                     try self.screen.term.fancy_features_that_break_gdb(.disable, .{});
                     @breakpoint();
                 },
-                .refresh_master_content => switch (self.state) {
-                    .oplog => try self.jj.requests.send(.oplog),
-                    else => try self.jj.requests.send(.log),
+                .refresh_master_content => {
+                    switch (self.state) {
+                        .oplog => try self.jj.requests.send(.oplog),
+                        else => {},
+                    }
+                    try self.jj.requests.send(.log);
                 },
                 .scroll => |target| switch (target.target) {
                     .log => {

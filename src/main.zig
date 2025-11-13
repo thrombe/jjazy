@@ -2456,9 +2456,15 @@ pub const App = struct {
         );
         try map.add_one_for_state(
             .log,
-            .{ .key = .{ .key = 'f' } },
+            .{ .key = .{ .key = 'l' } },
             null,
             .switch_state_to_file_tree,
+        );
+        try map.add_one_for_state(
+            .file_tree,
+            .{ .key = .{ .key = 'h' } },
+            null,
+            .switch_state_to_log,
         );
         try map.add_one_for_state(
             .log,

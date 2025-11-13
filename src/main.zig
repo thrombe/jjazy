@@ -588,10 +588,12 @@ fn DiffSlate(Op: type) type {
 const FileTreeSlate = struct {
     alloc: std.mem.Allocator,
     cache: FileListCache,
+    it: jj_mod.FileTreeEntry.Parsed.Iterator,
 
     const FileList = struct {
         y: i32 = 0,
         skip_y: i32 = 0,
+        focused_file: []const u8 = &.{},
         change_status: jj_mod.Formatted = .{},
         files: jj_mod.Formatted = .{},
 
@@ -601,15 +603,8 @@ const FileTreeSlate = struct {
         }
 
         fn get_focused_file(self: *const @This()) ?[]const u8 {
-            var it = utils_mod.LineIterator.init(self.files.buf);
-            var i: i32 = 0;
-            while (it.next()) |line| {
-                if (i == self.y) {
-                    return line;
-                }
-                i += 1;
-            }
-            return null;
+            if (self.focused_file.len == 0) return null;
+            return self.focused_file;
         }
     };
     const FileListCache = utils_mod.DllLruCache(jj_mod.Change, FileList, .{ .ptr = .follow });
@@ -619,6 +614,7 @@ const FileTreeSlate = struct {
             e.val.deinit(self.alloc);
         }
         self.cache.deinit();
+        self.it.deinit();
     }
 
     fn render(
@@ -644,10 +640,16 @@ const FileTreeSlate = struct {
 
         try status.draw_buf(tree.change_status.buf);
 
+        self.it.reset(tree.files.buf);
         var i: i32 = 0;
-        var it = utils_mod.LineIterator.init(tree.files.buf);
         var ended = false;
-        while (it.next()) |line| {
+        while (try self.it.next()) |parsed| {
+            switch (parsed.parsed.file_type) {
+                .file => {},
+                .conflict => {},
+                else => continue,
+            }
+
             defer i += 1;
             if (tree.skip_y > i) {
                 continue;
@@ -655,15 +657,28 @@ const FileTreeSlate = struct {
 
             if (i == tree.y) {
                 try gutter.draw_bufln("->");
-                try surface.draw_bufln(line);
+                tree.focused_file = parsed.parsed.path;
             } else {
                 try gutter.draw_bufln("  ");
-                try surface.draw_bufln(line);
             }
+
+            try surface.apply_style(.bold);
+            try surface.apply_style(.{ .foreground_color = .from_theme(.info) });
+            try surface.draw_buf(parsed.parsed.path);
+            try surface.apply_style(.reset);
+
+            if (parsed.parsed.conflict) {
+                try surface.draw_buf(" ");
+                try surface.apply_style(.{ .foreground_color = .from_theme(.errors) });
+                try surface.draw_buf("conflict");
+                try surface.apply_style(.reset);
+            }
+
+            try surface.draw_bufln("");
 
             if (surface.is_full()) break;
         }
-        ended = it.ended();
+        ended = self.it.ended();
 
         if (ended and tree.y >= i and i > 0) {
             tree.y = i - 1;
@@ -672,6 +687,26 @@ const FileTreeSlate = struct {
         if (tree.y >= i and !ended and i > 0) {
             tree.skip_y += 1;
             try app._send_event(.rerender);
+        }
+
+        if (tree.get_focused_file()) |focused_file| {
+            const key_lookup = FileShowSlate.Key{ .change_hash = change.hash, .path = focused_file };
+            if (app.file_show.filecache.get(key_lookup, .touch) == null) {
+                const path = try self.alloc.dupe(u8, focused_file);
+                const file = try app.file_show.filecache.getOrPut(.{
+                    .change_hash = change.hash,
+                    .path = path,
+                });
+                if (!file.found_existing) {
+                    file.val.* = .{};
+                    try app.jj.requests.send(.{ .file_show = .{
+                        .change = change,
+                        .path = path,
+                    } });
+                } else {
+                    self.alloc.free(path);
+                }
+            }
         }
     }
 };
@@ -1830,6 +1865,7 @@ pub const App = struct {
             .file_tree = .{
                 .alloc = alloc,
                 .cache = .init(alloc),
+                .it = .init(alloc, &.{}),
             },
             .file_show = .{
                 .alloc = alloc,
@@ -3098,26 +3134,6 @@ pub const App = struct {
                         switch (target.dir) {
                             .up => tree.y -= 1,
                             .down => tree.y += 1,
-                        }
-                        if (tree.get_focused_file()) |focused_file| {
-                            const change = self.log.focused_change;
-                            const key_lookup = FileShowSlate.Key{ .change_hash = change.hash, .path = focused_file };
-                            if (self.file_show.filecache.get(key_lookup, .touch) == null) {
-                                const path = try self.alloc.dupe(u8, focused_file);
-                                const file = try self.file_show.filecache.getOrPut(.{
-                                    .change_hash = change.hash,
-                                    .path = path,
-                                });
-                                if (!file.found_existing) {
-                                    file.val.* = .{};
-                                    try self.jj.requests.send(.{ .file_show = .{
-                                        .change = change,
-                                        .path = path,
-                                    } });
-                                } else {
-                                    self.alloc.free(path);
-                                }
-                            }
                         }
                     },
                     .oplog => {

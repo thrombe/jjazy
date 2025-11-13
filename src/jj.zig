@@ -51,6 +51,19 @@ pub const Schema = struct {
         remote: ?[]const u8 = null,
         tracking_target: ?[]const []const u8 = null,
     };
+
+    // - [Templating language - Jujutsu docs](https://jj-vcs.github.io/jj/latest/templates/#treeentry-type)
+    pub const FileTreeEntry = struct {
+        path: []const u8,
+        conflict: bool,
+        file_type: enum {
+            file,
+            symlink,
+            tree,
+            conflict,
+            @"git-submodule",
+        },
+    };
 };
 
 pub const JujutsuServer = struct {
@@ -269,6 +282,8 @@ pub const JujutsuServer = struct {
                         "list",
                         "-r",
                         change.id[0..],
+                        "--template",
+                        FileTreeEntry.Parsed.template,
                     }) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
@@ -556,5 +571,21 @@ pub const Operation = struct {
 
     pub fn is_root(self: *@This()) bool {
         return std.mem.allEqual(u8, self.hash, '0');
+    }
+};
+
+pub const FileTreeEntry = struct {
+    path: []const u8 = &.{},
+    conflict: bool = false,
+
+    pub const Parsed = Template(
+        Schema.FileTreeEntry,
+        \\"{ \"path\": \"" ++ self.path() ++ "\", \"conflict\": " ++ self.conflict() ++ ", \"file_type\": \"" ++ self.file_type() ++ "\" }"
+    ++ "++ \"" ++ template_sep.escaped ++ "\" ++ \"\n\"",
+        template_sep.sep,
+    );
+
+    pub fn from_parsed(parsed: *const Parsed) void {
+        return .{ .path = parsed.parsed.path, .conflict = parsed.parsed.conflict };
     }
 };

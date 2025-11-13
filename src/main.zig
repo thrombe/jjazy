@@ -568,15 +568,24 @@ fn DiffSlate(Op: type) type {
                 diff.val.deinit(self.alloc);
             };
             if (self.cache.get(focused.hash, .touch)) |diff| {
-                var status = try surface.split_y(@intCast(diff.status.height), .none, .bottom);
-                try status.draw_bufln(diff.status.buf);
-
                 diff.y = @max(0, diff.y);
                 // +2 just so it is visually obvious in the UI that the diff has ended
                 diff.y = @min(diff.y, cast(i32, diff.buf.height) - surface.region.size.y + 2);
 
                 var skip_y = diff.y;
-                var it = utils_mod.LineIterator.init(diff.buf.buf);
+                var it = utils_mod.LineIterator.init(diff.status.buf);
+                while (it.next()) |line| {
+                    if (surface.y < skip_y) {
+                        skip_y -= 1;
+                        continue;
+                    }
+                    try surface.draw_bufln(line);
+
+                    if (surface.is_full()) break;
+                }
+                if (surface.is_full()) return;
+
+                it = utils_mod.LineIterator.init(diff.buf.buf);
                 while (it.next()) |line| {
                     if (surface.y < skip_y) {
                         skip_y -= 1;

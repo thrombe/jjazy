@@ -551,7 +551,7 @@ fn DiffSlate(Op: type) type {
         const Cache = utils_mod.DllLruCache(Hash, Diff, .{ .ptr = .follow });
 
         fn deinit(self: *@This()) void {
-            while (self.cache.pop()) |e| if (e.val.diff) |diff| {
+            while (self.cache.pop()) |e| if (e.val.buf) |diff| {
                 self.alloc.free(diff);
             };
             self.cache.deinit();
@@ -600,7 +600,7 @@ const FileTreeSlate = struct {
             alloc.free(self.files.buf);
         }
 
-        fn get_focused_file(self: *@This()) ?[]const u8 {
+        fn get_focused_file(self: *const @This()) ?[]const u8 {
             var it = utils_mod.LineIterator.init(self.files.buf);
             var i: i32 = 0;
             while (it.next()) |line| {
@@ -621,16 +621,6 @@ const FileTreeSlate = struct {
         self.cache.deinit();
     }
 
-    fn update(self: *@This(), status: jj_mod.Formatted, files: jj_mod.Formatted, app: *App) !void {
-        _ = app;
-        self.alloc.free(self.change_status.buf);
-        self.alloc.free(self.files.buf);
-        self.y = 0;
-        self.skip_y = 0;
-        self.files = files;
-        self.change_status = status;
-    }
-
     fn render(
         self: *@This(),
         surface: *Surface,
@@ -640,27 +630,30 @@ const FileTreeSlate = struct {
             e.val.deinit(self.alloc);
         };
 
-        self.y = @max(0, self.y);
-        if (self.skip_y > self.y) {
-            self.skip_y = self.y;
+        const change = app.log.focused_change;
+        const tree = self.cache.get(change, .touch) orelse return;
+
+        tree.y = @max(0, tree.y);
+        if (tree.skip_y > tree.y) {
+            tree.skip_y = tree.y;
         }
 
         var gutter = try surface.split_x(3, .none, .right);
-        _ = try gutter.split_y(@intCast(self.change_status.height), .gap, .bottom);
-        var status = try surface.split_y(@intCast(self.change_status.height), .gap, .bottom);
+        _ = try gutter.split_y(@intCast(tree.change_status.height), .gap, .bottom);
+        var status = try surface.split_y(@intCast(tree.change_status.height), .gap, .bottom);
 
-        try status.draw_buf(self.change_status.buf);
+        try status.draw_buf(tree.change_status.buf);
 
         var i: i32 = 0;
-        var it = utils_mod.LineIterator.init(self.files.buf);
+        var it = utils_mod.LineIterator.init(tree.files.buf);
         var ended = false;
         while (it.next()) |line| {
             defer i += 1;
-            if (self.skip_y > i) {
+            if (tree.skip_y > i) {
                 continue;
             }
 
-            if (i == self.y) {
+            if (i == tree.y) {
                 try gutter.draw_bufln("->");
                 try surface.draw_bufln(line);
             } else {
@@ -672,12 +665,12 @@ const FileTreeSlate = struct {
         }
         ended = it.ended();
 
-        if (ended and self.y >= i and i > 0) {
-            self.y = i - 1;
+        if (ended and tree.y >= i and i > 0) {
+            tree.y = i - 1;
         }
 
-        if (self.y >= i and !ended and i > 0) {
-            self.skip_y += 1;
+        if (tree.y >= i and !ended and i > 0) {
+            tree.skip_y += 1;
             try app._send_event(.rerender);
         }
     }
@@ -3095,11 +3088,12 @@ pub const App = struct {
                         try self._send_event(.scroll_update);
                     },
                     .file_tree => {
+                        const tree = self.file_tree.cache.get(self.log.focused_change, .touch).?;
                         switch (target.dir) {
-                            .up => self.file_tree.y -= 1,
-                            .down => self.file_tree.y += 1,
+                            .up => tree.y -= 1,
+                            .down => tree.y += 1,
                         }
-                        if (self.file_tree.get_focused_file()) |focused_file| {
+                        if (tree.get_focused_file()) |focused_file| {
                             const change = self.log.focused_change;
                             const key_lookup = FileShowSlate.Key{ .change_hash = change.hash, .path = focused_file };
                             if (self.file_show.filecache.get(key_lookup, .touch) == null) {
@@ -3138,7 +3132,7 @@ pub const App = struct {
                                 }
                             },
                             .file_tree => {
-                                if (self.file_tree.get_focused_file()) |focused_file| {
+                                if (self.file_tree.cache.get(self.log.focused_change, .touch).?.get_focused_file()) |focused_file| {
                                     const key_lookup = FileShowSlate.Key{ .change_hash = self.log.focused_change.hash, .path = focused_file };
                                     if (self.file_show.filecache.get(key_lookup, .touch)) |cfile| {
                                         switch (target.dir) {
@@ -3235,7 +3229,9 @@ pub const App = struct {
                 },
                 .switch_state_to_file_tree => {
                     self.state = .file_tree;
-                    try self.jj.requests.send(.{ .file_list = self.log.focused_change });
+                    if (self.file_tree.cache.get(self.log.focused_change, .touch) == null) {
+                        try self.jj.requests.send(.{ .file_list = self.log.focused_change });
+                    }
                 },
                 .toggle_help => {
                     self.show_help = !self.show_help;
@@ -3602,7 +3598,7 @@ pub const App = struct {
                 .diff => |req| {
                     switch (res.res) {
                         .with_status => |diff| {
-                            self.diff.cache.get(req.hash, .touch).?.* = .{ .diff = diff.buf.buf, .len = @intCast(diff.buf.height) };
+                            self.diff.cache.get(req.hash, .touch).?.* = .{ .buf = diff.buf.buf, .len = @intCast(diff.buf.height) };
                         },
                         .err => |buf| try self._toast(.{ .err = error.JJDiffFailed }, buf.buf),
                         else => unreachable,
@@ -3624,7 +3620,7 @@ pub const App = struct {
                 .opshow => |req| {
                     switch (res.res) {
                         .ok => |op| {
-                            self.opshow.cache.get(req.hash, .touch).?.* = .{ .diff = op.buf, .len = @intCast(op.height) };
+                            self.opshow.cache.get(req.hash, .touch).?.* = .{ .buf = op.buf, .len = @intCast(op.height) };
                         },
                         .err => |buf| try self._toast(.{ .err = error.JJOpShowFailed }, buf.buf),
                         else => unreachable,
@@ -3654,12 +3650,16 @@ pub const App = struct {
                 .file_list => |req| {
                     switch (res.res) {
                         .with_status => |buf| {
-                            if (std.mem.eql(u8, req.id[0..], self.log.focused_change.id[0..])) {
-                                try self.file_tree.update(buf.status, buf.buf, self);
-                            } else {
-                                self.alloc.free(buf.status.buf);
-                                self.alloc.free(buf.buf.buf);
-                            }
+                            const list = FileTreeSlate.FileList{ .change_status = buf.status, .files = buf.buf };
+                            try self.file_tree.cache.put(req, list);
+                            const focused_file = list.get_focused_file() orelse return;
+
+                            const path = try self.alloc.dupe(u8, focused_file);
+                            try self.file_show.filecache.put(.{ .change_hash = req.hash, .path = path }, .{});
+                            try self.jj.requests.send(.{ .file_show = .{
+                                .change = req,
+                                .path = path,
+                            } });
                         },
                         .err => |buf| try self._toast(.{ .err = error.JJFileListFailed }, buf.buf),
                         else => unreachable,
@@ -3715,14 +3715,17 @@ pub const App = struct {
                         }
                     },
                     .file_tree => {
-                        hasher.update(&std.mem.toBytes(self.file_tree.y));
-                        if (self.file_tree.get_focused_file()) |path| {
-                            hasher.update(path);
-                            const file = self.file_show.filecache.get(.{
-                                .path = path,
-                                .change_hash = self.log.focused_change.hash,
-                            }, .peek);
-                            if (file) |f| hasher.update(&std.mem.toBytes(f.y));
+                        const _tree = self.file_tree.cache.get(self.log.focused_change, .peek);
+                        if (_tree) |tree| {
+                            hasher.update(&std.mem.toBytes(tree.y));
+                            if (tree.get_focused_file()) |path| {
+                                hasher.update(path);
+                                const file = self.file_show.filecache.get(.{
+                                    .path = path,
+                                    .change_hash = self.log.focused_change.hash,
+                                }, .peek);
+                                if (file) |f| hasher.update(&std.mem.toBytes(f.y));
+                            }
                         }
                     },
                 }
@@ -3827,8 +3830,10 @@ pub const App = struct {
                 },
                 .file_tree => {
                     try self.file_tree.render(&status, self);
-                    const focused_file = self.file_tree.get_focused_file();
-                    try self.file_show.render(&diffs, self, self.log.focused_change, focused_file);
+                    if (self.file_tree.cache.get(self.log.focused_change, .touch)) |tree| {
+                        const focused_file = tree.get_focused_file();
+                        try self.file_show.render(&diffs, self, self.log.focused_change, focused_file);
+                    }
                 },
                 else => {
                     try self.log.render(&status, self, self.state, tropes);

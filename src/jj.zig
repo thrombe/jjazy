@@ -76,9 +76,14 @@ pub const JujutsuServer = struct {
         },
     };
 
+    pub const OkWithStatus = struct {
+        status: Formatted,
+        buf: Formatted,
+    };
     pub const Result = union(enum) {
-        ok: []u8,
-        err: []u8,
+        with_status: OkWithStatus,
+        ok: Formatted,
+        err: Formatted,
     };
 
     pub const Response = struct {
@@ -138,7 +143,7 @@ pub const JujutsuServer = struct {
                         utils_mod.dump_error(e);
                         continue;
                     };
-                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = res } } });
+                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(res) } } });
                 },
                 .oplog => {
                     const res = self.jjcall(&[_][]const u8{
@@ -153,7 +158,7 @@ pub const JujutsuServer = struct {
                         utils_mod.dump_error(e);
                         continue;
                     };
-                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = res } } });
+                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(res) } } });
                 },
                 .evolog => |change| {
                     const res = self.jjcall(&[_][]const u8{
@@ -169,7 +174,7 @@ pub const JujutsuServer = struct {
                         utils_mod.dump_error(e);
                         continue;
                     };
-                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = res } } });
+                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(res) } } });
                 },
                 .diff => |change| {
                     // TODO: these diffs can get pretty large, maybe add some kinda paging support to this?
@@ -186,7 +191,7 @@ pub const JujutsuServer = struct {
                         utils_mod.dump_error(e);
                         continue;
                     };
-                    defer self.alloc.free(stat);
+                    errdefer self.alloc.free(stat);
                     const diff = self.jjcall(&[_][]const u8{
                         "jj",
                         "--color",
@@ -200,14 +205,17 @@ pub const JujutsuServer = struct {
                         utils_mod.dump_error(e);
                         continue;
                     };
-                    defer self.alloc.free(diff);
+                    errdefer self.alloc.free(diff);
 
-                    var output = std.ArrayList(u8).init(self.alloc);
-                    errdefer output.deinit();
-                    try output.appendSlice(stat);
-                    try output.appendSlice(diff);
-
-                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = try output.toOwnedSlice() } } });
+                    try self.events.send(.{ .jj = .{
+                        .req = req,
+                        .res = .{
+                            .with_status = .{
+                                .status = .from(stat),
+                                .buf = .from(diff),
+                            },
+                        },
+                    } });
                 },
                 .opshow => |op| {
                     const stat = self.jjcall(&[_][]const u8{
@@ -225,7 +233,7 @@ pub const JujutsuServer = struct {
                         continue;
                     };
 
-                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = stat } } });
+                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(stat) } } });
                 },
                 .bookmark => {
                     const res = self.jjcall(&[_][]const u8{
@@ -239,9 +247,22 @@ pub const JujutsuServer = struct {
                         utils_mod.dump_error(e);
                         continue;
                     };
-                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = res } } });
+                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(res) } } });
                 },
                 .file_list => |change| {
+                    const stat = self.jjcall(&[_][]const u8{
+                        "jj",
+                        "--color",
+                        "always",
+                        "show",
+                        "--stat",
+                        "-r",
+                        change.hash[0..],
+                    }) catch |e| {
+                        utils_mod.dump_error(e);
+                        continue;
+                    };
+                    errdefer self.alloc.free(stat);
                     const res = self.jjcall(&[_][]const u8{
                         "jj",
                         "file",
@@ -252,7 +273,8 @@ pub const JujutsuServer = struct {
                         utils_mod.dump_error(e);
                         continue;
                     };
-                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = res } } });
+                    errdefer self.alloc.free(res);
+                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .with_status = .{ .status = .from(stat), .buf = .from(res) } } } });
                 },
                 .file_show => |payload| {
                     const cmd = try std.fmt.allocPrint(self.alloc, "jj file show -r {s} {s} | bat --color=always --style numbers,plain --file-name {s}", .{
@@ -269,7 +291,7 @@ pub const JujutsuServer = struct {
                         utils_mod.dump_error(e);
                         continue;
                     };
-                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = res } } });
+                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(res) } } });
                 },
             }
         }
@@ -347,8 +369,21 @@ pub const JujutsuServer = struct {
 };
 
 pub const Formatted = struct {
-    height: u32,
-    buf: []const u8,
+    height: u32 = 0,
+    buf: []u8 = &.{},
+
+    pub fn from(buf: []u8) @This() {
+        var it = utils_mod.LineIterator.init(buf);
+        var i: u32 = 0;
+        while (it.next()) |line| {
+            _ = line;
+            i += 1;
+        }
+        return .{
+            .height = i,
+            .buf = buf,
+        };
+    }
 };
 
 const template_sep = struct {

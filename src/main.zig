@@ -296,7 +296,7 @@ pub const TextInput = struct {
 const LogSlate = struct {
     y: i32 = 0,
     skip_y: i32 = 0,
-    status: []const u8,
+    status: jj_mod.Formatted,
     changes: jj_mod.Change.Parsed.Iterator,
     focused_change: jj_mod.Change = .{},
     alloc: std.mem.Allocator,
@@ -304,20 +304,20 @@ const LogSlate = struct {
     selected_changes: std.AutoArrayHashMap(jj_mod.Change, void),
 
     fn deinit(self: *@This()) void {
-        self.alloc.free(self.status);
+        self.alloc.free(self.status.buf);
         self.changes.deinit();
         self.selected_changes.deinit();
     }
 
-    fn update(self: *@This(), status: []const u8) !void {
-        self.alloc.free(self.status);
+    fn update(self: *@This(), status: jj_mod.Formatted) !void {
+        self.alloc.free(self.status.buf);
         self.status = status;
-        self.changes.reset(status);
+        self.changes.reset(status.buf);
 
         if (std.mem.eql(u8, self.focused_change.id[0..], (jj_mod.Change{}).id[0..]) and self.y == 0) {
             return;
         }
-        defer self.changes.reset(status);
+        defer self.changes.reset(status.buf);
         var i: i32 = 0;
         while (try self.changes.next()) |parsed| {
             defer i += 1;
@@ -345,7 +345,7 @@ const LogSlate = struct {
         std.mem.swap(Surface, surface, &gutter);
 
         var i: i32 = 0;
-        self.changes.reset(self.status);
+        self.changes.reset(self.status.buf);
         while (try self.changes.next()) |parsed| {
             defer i += 1;
             if (self.skip_y > i) {
@@ -581,14 +581,16 @@ const FileTreeSlate = struct {
     y: i32 = 0,
     skip_y: i32 = 0,
     alloc: std.mem.Allocator,
-    files: []const u8 = &.{},
+    change_status: jj_mod.Formatted = .{},
+    files: jj_mod.Formatted = .{},
 
     fn deinit(self: *@This()) void {
-        self.alloc.free(self.files);
+        self.alloc.free(self.change_status.buf);
+        self.alloc.free(self.files.buf);
     }
 
     fn get_focused_file(self: *@This()) ?[]const u8 {
-        var it = utils_mod.LineIterator.init(self.files);
+        var it = utils_mod.LineIterator.init(self.files.buf);
         var i: i32 = 0;
         while (it.next()) |line| {
             if (i == self.y) {
@@ -599,12 +601,14 @@ const FileTreeSlate = struct {
         return null;
     }
 
-    fn update(self: *@This(), files: []const u8, app: *App) !void {
+    fn update(self: *@This(), status: jj_mod.Formatted, files: jj_mod.Formatted, app: *App) !void {
         _ = app;
-        self.alloc.free(self.files);
+        self.alloc.free(self.change_status.buf);
+        self.alloc.free(self.files.buf);
         self.y = 0;
         self.skip_y = 0;
         self.files = files;
+        self.change_status = status;
     }
 
     fn render(
@@ -620,8 +624,13 @@ const FileTreeSlate = struct {
         var gutter = try surface.split_x(3, .none);
         std.mem.swap(Surface, surface, &gutter);
 
+        var status = try surface.split_y(@intCast(self.change_status.height), .gap);
+        std.mem.swap(Surface, surface, &status);
+
+        try status.draw_buf(self.change_status.buf);
+
         var i: i32 = 0;
-        var it = utils_mod.LineIterator.init(self.files);
+        var it = utils_mod.LineIterator.init(self.files.buf);
         var ended = false;
         while (it.next()) |line| {
             defer i += 1;
@@ -756,11 +765,11 @@ const BookmarkSlate = struct {
         self.bookmark_search_collector.deinit();
     }
 
-    fn update(self: *@This(), buf: []const u8, app: *App) !void {
+    fn update(self: *@This(), buf: jj_mod.Formatted, app: *App) !void {
         self.alloc.free(self.buf);
         self.selected_bookmark = null;
         self.y = 0;
-        self.buf = buf;
+        self.buf = buf.buf;
         self.input_hash = 0;
         try self._update_cache(app);
         try self.maybe_update_search(app);
@@ -1789,7 +1798,7 @@ pub const App = struct {
             .jj = jj,
             .log = .{
                 .alloc = alloc,
-                .status = &.{},
+                .status = .from(&.{}),
                 .changes = .init(alloc, &[_]u8{}),
                 .selected_changes = .init(alloc),
             },
@@ -1862,7 +1871,11 @@ pub const App = struct {
         defer {
             while (self.events.try_recv()) |e| switch (e) {
                 .jj => |res| switch (res.res) {
-                    .ok, .err => |buf| self.alloc.free(buf),
+                    .ok, .err => |buf| self.alloc.free(buf.buf),
+                    .with_status => |r| {
+                        self.alloc.free(r.status.buf);
+                        self.alloc.free(r.buf.buf);
+                    },
                 },
                 else => {},
             };
@@ -2808,7 +2821,7 @@ pub const App = struct {
                 try self._send_event(.rerender);
             },
             .scroll_update => {
-                self.log.changes.reset(self.log.status);
+                self.log.changes.reset(self.log.status.buf);
                 var i: i32 = 0;
                 while (try self.log.changes.next()) |parsed| {
                     const change = jj_mod.Change.from_parsed(&parsed);
@@ -3556,51 +3569,45 @@ pub const App = struct {
             .jj => |res| switch (res.req) {
                 .log => {
                     switch (res.res) {
-                        .ok => |buf| {
-                            try self.log.update(buf);
+                        .ok => |log| {
+                            try self.log.update(log);
                             try self._send_event(.scroll_update);
                         },
-                        .err => |buf| try self._toast(.{ .err = error.JJLogFailed }, buf),
+                        .err => |buf| try self._toast(.{ .err = error.JJLogFailed }, buf.buf),
+                        else => unreachable,
                     }
 
                     try self._send_event(.rerender);
                 },
                 .diff => |req| {
                     switch (res.res) {
-                        .ok => |buf| {
-                            self.diff.diffcache.get(req.hash, .touch).?.diff = buf;
-
-                            var it = utils_mod.LineIterator.init(buf);
-                            var len: i32 = 0;
-                            while (it.next()) |_| len += 1;
-                            self.diff.diffcache.get(req.hash, .touch).?.len = len;
+                        .with_status => |diff| {
+                            self.diff.diffcache.get(req.hash, .touch).?.* = .{ .diff = diff.buf.buf, .len = @intCast(diff.buf.height) };
                         },
-                        .err => |buf| try self._toast(.{ .err = error.JJDiffFailed }, buf),
+                        .err => |buf| try self._toast(.{ .err = error.JJDiffFailed }, buf.buf),
+                        else => unreachable,
                     }
                     try self._send_event(.rerender);
                 },
                 .oplog => {
                     switch (res.res) {
                         .ok => |buf| {
-                            try self.oplog.update(buf);
+                            try self.oplog.update(buf.buf);
                             try self._send_event(.op_update);
                         },
-                        .err => |buf| try self._toast(.{ .err = error.JJOpLogFailed }, buf),
+                        .err => |buf| try self._toast(.{ .err = error.JJOpLogFailed }, buf.buf),
+                        else => unreachable,
                     }
 
                     try self._send_event(.rerender);
                 },
                 .opshow => |req| {
                     switch (res.res) {
-                        .ok => |buf| {
-                            self.opshow.diffcache.get(req.hash, .touch).?.diff = buf;
-
-                            var it = utils_mod.LineIterator.init(buf);
-                            var len: i32 = 0;
-                            while (it.next()) |_| len += 1;
-                            self.opshow.diffcache.get(req.hash, .touch).?.len = len;
+                        .ok => |op| {
+                            self.opshow.diffcache.get(req.hash, .touch).?.* = .{ .diff = op.buf, .len = @intCast(op.height) };
                         },
-                        .err => |buf| try self._toast(.{ .err = error.JJOpShowFailed }, buf),
+                        .err => |buf| try self._toast(.{ .err = error.JJOpShowFailed }, buf.buf),
+                        else => unreachable,
                     }
                     try self._send_event(.rerender);
                 },
@@ -3608,9 +3615,10 @@ pub const App = struct {
                     _ = req;
                     switch (res.res) {
                         .ok => |buf| {
-                            self.alloc.free(buf);
+                            self.alloc.free(buf.buf);
                         },
-                        .err => |buf| try self._toast(.{ .err = error.JJEvLogFailed }, buf),
+                        .err => |buf| try self._toast(.{ .err = error.JJEvLogFailed }, buf.buf),
+                        else => unreachable,
                     }
                 },
                 .bookmark => {
@@ -3619,19 +3627,22 @@ pub const App = struct {
                             try self.bookmarks.update(buf, self);
                             try self._send_event(.rerender);
                         },
-                        .err => |buf| try self._toast(.{ .err = error.JJBookmarkFailed }, buf),
+                        .err => |buf| try self._toast(.{ .err = error.JJBookmarkFailed }, buf.buf),
+                        else => unreachable,
                     }
                 },
                 .file_list => |req| {
                     switch (res.res) {
-                        .ok => |buf| {
+                        .with_status => |buf| {
                             if (std.mem.eql(u8, req.id[0..], self.log.focused_change.id[0..])) {
-                                try self.file_tree.update(buf, self);
+                                try self.file_tree.update(buf.status, buf.buf, self);
                             } else {
-                                self.alloc.free(buf);
+                                self.alloc.free(buf.status.buf);
+                                self.alloc.free(buf.buf.buf);
                             }
                         },
-                        .err => |buf| try self._toast(.{ .err = error.JJFileListFailed }, buf),
+                        .err => |buf| try self._toast(.{ .err = error.JJFileListFailed }, buf.buf),
+                        else => unreachable,
                     }
                     try self._send_event(.rerender);
                 },
@@ -3640,14 +3651,10 @@ pub const App = struct {
                         .ok => |buf| {
                             const key = FileShowSlate.Key{ .change_hash = req.change.hash, .path = req.path };
                             const entry = self.file_show.filecache.get(key, .touch).?;
-                            entry.content = buf;
-
-                            var it = utils_mod.LineIterator.init(buf);
-                            var len: i32 = 0;
-                            while (it.next()) |_| len += 1;
-                            entry.len = len;
+                            entry.* = .{ .content = buf.buf, .len = @intCast(buf.height) };
                         },
-                        .err => |buf| try self._toast(.{ .err = error.JJFileShowFailed }, buf),
+                        .err => |buf| try self._toast(.{ .err = error.JJFileShowFailed }, buf.buf),
+                        else => unreachable,
                     }
                     try self._send_event(.rerender);
                 },

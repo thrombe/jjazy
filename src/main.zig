@@ -120,7 +120,7 @@ const Surface = struct {
         self.y_scroll -= res.skipped;
     }
 
-    fn split_x(self: *@This(), x: i32, split: Split) !@This() {
+    fn split_x(self: *@This(), x: i32, split: Split, keep: enum { left, right }) !@This() {
         const regions = self.region.border_sub(.splat(@intFromBool(self.border))).split_x(x, split != .none);
 
         if (split == .border) {
@@ -134,7 +134,7 @@ const Surface = struct {
             );
         }
 
-        const other = @This(){
+        var other = @This(){
             .id = try self.screen.get_cmdbuf_id(self.depth),
             .depth = self.depth,
             .screen = self.screen,
@@ -148,10 +148,15 @@ const Surface = struct {
             .region = regions.left,
         };
 
+        switch (keep) {
+            .left => {},
+            .right => std.mem.swap(@This(), self, &other),
+        }
+
         return other;
     }
 
-    fn split_y(self: *@This(), y: i32, split: Split) !@This() {
+    fn split_y(self: *@This(), y: i32, split: Split, keep: enum { top, bottom }) !@This() {
         const regions = self.region.border_sub(.splat(@intFromBool(self.border))).split_y(y, split != .none);
 
         if (split == .border) {
@@ -165,7 +170,7 @@ const Surface = struct {
             );
         }
 
-        const other = @This(){
+        var other = @This(){
             .id = try self.screen.get_cmdbuf_id(self.depth),
             .depth = self.depth,
             .screen = self.screen,
@@ -178,6 +183,11 @@ const Surface = struct {
             .screen = self.screen,
             .region = regions.top,
         };
+
+        switch (keep) {
+            .top => {},
+            .bottom => std.mem.swap(@This(), self, &other),
+        }
 
         return other;
     }
@@ -341,8 +351,7 @@ const LogSlate = struct {
             self.skip_y = self.y;
         }
 
-        var gutter = try surface.split_x(3, .none);
-        std.mem.swap(Surface, surface, &gutter);
+        var gutter = try surface.split_x(3, .none, .right);
 
         var i: i32 = 0;
         self.changes.reset(self.status.buf);
@@ -489,8 +498,7 @@ const OpLogSlate = struct {
             self.skip_y = self.y;
         }
 
-        var gutter = try surface.split_x(3, .none);
-        std.mem.swap(Surface, surface, &gutter);
+        var gutter = try surface.split_x(3, .none, .right);
 
         var i: i32 = 0;
         self.ops.reset(self.oplog);
@@ -621,11 +629,9 @@ const FileTreeSlate = struct {
             self.skip_y = self.y;
         }
 
-        var gutter = try surface.split_x(3, .none);
-        std.mem.swap(Surface, surface, &gutter);
-
-        var status = try surface.split_y(@intCast(self.change_status.height), .gap);
-        std.mem.swap(Surface, surface, &status);
+        var gutter = try surface.split_x(3, .none, .right);
+        _ = try gutter.split_y(@intCast(self.change_status.height), .gap, .bottom);
+        var status = try surface.split_y(@intCast(self.change_status.height), .gap, .bottom);
 
         try status.draw_buf(self.change_status.buf);
 
@@ -835,8 +841,7 @@ const BookmarkSlate = struct {
         try surface.draw_border_heading(" Bookmarks ");
         try surface.apply_style(.reset);
 
-        var gutter = try surface.split_x(2, .gap);
-        std.mem.swap(Surface, surface, &gutter);
+        var gutter = try surface.split_x(2, .gap, .right);
 
         self.y = @max(0, self.y);
         if (self.skip_y > self.y) {
@@ -1278,8 +1283,7 @@ const HelpSlate = struct {
         try surface.apply_style(.reset);
 
         const desc = surface;
-        var keys = try desc.split_x(20, .gap);
-        std.mem.swap(Surface, desc, &keys);
+        var keys = try desc.split_x(20, .gap, .right);
 
         var i: u32 = 0;
         while (!desc.is_full()) {
@@ -1349,11 +1353,10 @@ const Toaster = struct {
 
             switch (dir) {
                 .up => {
-                    toast = try surface.split_y(height, .gap);
-                    std.mem.swap(Surface, &toast, surface);
+                    toast = try surface.split_y(height, .gap, .bottom);
                 },
                 .down => {
-                    toast = try surface.split_y(-height, .gap);
+                    toast = try surface.split_y(-height, .gap, .top);
                 },
             }
 
@@ -3744,7 +3747,7 @@ pub const App = struct {
         const temp = self.arena.allocator();
 
         if (options.env == .debug) {
-            var colors = try surface.split_x(-32, .none);
+            var colors = try surface.split_x(-32, .none, .left);
 
             try colors.apply_style(.{ .foreground_color = .from_theme(.default_background) });
             var j: u8 = 0;
@@ -3793,11 +3796,11 @@ pub const App = struct {
             try status.clear();
             // try status.draw_border(symbols.thin.rounded);
 
-            var bar = try status.split_y(-1, .none);
+            var bar = try status.split_y(-1, .none, .top);
             // defer self._register_mouse_region(.none, &bar);
             try self.render_status_bar(&bar);
 
-            var diffs = try status.split_x(cast(i32, cast(f32, status.size().x) * self.x_split), .border);
+            var diffs = try status.split_x(cast(i32, cast(f32, status.size().x) * self.x_split), .border, .left);
             defer self._register_mouse_region(.diff, &diffs);
 
             switch (self.state) {
@@ -3829,8 +3832,7 @@ pub const App = struct {
                 defer self._register_mouse_region(.bookmarks, &surface);
 
                 if (tropes.bookmark_search_enabled or self.text_input.text.items.len > 0) {
-                    var input_box = try surface.split_y(3, .none);
-                    std.mem.swap(@TypeOf(surface), &surface, &input_box);
+                    var input_box = try surface.split_y(3, .none, .bottom);
 
                     try input_box.clear();
                     try input_box.draw_border(symbols.thin.rounded);

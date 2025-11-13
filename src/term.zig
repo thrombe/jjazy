@@ -1755,6 +1755,7 @@ pub const Screen = struct {
         y_offset: i32,
         x_offset: i32,
         y_skip: u32,
+        x_skip: u32,
     ) !struct {
         x: i32,
         y: i32,
@@ -1769,6 +1770,7 @@ pub const Screen = struct {
 
         var last_y: i32 = y_offset;
         var last_x: i32 = out.origin.x + x_offset;
+        var skip_x: i32 = cast(i32, x_skip);
         var skipped: i32 = 0;
 
         var line_it = utils_mod.LineIterator{ .buf = buf };
@@ -1792,13 +1794,24 @@ pub const Screen = struct {
                         try self.writer(id).writeAll(token.grapheme);
                     }
                 } else if (last_x <= end.x) {
-                    try self.writer(id).writeAll(token.grapheme);
-                    last_x += token.visual_width orelse 0;
+                    if (skip_x > 0) {
+                        skip_x -= token.visual_width orelse 0;
+                        if (skip_x < 0) {
+                            for (0..cast(usize, -skip_x)) |_| {
+                                try self.writer(id).writeAll(" ");
+                            }
+                            skip_x = 0;
+                        }
+                    } else {
+                        try self.writer(id).writeAll(token.grapheme);
+                        last_x += token.visual_width orelse 0;
+                    }
                 }
             }
 
             line = line_it.next() orelse break;
             last_x = out.origin.x;
+            skip_x = cast(i32, x_skip);
             last_y += 1;
         }
 

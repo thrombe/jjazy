@@ -23,6 +23,7 @@ const Surface = struct {
     x: i32 = 0,
 
     y_scroll: i32 = 0,
+    x_scroll: i32 = 0,
     border: bool = false,
 
     id: u32,
@@ -94,7 +95,7 @@ const Surface = struct {
                 .x = @max(0, self.region.size.x - 2),
                 .y = 1,
             },
-        }, 0, 0, 0);
+        }, 0, 0, 0, @intCast(self.x_scroll + @max(0, -self.region.origin.x)));
     }
 
     fn draw_bufln(self: *@This(), buf: []const u8) !void {
@@ -114,6 +115,7 @@ const Surface = struct {
             self.y,
             self.x,
             cast(u32, self.y_scroll),
+            @intCast(self.x_scroll + @max(0, -self.region.origin.x)),
         );
         self.y = res.y;
         self.x = res.x;
@@ -3908,7 +3910,8 @@ pub const App = struct {
     fn render(self: *@This(), tropes: anytype) !void {
         defer self.render_count += 1;
 
-        self.x_split = @min(@max(0.0, self.x_split), 1.0);
+        self.x_split = @min(self.x_split, 1.0);
+        self.x_split = @max(self.x_split, -1.0);
         self.mouse_regions.clearRetainingCapacity();
 
         {
@@ -3921,8 +3924,14 @@ pub const App = struct {
             // defer self._register_mouse_region(.none, &bar);
             try self.render_status_bar(&bar);
 
-            var diffs = try status.split_x(cast(i32, cast(f32, status.size().x) * self.x_split), .border, .left);
+            const size = status.size();
+            var diffs = try status.split_x(cast(i32, cast(f32, size.x) * @max(self.x_split, 0)), .border, .left);
             defer self._register_mouse_region(.diff, &diffs);
+
+            if (self.x_split < 0) {
+                const off = -cast(i32, cast(f32, size.x) * self.x_split);
+                diffs.x_scroll += off;
+            }
 
             switch (self.state) {
                 .oplog => {

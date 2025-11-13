@@ -545,30 +545,38 @@ fn DiffSlate(Op: type) type {
         const Hash = Op.Hash;
         const Diff = struct {
             y: i32 = 0,
-            len: i32 = 0,
-            buf: ?[]const u8 = null,
+            buf: jj_mod.Formatted = .{},
+            status: jj_mod.Formatted = .{},
+
+            fn deinit(self: *const @This(), alloc: std.mem.Allocator) void {
+                alloc.free(self.buf.buf);
+                alloc.free(self.status.buf);
+            }
         };
         const Cache = utils_mod.DllLruCache(Hash, Diff, .{ .ptr = .follow });
 
         fn deinit(self: *@This()) void {
-            while (self.cache.pop()) |e| if (e.val.buf) |diff| {
-                self.alloc.free(diff);
-            };
+            while (self.cache.pop()) |e| {
+                e.val.deinit(self.alloc);
+            }
             self.cache.deinit();
         }
 
         fn render(self: *@This(), surface: *Surface, app: *App, focused: Op) !void {
             _ = app;
-            defer while (self.cache.retaining_pop(100)) |diff| if (diff.val.buf) |buf| {
-                self.alloc.free(buf);
+            defer while (self.cache.retaining_pop(100)) |diff| {
+                diff.val.deinit(self.alloc);
             };
-            if (self.cache.get(focused.hash, .touch)) |cdiff| if (cdiff.buf) |diff| {
-                cdiff.y = @max(0, cdiff.y);
-                // +2 just so it is visually obvious in the UI that the diff has ended
-                cdiff.y = @min(cdiff.y, cdiff.len - surface.region.size.y + 2);
+            if (self.cache.get(focused.hash, .touch)) |diff| {
+                var status = try surface.split_y(@intCast(diff.status.height), .none, .bottom);
+                try status.draw_bufln(diff.status.buf);
 
-                var skip_y = cdiff.y;
-                var it = utils_mod.LineIterator.init(diff);
+                diff.y = @max(0, diff.y);
+                // +2 just so it is visually obvious in the UI that the diff has ended
+                diff.y = @min(diff.y, cast(i32, diff.buf.height) - surface.region.size.y + 2);
+
+                var skip_y = diff.y;
+                var it = utils_mod.LineIterator.init(diff.buf.buf);
                 while (it.next()) |line| {
                     if (surface.y < skip_y) {
                         skip_y -= 1;
@@ -580,7 +588,7 @@ fn DiffSlate(Op: type) type {
                 }
             } else {
                 try surface.draw_buf(" loading ... ");
-            };
+            }
         }
     };
 }
@@ -3620,7 +3628,7 @@ pub const App = struct {
                 .diff => |req| {
                     switch (res.res) {
                         .with_status => |diff| {
-                            self.diff.cache.get(req.hash, .touch).?.* = .{ .buf = diff.buf.buf, .len = @intCast(diff.buf.height) };
+                            self.diff.cache.get(req.hash, .touch).?.* = .{ .buf = diff.buf, .status = diff.status };
                         },
                         .err => |buf| try self._toast(.{ .err = error.JJDiffFailed }, buf.buf),
                         else => unreachable,
@@ -3642,7 +3650,7 @@ pub const App = struct {
                 .opshow => |req| {
                     switch (res.res) {
                         .ok => |op| {
-                            self.opshow.cache.get(req.hash, .touch).?.* = .{ .buf = op.buf, .len = @intCast(op.height) };
+                            self.opshow.cache.get(req.hash, .touch).?.* = .{ .buf = op };
                         },
                         .err => |buf| try self._toast(.{ .err = error.JJOpShowFailed }, buf.buf),
                         else => unreachable,

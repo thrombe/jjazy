@@ -1122,6 +1122,55 @@ pub const TermInputIterator = struct {
     }
 };
 
+pub const Icons = struct {
+    files: std.StringHashMap(Icon),
+    exts: std.StringHashMap(Icon),
+
+    const icons = @import("icons.zig");
+    const Icon = struct { icon: []const u8, color: Color };
+    const Color = TermStyledGraphemeIterator.Color;
+    const ColorParser = @import("math.zig").ColorParse.Runtime;
+
+    pub fn init(alloc: std.mem.Allocator) !@This() {
+        var files = std.StringHashMap(Icon).init(alloc);
+        errdefer files.deinit();
+
+        for (icons.files) |file| {
+            const color = try ColorParser.hex_u8rgb(struct { r: u8, g: u8, b: u8 }, file.color);
+            try files.put(file.name, .{ .icon = file.icon, .color = .{ .bit24 = .{ color.r, color.g, color.b } } });
+        }
+
+        var exts = std.StringHashMap(Icon).init(alloc);
+        errdefer exts.deinit();
+
+        for (icons.exts) |ext| {
+            const color = try ColorParser.hex_u8rgb(struct { r: u8, g: u8, b: u8 }, ext.color);
+            try exts.put(ext.name, .{ .icon = ext.icon, .color = .{ .bit24 = .{ color.r, color.g, color.b } } });
+        }
+
+        return .{
+            .files = files,
+            .exts = exts,
+        };
+    }
+
+    pub fn deinit(self: *@This()) void {
+        self.files.deinit();
+        self.exts.deinit();
+    }
+
+    pub fn get_icon(self: *const @This(), path: []const u8) Icon {
+        const file_icon = self.files.get(std.fs.path.basename(path));
+        const ext = std.fs.path.extension(path);
+        const ext_icon = self.exts.get(ext[@min(1, ext.len)..]);
+        const icon = file_icon orelse ext_icon orelse Icons.Icon{
+            .icon = Icons.icons.file[0..],
+            .color = .from_theme(.info),
+        };
+        return icon;
+    }
+};
+
 pub const Term = struct {
     tty: std.fs.File,
     screen: Region = .{ .size = .{} },

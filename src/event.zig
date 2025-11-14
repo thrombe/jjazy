@@ -1410,6 +1410,24 @@ pub const App = struct {
                 null,
                 .{ .scroll = .{ .target = .diff, .dir = .up } },
             );
+
+            try map.add_many(
+                &[_]Key{
+                    .{ .functional = .{ .key = .page_up, .action = .press } },
+                    .{ .functional = .{ .key = .page_up, .action = .repeat } },
+                },
+                null,
+                .{ .scroll = .{ .target = .diff, .dir = .up } },
+            );
+            try map.add_many(
+                &[_]Key{
+                    .{ .functional = .{ .key = .page_down, .action = .press } },
+                    .{ .functional = .{ .key = .page_down, .action = .repeat } },
+                },
+                null,
+                .{ .scroll = .{ .target = .diff, .dir = .down } },
+            );
+
             try map.add_many(
                 &[_]Key{
                     .{ .key = .{ .key = 'h', .action = .press, .mod = .{ .ctrl = true } } },

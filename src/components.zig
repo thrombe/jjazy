@@ -798,6 +798,21 @@ const LogSlate = struct {
         }
     }
 
+    pub fn focus_commit(self: *@This(), commit_id: []const u8) !void {
+        self.changes.reset(self.status.buf);
+        var i: i32 = 0;
+        while (try self.changes.next()) |parsed| {
+            defer i += 1;
+            const change = jj_mod.Change.from_parsed(&parsed);
+            if (std.mem.eql(u8, parsed.parsed.commit_id, commit_id)) {
+                self.y = i;
+                self.skip_y = @max(self.y - 2, 0);
+                self.focused_change = change;
+                break;
+            }
+        }
+    }
+
     fn render(
         self: *@This(),
         surface: *Surface,
@@ -1429,7 +1444,9 @@ pub const Renderer = struct {
                     try self.text_input.draw(&input_box, tropes.bookmark_search_enabled);
                 }
 
-                if (state == .bookmark) {
+                if (std.meta.eql(state, .{ .bookmark = .view_goto }) or std.meta.eql(state, .{ .bookmark = .search_goto })) {
+                    try self.bookmarks.render(&surface, self, app, .{}, .{});
+                } else if (state == .bookmark) {
                     try self.bookmarks.render(&surface, self, app, .{ .remotes = false }, .{});
                 } else if (std.meta.eql(state, .{ .git = .push }) or std.meta.eql(state, .{ .git = .push_search })) {
                     try self.bookmarks.render(&surface, self, app, .{ .remotes = false }, .{});

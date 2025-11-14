@@ -215,6 +215,10 @@ pub const action_help = [_]struct {
         .help = "Create new bookmark",
     },
     .{
+        .action = .switch_state_to_bookmark_goto,
+        .help = "Goto bookmark",
+    },
+    .{
         .action = .new_commit_from_bookmark,
         .help = "jj new on selected bookmark",
     },
@@ -278,6 +282,10 @@ pub const action_help = [_]struct {
         .action = .{ .end_search = .{ .reset = false } },
         .help = "End Search",
     },
+    .{
+        .action = .apply_bookmark_goto,
+        .help = "Goto selected bookmark",
+    },
 };
 
 pub const State = union(enum(u8)) {
@@ -288,6 +296,8 @@ pub const State = union(enum(u8)) {
         view,
         create,
         search,
+        view_goto,
+        search_goto,
     },
     git: enum {
         none,
@@ -389,6 +399,8 @@ pub const Action = union(enum) {
     apply_jj_bookmark_create_from_input_buffer_on_selected_change,
     apply_jj_git_fetch,
     apply_jj_git_push_all,
+    switch_state_to_bookmark_goto,
+    apply_bookmark_goto,
     switch_state_to_git_fetch,
     switch_state_to_git_push,
     apply_jj_git_push_selected: struct { allow_new: bool },
@@ -1136,6 +1148,7 @@ pub const App = struct {
                 .file_tree,
                 .command,
                 .{ .bookmark = .view },
+                .{ .bookmark = .view_goto },
                 .{ .bookmark = .create },
                 .{ .git = .none },
                 .{ .git = .fetch },
@@ -1173,7 +1186,9 @@ pub const App = struct {
                 .oplog,
                 .file_tree,
                 .{ .bookmark = .view },
+                .{ .bookmark = .view_goto },
                 .{ .bookmark = .search },
+                .{ .bookmark = .search_goto },
                 .{ .git = .none },
                 .{ .git = .fetch },
                 .{ .git = .push },
@@ -1464,6 +1479,7 @@ pub const App = struct {
             defer map.reset();
             try map.for_states(&[_]State{
                 .{ .bookmark = .view },
+                .{ .bookmark = .view_goto },
                 .{ .git = .push },
                 .{ .git = .fetch },
             });
@@ -1675,6 +1691,7 @@ pub const App = struct {
             defer map.reset();
             try map.for_states(&[_]State{
                 .{ .bookmark = .search },
+                .{ .bookmark = .search_goto },
                 .{ .git = .fetch_search },
                 .{ .git = .push_search },
             });
@@ -1728,12 +1745,6 @@ pub const App = struct {
         );
         try map.add_one_for_state(
             .{ .bookmark = .view },
-            .{ .key = .{ .key = 'n' } },
-            null,
-            .new_commit_from_bookmark,
-        );
-        try map.add_one_for_state(
-            .{ .bookmark = .view },
             .{ .key = .{ .key = 'm' } },
             null,
             .{ .move_bookmark_to_selected = .{ .allow_backwards = false } },
@@ -1762,10 +1773,17 @@ pub const App = struct {
             null,
             .{ .apply_jj_bookmark_forget = .{ .include_remotes = true } },
         );
+        try map.add_one_for_state(
+            .{ .bookmark = .view },
+            .{ .key = .{ .key = 'g' } },
+            null,
+            .switch_state_to_bookmark_goto,
+        );
         {
             defer map.reset();
             try map.for_states(&[_]State{
                 .{ .bookmark = .view },
+                .{ .bookmark = .view_goto },
                 .{ .git = .fetch },
                 .{ .git = .push },
             });
@@ -1775,6 +1793,18 @@ pub const App = struct {
                 .start_search,
             );
         }
+        try map.add_one_for_state(
+            .{ .bookmark = .view_goto },
+            .{ .functional = .{ .key = .enter } },
+            null,
+            .apply_bookmark_goto,
+        );
+        try map.add_one_for_state(
+            .{ .bookmark = .view_goto },
+            .{ .key = .{ .key = 'n' } },
+            null,
+            .new_commit_from_bookmark,
+        );
         try map.add_one_for_state(
             .{ .bookmark = .create },
             .{ .functional = .{ .key = .enter } },
@@ -1892,11 +1922,11 @@ pub const App = struct {
                     .input_text = true,
                     .show_help = true,
                 },
-                .view => .{
+                .view, .view_goto => .{
                     .bookmarks_enabled = true,
                     .show_help = true,
                 },
-                .search => .{
+                .search, .search_goto => .{
                     .bookmarks_enabled = true,
                     .bookmark_search_enabled = true,
                     .input_text = true,
@@ -2132,6 +2162,10 @@ pub const App = struct {
                                 self.state = .{ .bookmark = .search };
                                 return;
                             },
+                            .view_goto => {
+                                self.state = .{ .bookmark = .search_goto };
+                                return;
+                            },
                             else => {},
                         },
                         .git => |s| switch (s) {
@@ -2156,6 +2190,10 @@ pub const App = struct {
                         .bookmark => |s| switch (s) {
                             .search => {
                                 self.state = .{ .bookmark = .view };
+                                return;
+                            },
+                            .search_goto => {
+                                self.state = .{ .bookmark = .view_goto };
                                 return;
                             },
                             else => {},
@@ -2327,6 +2365,9 @@ pub const App = struct {
                 .switch_state_to_bookmarks_view => {
                     self.state = .{ .bookmark = .view };
                     try self.jj.requests.send(.bookmark);
+                },
+                .switch_state_to_bookmark_goto => {
+                    self.state = .{ .bookmark = .view_goto };
                 },
                 .switch_state_to_file_tree => {
                     self.state = .file_tree;
@@ -2542,6 +2583,16 @@ pub const App = struct {
                 },
                 .switch_state_to_bookmark_create => {
                     self.state = .{ .bookmark = .create };
+                },
+                .apply_bookmark_goto => {
+                    defer {
+                        self.renderer.text_input.reset();
+                        self.state = .log;
+                    }
+
+                    const bookmark = self.renderer.bookmarks.selected_bookmark orelse return;
+
+                    try self.renderer.log.focus_commit(bookmark.parsed.target[0]);
                 },
                 .new_commit_from_bookmark => {
                     defer {

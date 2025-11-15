@@ -2843,11 +2843,21 @@ pub const App = struct {
                             }
                         },
                         .dir => {
-                            if (node.collapsed and v.collapse) {
+                            if (v.collapse) {
+                                if (!node.collapsed) {
+                                    node.collapsed = true;
+                                    return;
+                                }
+
+                                const parent = try list.focus_parent();
+                                if (parent) |_| {
+                                    return;
+                                }
+
                                 try self._handle_event(.{ .action = .switch_state_to_log });
-                                return;
+                            } else {
+                                node.collapsed = false;
                             }
-                            node.collapsed = v.collapse;
                         },
                     }
                 },

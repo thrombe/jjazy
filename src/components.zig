@@ -583,7 +583,7 @@ fn DiffSlate(Op: type) type {
             if (self.get(focused.hash, .touch)) |diff| {
                 diff.y = @max(0, diff.y);
                 // +2 just so it is visually obvious in the UI that the diff has ended
-                diff.y = @min(diff.y, cast(i32, diff.buf.height) - surface.region.size.y + 2);
+                diff.y = @min(diff.y, cast(i32, diff.buf.height + diff.status.height) - surface.region.size.y + 2);
 
                 var skip_y = diff.y;
                 var it = utils_mod.LineIterator.init(diff.status.buf);

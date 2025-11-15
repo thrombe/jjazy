@@ -1012,8 +1012,10 @@ const OpLogSlate = struct {
 };
 
 pub const FileTree = struct {
+    alloc: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
 
+    height: u32 = 0,
     root: Node,
 
     pub const Node = struct {
@@ -1021,16 +1023,17 @@ pub const FileTree = struct {
         name: []const u8,
         has_conflict_somewhere_inside: bool = false,
         typ: enum { dir, file },
+        depth: u32,
 
-        collapsed: bool = true,
+        collapsed: bool = false,
         children_names: std.StringHashMapUnmanaged(u32) = .empty,
         children: std.ArrayListUnmanaged(Node) = .empty,
 
-        const root = @This(){ .path = "./", .name = "", .typ = .dir, .collapsed = false };
+        pub const root = @This(){ .path = "./", .name = "", .depth = 0, .typ = .dir, .collapsed = false };
     };
 
     pub fn init(alloc: std.mem.Allocator) @This() {
-        return .{ .arena = .init(alloc), .root = .root };
+        return .{ .alloc = alloc, .arena = .init(alloc), .root = .root };
     }
 
     pub fn deinit(self: *@This()) void {
@@ -1044,7 +1047,8 @@ pub const FileTree = struct {
 
     pub fn consume_file_path(self: *@This(), path: []const u8, conflict: bool) !void {
         const alloc = self.arena.allocator();
-        const it = try std.fs.path.componentIterator(path);
+        var it = try std.fs.path.componentIterator(path);
+
         var node = &self.root;
         while (it.next()) |comp| {
             const child_index = node.children_names.get(comp.name) orelse blk: {
@@ -1055,15 +1059,78 @@ pub const FileTree = struct {
                     .path = comp.path,
                     .name = comp.name,
                     .typ = if (it.peekNext() == null) .file else .dir,
+                    .depth = node.depth + 1,
                 };
                 break :blk index;
             };
             const child = &node.children.items[child_index];
 
             child.has_conflict_somewhere_inside = child.has_conflict_somewhere_inside or conflict;
+            self.height = @max(self.height, child.depth);
             node = child;
         }
     }
+
+    pub fn sort_dirs_first(self: *@This()) void {
+        _ = self;
+    }
+
+    pub fn iterator(self: *@This()) !Iterator {
+        var indices = try std.ArrayListUnmanaged(Iterator.IterNode).initCapacity(self.alloc, self.height + 1);
+        indices.appendAssumeCapacity(.{ .node = &self.root, .index = 0 });
+        return .{
+            .alloc = self.alloc,
+            .root = &self.root,
+            .indices = indices,
+        };
+    }
+
+    pub const Iterator = struct {
+        root: *Node,
+        alloc: std.mem.Allocator,
+        indices: std.ArrayListUnmanaged(IterNode),
+
+        const IterNode = struct {
+            node: *Node,
+            index: u32,
+        };
+
+        pub fn deinit(self: *@This()) void {
+            self.indices.deinit(self.alloc);
+        }
+
+        pub fn next(self: *@This()) ?*Node {
+            // If stack empty → finished
+            var frame = if (self.indices.items.len > 0) &self.indices.items[self.indices.items.len - 1] else return null;
+
+            // Otherwise try to descend into children
+            if (frame.node.children.items.len > frame.index and !frame.node.collapsed) {
+                // Push next child
+                const child = &frame.node.children.items[frame.index];
+                frame.index += 1;
+                self.indices.appendAssumeCapacity(.{
+                    .node = child,
+                    .index = 0,
+                });
+                return child;
+            }
+
+            // Finished this node → pop and continue upward
+            _ = self.indices.pop();
+
+            // Continue from parent frame via tail recursion
+            return self.next();
+        }
+
+        pub fn reset(self: *@This()) void {
+            self.indices.clearRetainingCapacity();
+            self.indices.appendAssumeCapacity(.{ .node = self.root, .index = 0 });
+        }
+
+        pub fn ended(self: *@This()) bool {
+            return self.indices.getLastOrNull() == null;
+        }
+    };
 };
 
 pub const FileTreeSlate = struct {
@@ -1074,28 +1141,71 @@ pub const FileTreeSlate = struct {
     pub const FileList = struct {
         y: i32 = 0,
         skip_y: i32 = 0,
-        focused_file: []const u8 = &.{},
+        focused_node: ?*const FileTree.Node = null,
         change_status: jj_mod.Formatted = .{},
         files: jj_mod.Formatted = .{},
+        tree: FileTree,
+        it: ?FileTree.Iterator = null,
 
-        fn deinit(self: *const @This(), alloc: std.mem.Allocator) void {
+        pub fn init(
+            alloc: std.mem.Allocator,
+            it: *jj_mod.FileTreeEntry.Parsed.Iterator,
+            change_status: jj_mod.Formatted,
+            files: jj_mod.Formatted,
+        ) !@This() {
+            var tree = FileTree.init(alloc);
+            errdefer tree.deinit();
+
+            it.reset(files.buf);
+            while (try it.next()) |parsed| {
+                switch (parsed.parsed.file_type) {
+                    .file => {},
+                    .conflict => {},
+                    else => continue,
+                }
+                try tree.consume_file_path(parsed.parsed.path, parsed.parsed.conflict);
+            }
+
+            tree.sort_dirs_first();
+            return .{
+                .change_status = change_status,
+                .files = files,
+                .tree = tree,
+            };
+        }
+
+        fn deinit(self: *@This(), alloc: std.mem.Allocator) void {
             alloc.free(self.change_status.buf);
             alloc.free(self.files.buf);
+            self.tree.deinit();
+            if (self.it) |*it| it.deinit();
         }
 
         pub fn get_focused_file(self: *const @This()) ?[]const u8 {
-            if (self.focused_file.len == 0) return null;
-            return self.focused_file;
+            if (self.focused_node == null) return null;
+            if (self.focused_node.?.typ != .file) return null;
+            return self.focused_node.?.path;
         }
     };
     pub const FileListCache = utils_mod.DllLruCache(jj_mod.Change, FileList, .{ .ptr = .follow });
 
     fn deinit(self: *@This()) void {
         while (self.cache.pop()) |e| {
-            e.val.deinit(self.alloc);
+            var val = e.val;
+            val.deinit(self.alloc);
         }
         self.cache.deinit();
         self.it.deinit();
+    }
+
+    pub fn add_list(self: *@This(), change: jj_mod.Change, change_status: jj_mod.Formatted, files: jj_mod.Formatted) !*FileList {
+        var list = try FileList.init(self.alloc, &self.it, change_status, files);
+        errdefer list.deinit(self.alloc);
+
+        const res = try self.cache.getOrPut(change);
+        if (res.found_existing) return error.ListExists;
+        res.val.* = list;
+        return res.val;
     }
 
     fn render(
@@ -1105,11 +1215,16 @@ pub const FileTreeSlate = struct {
         app: *App,
     ) !void {
         defer while (self.cache.retaining_pop(100)) |e| {
-            e.val.deinit(self.alloc);
+            var val = e.val;
+            val.deinit(self.alloc);
         };
 
         const change = renderer.log.focused_change;
         const tree = self.cache.get(change, .touch) orelse return;
+        if (tree.it == null) {
+            tree.it = try tree.tree.iterator();
+        }
+        var it = &tree.it.?;
 
         tree.y = @max(0, tree.y);
         if (tree.skip_y > tree.y) {
@@ -1122,25 +1237,19 @@ pub const FileTreeSlate = struct {
 
         try status.draw_buf(tree.change_status.buf);
 
-        self.it.reset(tree.files.buf);
+        it.reset();
         var i: i32 = 0;
         var ended = false;
-        while (try self.it.next()) |parsed| {
-            switch (parsed.parsed.file_type) {
-                .file => {},
-                .conflict => {},
-                else => continue,
-            }
-
+        while (it.next()) |node| {
             defer i += 1;
             if (tree.skip_y > i) {
                 continue;
             }
 
-            const path = parsed.parsed.path;
+            const path = node.path;
             if (i == tree.y) {
                 try gutter.draw_bufln("->");
-                tree.focused_file = path;
+                tree.focused_node = node;
             } else {
                 try gutter.draw_bufln("  ");
             }
@@ -1153,10 +1262,10 @@ pub const FileTreeSlate = struct {
 
             try surface.apply_style(.bold);
             try surface.apply_style(.{ .foreground_color = .from_theme(.info) });
-            try surface.draw_buf(parsed.parsed.path);
+            try surface.draw_buf(path);
             try surface.apply_style(.reset);
 
-            if (parsed.parsed.conflict) {
+            if (node.has_conflict_somewhere_inside) {
                 try surface.draw_buf(" ");
                 try surface.apply_style(.{ .foreground_color = .from_theme(.errors) });
                 try surface.draw_buf("conflict");
@@ -1167,7 +1276,7 @@ pub const FileTreeSlate = struct {
 
             if (surface.is_full()) break;
         }
-        ended = self.it.ended();
+        ended = it.ended();
 
         if (ended and tree.y >= i and i > 0) {
             tree.y = i - 1;

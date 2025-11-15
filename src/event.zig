@@ -2820,8 +2820,7 @@ pub const App = struct {
                 .file_list => |req| {
                     switch (res.res) {
                         .with_status => |buf| {
-                            const list = components_mod.FileTreeSlate.FileList{ .change_status = buf.status, .files = buf.buf };
-                            try self.renderer.file_tree.cache.put(req, list);
+                            const list = try self.renderer.file_tree.add_list(req, buf.status, buf.buf);
                             const focused_file = list.get_focused_file() orelse return;
 
                             const path = try self.alloc.dupe(u8, focused_file);
@@ -2856,7 +2855,7 @@ pub const App = struct {
         try self._send_event(.rerender);
 
         if (comptime options.env == .debug) {
-            // try self.screen.term.fancy_features_that_break_gdb(.disable, .{});
+            // try self.renderer.screen.term.fancy_features_that_break_gdb(.disable, .{});
         }
 
         while (self._wait_recv_event()) |event| {

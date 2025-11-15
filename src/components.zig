@@ -1254,16 +1254,37 @@ pub const FileTreeSlate = struct {
                 try gutter.draw_bufln("  ");
             }
 
-            const icon = renderer.icons.get_icon(path);
+            const icon = renderer.icons.get_icon(path) orelse term_mod.Icons.Icon{
+                .icon = if (node.typ == .dir) term_mod.Icons.icons.folder[0..] else term_mod.Icons.icons.file[0..],
+                .color = .from_theme(.info),
+            };
+
             try surface.apply_style(.{ .foreground_color = icon.color });
             try surface.draw_buf(icon.icon);
             try surface.draw_buf(" ");
             try surface.apply_style(.reset);
 
-            try surface.apply_style(.bold);
-            try surface.apply_style(.{ .foreground_color = .from_theme(.info) });
-            try surface.draw_buf(path);
-            try surface.apply_style(.reset);
+            switch (node.typ) {
+                .dir => {
+                    if (node.collapsed) {
+                        try surface.draw_buf(term_mod.symbols.triangle.line.big.right);
+                    } else {
+                        try surface.draw_buf(term_mod.symbols.triangle.line.big.down);
+                    }
+                    try surface.draw_buf(" ");
+
+                    try surface.apply_style(.bold);
+                    try surface.apply_style(.{ .foreground_color = .from_theme(.info) });
+                    try surface.draw_buf(path);
+                    try surface.apply_style(.reset);
+                },
+                .file => {
+                    try surface.apply_style(.bold);
+                    try surface.apply_style(.{ .foreground_color = .from_theme(.default_foreground) });
+                    try surface.draw_buf(path);
+                    try surface.apply_style(.reset);
+                },
+            }
 
             if (node.has_conflict_somewhere_inside) {
                 try surface.draw_buf(" ");

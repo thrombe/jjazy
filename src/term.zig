@@ -77,10 +77,54 @@ pub const codes = struct {
 
 pub const symbols = struct {
     pub const arrow = struct {
-        pub const up = "↑";
-        pub const down = "↓";
-        pub const left = "←";
-        pub const right = "→";
+        pub const arrow = struct {
+            pub const up = "↑";
+            pub const down = "↓";
+            pub const left = "←";
+            pub const right = "→";
+        };
+        pub const line = struct {
+            pub const right = "›";
+            pub const down = "⌄";
+            pub const left = "‹";
+            pub const up = "⌃";
+        };
+    };
+    pub const triangle = struct {
+        pub const small = struct {
+            pub const right = "⏵";
+            pub const down = "⏷";
+            pub const left = "⏴";
+            pub const up = "⏶";
+        };
+        pub const solid = struct {
+            pub const medium = struct {
+                pub const right = "▸";
+                pub const down = "▾";
+                pub const left = "◂";
+                pub const up = "▴";
+            };
+            pub const big = struct {
+                pub const right = "▶";
+                pub const down = "▼";
+                pub const left = "◀";
+                pub const up = "▲";
+            };
+        };
+        pub const line = struct {
+            pub const medium = struct {
+                pub const right = "▹";
+                pub const down = "▿";
+                pub const left = "◃";
+                pub const up = "▵";
+            };
+            pub const big = struct {
+                pub const right = "▷";
+                pub const down = "▽";
+                pub const left = "◁";
+                pub const up = "△";
+            };
+        };
     };
     pub const key = struct {
         pub const backspace = "⌫";
@@ -1126,9 +1170,9 @@ pub const Icons = struct {
     files: std.StringHashMap(Icon),
     exts: std.StringHashMap(Icon),
 
-    const icons = @import("icons.zig");
-    const Icon = struct { icon: []const u8, color: Color };
-    const Color = TermStyledGraphemeIterator.Color;
+    pub const icons = @import("icons.zig");
+    pub const Icon = struct { icon: []const u8, color: Color };
+    pub const Color = TermStyledGraphemeIterator.Color;
     const ColorParser = @import("math.zig").ColorParse.Runtime;
 
     pub fn init(alloc: std.mem.Allocator) !@This() {
@@ -1159,14 +1203,11 @@ pub const Icons = struct {
         self.exts.deinit();
     }
 
-    pub fn get_icon(self: *const @This(), path: []const u8) Icon {
+    pub fn get_icon(self: *const @This(), path: []const u8) ?Icon {
         const file_icon = self.files.get(std.fs.path.basename(path));
         const ext = std.fs.path.extension(path);
         const ext_icon = self.exts.get(ext[@min(1, ext.len)..]);
-        const icon = file_icon orelse ext_icon orelse Icons.Icon{
-            .icon = Icons.icons.file[0..],
-            .color = .from_theme(.info),
-        };
+        const icon = file_icon orelse ext_icon;
         return icon;
     }
 };

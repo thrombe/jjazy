@@ -345,6 +345,8 @@ pub const Event = union(enum) {
     sigwinch,
     rerender,
     scroll_update,
+    file_show_scroll_update,
+    file_show_update: struct { change: jj_mod.Change, path: []const u8 },
     diff_update: struct { change: jj_mod.Change, context: u32 },
     opshow_update: jj_mod.Operation,
     op_update,
@@ -2011,6 +2013,45 @@ pub const App = struct {
                     } });
                 }
             },
+            .file_show_scroll_update => {
+                const change = self.renderer.log.focused_change;
+                const tree = self.renderer.file_tree.cache.get(change, .touch) orelse return;
+                if (tree.get_focused_file()) |focused| {
+                    const key_lookup = components_mod.FileShowSlate.Key{ .change_hash = change.hash, .path = focused };
+                    if (self.renderer.file_show.filecache.get(key_lookup, .touch) == null) {
+                        // debounce
+                        try self.sleeper.delay_event(20, .{ .file_show_update = .{ .change = change, .path = focused } });
+                    } else {
+                        try self._send_event(.rerender);
+                    }
+                }
+            },
+            .file_show_update => |v| {
+                if (!std.mem.eql(u8, v.change.hash[0..], self.renderer.log.focused_change.hash[0..])) return;
+                const tree = self.renderer.file_tree.cache.get(v.change, .touch) orelse return;
+
+                if (tree.get_focused_file()) |focused_file| {
+                    if (!std.mem.eql(u8, focused_file, v.path)) return;
+
+                    const key_lookup = components_mod.FileShowSlate.Key{ .change_hash = v.change.hash, .path = v.path };
+                    if (self.renderer.file_show.filecache.get(key_lookup, .touch) == null) {
+                        const path = try self.alloc.dupe(u8, v.path);
+                        const file = try self.renderer.file_show.filecache.getOrPut(.{
+                            .change_hash = v.change.hash,
+                            .path = path,
+                        });
+                        if (!file.found_existing) {
+                            file.val.* = .{};
+                            try app.jj.requests.send(.{ .file_show = .{
+                                .change = v.change,
+                                .path = path,
+                            } });
+                        } else {
+                            self.alloc.free(path);
+                        }
+                    }
+                }
+            },
             .op_update => {
                 const oplog = &self.renderer.oplog;
                 oplog.ops.reset(oplog.oplog);
@@ -2260,6 +2301,8 @@ pub const App = struct {
                                     .up => tree.y -= 1,
                                     .down => tree.y += 1,
                                 }
+                                try tree.update_focused_node();
+                                try self._send_event(.file_show_scroll_update);
                             },
                             else => {
                                 switch (target.dir) {
@@ -2927,7 +2970,7 @@ pub const App = struct {
         try self._send_event(.rerender);
 
         if (comptime options.env == .debug) {
-            try self.renderer.screen.term.fancy_features_that_break_gdb(.disable, .{});
+            // try self.renderer.screen.term.fancy_features_that_break_gdb(.disable, .{});
         }
 
         while (self._wait_recv_event()) |event| {

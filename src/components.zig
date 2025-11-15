@@ -1235,6 +1235,22 @@ pub const FileTreeSlate = struct {
             if (self.it) |*it| it.deinit();
         }
 
+        pub fn update_focused_node(self: *@This()) !void {
+            if (self.it == null) {
+                self.it = try self.tree.iterator();
+            }
+            var it = &self.it.?;
+            it.reset();
+            var i: i32 = 0;
+            while (it.next()) |e| {
+                defer i += 1;
+                if (i == self.y) {
+                    self.focused_node = e.node;
+                    return;
+                }
+            }
+        }
+
         pub fn focus_parent(self: *@This()) !?*const FileTree.Node {
             if (self.it == null) {
                 self.it = try self.tree.iterator();
@@ -1386,26 +1402,6 @@ pub const FileTreeSlate = struct {
         if (tree.y >= i and !ended and i > 0) {
             tree.skip_y += 1;
             try app._send_event(.rerender);
-        }
-
-        if (tree.get_focused_file()) |focused_file| {
-            const key_lookup = FileShowSlate.Key{ .change_hash = change.hash, .path = focused_file };
-            if (renderer.file_show.filecache.get(key_lookup, .touch) == null) {
-                const path = try self.alloc.dupe(u8, focused_file);
-                const file = try renderer.file_show.filecache.getOrPut(.{
-                    .change_hash = change.hash,
-                    .path = path,
-                });
-                if (!file.found_existing) {
-                    file.val.* = .{};
-                    try app.jj.requests.send(.{ .file_show = .{
-                        .change = change,
-                        .path = path,
-                    } });
-                } else {
-                    self.alloc.free(path);
-                }
-            }
         }
     }
 };

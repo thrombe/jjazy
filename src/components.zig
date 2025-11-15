@@ -436,7 +436,16 @@ pub const HelpSlate = struct {
                 else => continue,
             }
             switch (iam.value_ptr.*) {
-                .toggle_help => continue,
+                // .toggle_help => continue,
+                else => {},
+            }
+            switch (iam.key_ptr.input) {
+                .key => |key| {
+                    // NOTE: key + shift is usually a different key. ('k' vs 'K')
+                    //  BUT, here we usually want it to work with/without kitty kb protocol
+                    //  so we add keys with and without .shift
+                    if (key.mod.shift) continue;
+                },
                 else => {},
             }
 

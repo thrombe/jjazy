@@ -47,14 +47,6 @@ pub const action_help = [_]struct {
         .help = "Scroll down logs",
     },
     .{
-        .action = .{ .scroll = .{ .target = .oplog, .dir = .up } },
-        .help = "Scroll up operation logs",
-    },
-    .{
-        .action = .{ .scroll = .{ .target = .oplog, .dir = .down } },
-        .help = "Scroll down operation logs",
-    },
-    .{
         .action = .{ .scroll = .{ .target = .bookmarks, .dir = .up } },
         .help = "Scroll up bookmarks",
     },
@@ -69,14 +61,6 @@ pub const action_help = [_]struct {
     .{
         .action = .{ .scroll = .{ .target = .diff, .dir = .down } },
         .help = "Scroll up diff",
-    },
-    .{
-        .action = .{ .scroll = .{ .target = .file_tree, .dir = .up } },
-        .help = "Scroll up file tree",
-    },
-    .{
-        .action = .{ .scroll = .{ .target = .file_tree, .dir = .down } },
-        .help = "Scroll down file tree",
     },
     .{
         .action = .{ .resize_master = .left },
@@ -137,6 +121,10 @@ pub const action_help = [_]struct {
     .{
         .action = .switch_state_to_oplog,
         .help = "View Operation logs",
+    },
+    .{
+        .action = .switch_state_to_evolog,
+        .help = "View Change Evolution logs",
     },
     .{
         .action = .switch_state_to_duplicate,
@@ -299,6 +287,7 @@ pub const action_help = [_]struct {
 pub const State = union(enum(u8)) {
     log,
     oplog,
+    evolog,
     file_tree,
     bookmark: enum {
         view,
@@ -372,7 +361,7 @@ pub const Action = union(enum) {
     fancy_terminal_features_that_break_gdb: enum { enable, disable },
     trigger_breakpoint,
     refresh_master_content,
-    scroll: struct { target: enum { log, oplog, diff, bookmarks, file_tree }, dir: enum { up, down } },
+    scroll: struct { target: enum { log, diff, bookmarks }, dir: enum { up, down } },
     resize_master: enum { left, right },
     switch_state_to_log,
     select_focused_change,
@@ -385,6 +374,7 @@ pub const Action = union(enum) {
     switch_state_to_squash,
     switch_state_to_abandon,
     switch_state_to_oplog,
+    switch_state_to_evolog,
     switch_state_to_duplicate,
     switch_state_to_bookmarks_view,
     switch_state_to_file_tree,
@@ -534,6 +524,7 @@ pub const JujutsuServer = struct {
                         Change.Parsed.template,
                         "-r",
                         change.id[0..],
+                        "--stat",
                     }) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
@@ -1154,6 +1145,7 @@ pub const App = struct {
             try map.for_states(&[_]State{
                 .log,
                 .oplog,
+                .evolog,
                 .file_tree,
                 .command,
                 .{ .bookmark = .view },
@@ -1193,6 +1185,7 @@ pub const App = struct {
             try map.for_states(&[_]State{
                 .log,
                 .oplog,
+                .evolog,
                 .file_tree,
                 .{ .bookmark = .view },
                 .{ .bookmark = .view_goto },
@@ -1236,6 +1229,8 @@ pub const App = struct {
             defer map.reset();
             try map.for_states(&[_]State{
                 .log,
+                .oplog,
+                .evolog,
                 .file_tree,
                 .{ .rebase = .onto },
                 .{ .rebase = .after },
@@ -1283,96 +1278,14 @@ pub const App = struct {
                 },
                 .status,
                 .{ .scroll = .{ .target = .log, .dir = .down } },
-            );
-        }
-        {
-            defer map.reset();
-            try map.for_state(.file_tree);
-            try map.add_many(
-                &[_]Key{
-                    .{ .key = .{ .key = 'j', .action = .press } },
-                    .{ .key = .{ .key = 'j', .action = .repeat } },
-                    .{ .functional = .{ .key = .down, .action = .press } },
-                    .{ .functional = .{ .key = .down, .action = .repeat } },
-                },
-                null,
-                .{ .scroll = .{ .target = .file_tree, .dir = .down } },
-            );
-            try map.add_many(
-                &[_]Key{
-                    .{ .key = .{ .key = 'k', .action = .press } },
-                    .{ .key = .{ .key = 'k', .action = .repeat } },
-                    .{ .functional = .{ .key = .up, .action = .press } },
-                    .{ .functional = .{ .key = .up, .action = .repeat } },
-                },
-                null,
-                .{ .scroll = .{ .target = .file_tree, .dir = .up } },
-            );
-
-            try map.add_many(
-                &[_]Key{
-                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .press } },
-                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .repeat } },
-                },
-                .status,
-                .{ .scroll = .{ .target = .file_tree, .dir = .up } },
-            );
-            try map.add_many(
-                &[_]Key{
-                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .press } },
-                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .repeat } },
-                },
-                .status,
-                .{ .scroll = .{ .target = .file_tree, .dir = .down } },
-            );
-        }
-        {
-            defer map.reset();
-            try map.for_states(&[_]State{
-                .oplog,
-            });
-            try map.add_many(
-                &[_]Key{
-                    .{ .key = .{ .key = 'j', .action = .press } },
-                    .{ .key = .{ .key = 'j', .action = .repeat } },
-                    .{ .functional = .{ .key = .down, .action = .press } },
-                    .{ .functional = .{ .key = .down, .action = .repeat } },
-                },
-                null,
-                .{ .scroll = .{ .target = .oplog, .dir = .down } },
-            );
-            try map.add_many(
-                &[_]Key{
-                    .{ .key = .{ .key = 'k', .action = .press } },
-                    .{ .key = .{ .key = 'k', .action = .repeat } },
-                    .{ .functional = .{ .key = .up, .action = .press } },
-                    .{ .functional = .{ .key = .up, .action = .repeat } },
-                },
-                null,
-                .{ .scroll = .{ .target = .oplog, .dir = .up } },
-            );
-
-            try map.add_many(
-                &[_]Key{
-                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .press } },
-                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .repeat } },
-                },
-                .status,
-                .{ .scroll = .{ .target = .oplog, .dir = .up } },
-            );
-            try map.add_many(
-                &[_]Key{
-                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .press } },
-                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .repeat } },
-                },
-                .status,
-                .{ .scroll = .{ .target = .oplog, .dir = .down } },
             );
         }
         {
             defer map.reset();
             try map.for_states(&[_]State{
                 .log,
+                .oplog,
+                .evolog,
                 .file_tree,
                 .{ .rebase = .onto },
                 .{ .rebase = .after },
@@ -1383,7 +1296,6 @@ pub const App = struct {
                 .new,
                 .squash,
                 .abandon,
-                .oplog,
             });
 
             try map.add_many(
@@ -1614,6 +1526,12 @@ pub const App = struct {
             .{ .key = .{ .key = 'l' } },
             null,
             .switch_state_to_file_tree,
+        );
+        try map.add_one_for_state(
+            .log,
+            .{ .key = .{ .key = 'v' } },
+            null,
+            .switch_state_to_evolog,
         );
         try map.add_one_for_state(
             .file_tree,
@@ -1991,7 +1909,7 @@ pub const App = struct {
                     .show_help = true,
                 },
             },
-            .oplog, .log, .file_tree => .{},
+            .oplog, .evolog, .log, .file_tree => .{},
         };
 
         switch (event) {
@@ -2015,7 +1933,10 @@ pub const App = struct {
                 try self._send_event(.rerender);
             },
             .scroll_update => {
-                const log = &self.renderer.log;
+                const log = switch (self.state) {
+                    .evolog => &self.renderer.evolog,
+                    else => &self.renderer.log,
+                };
                 log.changes.reset(log.status.buf);
                 var i: i32 = 0;
                 while (try log.changes.next()) |parsed| {
@@ -2075,7 +1996,11 @@ pub const App = struct {
                 }
             },
             .diff_update => |change| {
-                if (std.mem.eql(u8, change.hash[0..], self.renderer.log.focused_change.hash[0..])) {
+                const focused = switch (self.state) {
+                    .evolog => self.renderer.evolog.focused_change,
+                    else => self.renderer.log.focused_change,
+                };
+                if (std.mem.eql(u8, change.hash[0..], focused.hash[0..])) {
                     const diff = try self.renderer.diff.cache.getOrPut(change.hash);
                     if (!diff.found_existing) {
                         diff.val.* = .{};
@@ -2258,40 +2183,43 @@ pub const App = struct {
                 .refresh_master_content => {
                     switch (self.state) {
                         .oplog => try self.jj.requests.send(.oplog),
+                        .evolog => try self.jj.requests.send(.{ .evolog = self.renderer.log.focused_change }),
                         else => {},
                     }
                     try self.jj.requests.send(.log);
                 },
                 .scroll => |target| switch (target.target) {
                     .log => {
-                        if (self.state == .file_tree) {
-                            try self._handle_event(.{ .action = .{
-                                .scroll = .{
-                                    .target = .file_tree,
-                                    .dir = target.dir,
-                                },
-                            } });
-                            return;
+                        switch (self.state) {
+                            .oplog => {
+                                switch (target.dir) {
+                                    .up => self.renderer.oplog.y -= 1,
+                                    .down => self.renderer.oplog.y += 1,
+                                }
+                                try self._send_event(.op_update);
+                            },
+                            .evolog => {
+                                switch (target.dir) {
+                                    .up => self.renderer.evolog.y -= 1,
+                                    .down => self.renderer.evolog.y += 1,
+                                }
+                                try self._send_event(.scroll_update);
+                            },
+                            .file_tree => {
+                                const tree = self.renderer.file_tree.cache.get(self.renderer.log.focused_change, .touch).?;
+                                switch (target.dir) {
+                                    .up => tree.y -= 1,
+                                    .down => tree.y += 1,
+                                }
+                            },
+                            else => {
+                                switch (target.dir) {
+                                    .up => self.renderer.log.y -= 1,
+                                    .down => self.renderer.log.y += 1,
+                                }
+                                try self._send_event(.scroll_update);
+                            },
                         }
-                        switch (target.dir) {
-                            .up => self.renderer.log.y -= 1,
-                            .down => self.renderer.log.y += 1,
-                        }
-                        try self._send_event(.scroll_update);
-                    },
-                    .file_tree => {
-                        const tree = self.renderer.file_tree.cache.get(self.renderer.log.focused_change, .touch).?;
-                        switch (target.dir) {
-                            .up => tree.y -= 1,
-                            .down => tree.y += 1,
-                        }
-                    },
-                    .oplog => {
-                        switch (target.dir) {
-                            .up => self.renderer.oplog.y -= 1,
-                            .down => self.renderer.oplog.y += 1,
-                        }
-                        try self._send_event(.op_update);
                     },
                     .diff => {
                         switch (self.state) {
@@ -2311,6 +2239,14 @@ pub const App = struct {
                                             .up => cfile.y -= 10,
                                             .down => cfile.y += 10,
                                         }
+                                    }
+                                }
+                            },
+                            .evolog => {
+                                if (self.renderer.diff.cache.get(self.renderer.evolog.focused_change.hash, .touch)) |diff| {
+                                    switch (target.dir) {
+                                        .up => diff.y -= 10,
+                                        .down => diff.y += 10,
                                     }
                                 }
                             },
@@ -2401,6 +2337,10 @@ pub const App = struct {
                 },
                 .switch_state_to_bookmark_goto => {
                     self.state = .{ .bookmark = .view_goto };
+                },
+                .switch_state_to_evolog => {
+                    self.state = .evolog;
+                    try self.jj.requests.send(.{ .evolog = self.renderer.log.focused_change });
                 },
                 .switch_state_to_file_tree => {
                     self.state = .file_tree;
@@ -2802,6 +2742,16 @@ pub const App = struct {
 
                     try self._send_event(.rerender);
                 },
+                .evolog => {
+                    switch (res.res) {
+                        .ok => |log| {
+                            try self.renderer.evolog.update(log);
+                            try self._send_event(.scroll_update);
+                        },
+                        .err => |buf| try self._toast(.{ .err = error.JJEvLogFailed }, buf.buf),
+                        else => unreachable,
+                    }
+                },
                 .diff => |req| {
                     switch (res.res) {
                         .with_status => |diff| {
@@ -2833,16 +2783,6 @@ pub const App = struct {
                         else => unreachable,
                     }
                     try self._send_event(.rerender);
-                },
-                .evolog => |req| {
-                    _ = req;
-                    switch (res.res) {
-                        .ok => |buf| {
-                            self.alloc.free(buf.buf);
-                        },
-                        .err => |buf| try self._toast(.{ .err = error.JJEvLogFailed }, buf.buf),
-                        else => unreachable,
-                    }
                 },
                 .bookmark => {
                     switch (res.res) {
@@ -2904,12 +2844,16 @@ pub const App = struct {
                 hasher.update(&std.mem.toBytes(self.renderer.x_split));
 
                 switch (self.state) {
-                    .log, .bookmark, .command, .rebase, .duplicate, .new, .squash, .abandon, .git => {
-                        hasher.update(&std.mem.toBytes(self.renderer.log.y));
-                        if (self.renderer.diff.cache.get(self.renderer.log.focused_change.hash, .peek)) |diff| {
+                    .log, .evolog, .bookmark, .command, .rebase, .duplicate, .new, .squash, .abandon, .git => {
+                        const log = switch (self.state) {
+                            .evolog => &self.renderer.evolog,
+                            else => &self.renderer.log,
+                        };
+                        hasher.update(&std.mem.toBytes(log.y));
+                        if (self.renderer.diff.cache.get(log.focused_change.hash, .peek)) |diff| {
                             hasher.update(&std.mem.toBytes(diff.y));
                         }
-                        var it = self.renderer.log.selected_changes.iterator();
+                        var it = log.selected_changes.iterator();
                         while (it.next()) |e| {
                             hasher.update(&e.key_ptr.id);
                         }

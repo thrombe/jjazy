@@ -1461,6 +1461,7 @@ pub const Renderer = struct {
     icons: term_mod.Icons,
 
     log: LogSlate,
+    evolog: LogSlate,
     oplog: OpLogSlate,
     diff: DiffSlate(jj_mod.Change),
     opshow: DiffSlate(jj_mod.Operation),
@@ -1521,6 +1522,12 @@ pub const Renderer = struct {
                 .changes = .init(alloc, &[_]u8{}),
                 .selected_changes = .init(alloc),
             },
+            .evolog = .{
+                .alloc = alloc,
+                .status = .from(&.{}),
+                .changes = .init(alloc, &[_]u8{}),
+                .selected_changes = .init(alloc),
+            },
             .oplog = .{
                 .alloc = alloc,
                 .oplog = &.{},
@@ -1560,6 +1567,7 @@ pub const Renderer = struct {
 
     pub fn deinit(self: *@This()) void {
         defer self.log.deinit();
+        defer self.evolog.deinit();
         defer self.oplog.deinit();
         defer self.diff.deinit();
         defer self.opshow.deinit();
@@ -1663,6 +1671,10 @@ pub const Renderer = struct {
                         const focused_file = tree.get_focused_file();
                         try self.file_show.render(&diffs, app, self.log.focused_change, focused_file);
                     }
+                },
+                .evolog => {
+                    try self.evolog.render(&status, app, state, tropes);
+                    try self.diff.render(&diffs, app, self.evolog.focused_change);
                 },
                 else => {
                     try self.log.render(&status, app, state, tropes);

@@ -1072,7 +1072,22 @@ pub const FileTree = struct {
     }
 
     pub fn sort_dirs_first(self: *@This()) void {
-        _ = self;
+        const Sorter = struct {
+            const Ctx = struct {
+                fn lessThan(_: @This(), lhs: Node, rhs: Node) bool {
+                    if (lhs.typ == .dir and rhs.typ == .file) return true;
+                    if (lhs.typ == .file and rhs.typ == .dir) return false;
+                    return std.mem.eql(u8, lhs.name, rhs.name);
+                }
+            };
+            fn sort(node: *Node) void {
+                std.sort.block(Node, node.children.items, Ctx{}, Ctx.lessThan);
+                for (node.children.items) |*child| {
+                    @This().sort(child);
+                }
+            }
+        };
+        Sorter.sort(&self.root);
     }
 
     pub fn iterator(self: *@This()) !Iterator {
@@ -1279,7 +1294,6 @@ pub const FileTreeSlate = struct {
             }
 
             const node = e.node;
-            const path = node.path;
             if (i == tree.y) {
                 try gutter.draw_bufln("->");
                 tree.focused_node = node;
@@ -1294,7 +1308,7 @@ pub const FileTreeSlate = struct {
             }
             try surface.apply_style(.reset);
 
-            const icon = renderer.icons.get_icon(path) orelse term_mod.Icons.Icon{
+            const icon = renderer.icons.get_icon(node.path) orelse term_mod.Icons.Icon{
                 .icon = if (node.typ == .dir) term_mod.Icons.icons.folder[0..] else term_mod.Icons.icons.file[0..],
                 .color = .from_theme(.info),
             };
@@ -1316,13 +1330,13 @@ pub const FileTreeSlate = struct {
 
                     try surface.apply_style(.bold);
                     try surface.apply_style(.{ .foreground_color = .from_theme(.info) });
-                    try surface.draw_buf(path);
+                    try surface.draw_buf(node.name);
                     try surface.apply_style(.reset);
                 },
                 .file => {
                     try surface.apply_style(.bold);
                     try surface.apply_style(.{ .foreground_color = .from_theme(.default_foreground) });
-                    try surface.draw_buf(path);
+                    try surface.draw_buf(node.name);
                     try surface.apply_style(.reset);
                 },
             }

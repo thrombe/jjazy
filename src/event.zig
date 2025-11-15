@@ -345,7 +345,7 @@ pub const Event = union(enum) {
     sigwinch,
     rerender,
     scroll_update,
-    diff_update: jj_mod.Change,
+    diff_update: struct { change: jj_mod.Change, context: u32 },
     opshow_update: jj_mod.Operation,
     op_update,
     quit,
@@ -2005,7 +2005,10 @@ pub const App = struct {
                     try self._send_event(.rerender);
                 } else {
                     // debounce diff requests
-                    try self.sleeper.delay_event(20, .{ .diff_update = log.focused_change });
+                    try self.sleeper.delay_event(20, .{ .diff_update = .{
+                        .change = log.focused_change,
+                        .context = self.renderer.diff.context,
+                    } });
                 }
             },
             .op_update => {
@@ -2038,19 +2041,19 @@ pub const App = struct {
                     try self.sleeper.delay_event(20, .{ .opshow_update = oplog.focused_op });
                 }
             },
-            .diff_update => |change| {
+            .diff_update => |v| {
                 const focused = switch (self.state) {
                     .evolog => self.renderer.evolog.focused_change,
                     else => self.renderer.log.focused_change,
                 };
-                if (std.mem.eql(u8, change.hash[0..], focused.hash[0..])) {
+                if (std.mem.eql(u8, v.change.hash[0..], focused.hash[0..]) and self.renderer.diff.context == v.context) {
                     const diff = try self.renderer.diff.getOrPut(
-                        change.hash,
-                        self.renderer.diff.context,
+                        v.change.hash,
+                        v.context,
                     );
                     if (!diff.found_existing) {
                         diff.val.* = .{};
-                        try self.jj.requests.send(.{ .diff = .{ .change = change, .context = self.renderer.diff.context } });
+                        try self.jj.requests.send(.{ .diff = .{ .change = v.change, .context = v.context } });
                     }
                 }
             },
@@ -2326,8 +2329,6 @@ pub const App = struct {
                         else => &self.renderer.log,
                     };
 
-                    const old_diff = self.renderer.diff.get(log.focused_change.hash, .peek);
-
                     switch (v.off) {
                         .reset => {
                             self.renderer.diff.context = 3;
@@ -2340,13 +2341,14 @@ pub const App = struct {
                         },
                     }
 
-                    const diff = try self.renderer.diff.getOrPut(log.focused_change.hash, self.renderer.diff.context);
-                    if (!diff.found_existing) {
-                        diff.val.* = .{};
-                        if (old_diff) |d| {
-                            diff.val.use_this_y_during_init = d.y;
-                        }
-                        try self.jj.requests.send(.{ .diff = .{ .change = log.focused_change, .context = self.renderer.diff.context } });
+                    const diff = self.renderer.diff.get(log.focused_change.hash, .touch);
+
+                    if (diff == null) {
+                        // debounce
+                        try self.sleeper.delay_event(20, .{ .diff_update = .{
+                            .change = log.focused_change,
+                            .context = self.renderer.diff.context,
+                        } });
                     }
                 },
                 .switch_state_to_log => {
@@ -2841,11 +2843,11 @@ pub const App = struct {
 
                             if (empty_diff) |d| {
                                 d.* = .{
-                                    .y = d.use_this_y_during_init,
                                     .buf = diff.buf,
                                     .status = diff.status,
                                 };
                             } else {
+                                // too late. it got removed already
                                 self.alloc.free(diff.buf.buf);
                                 self.alloc.free(diff.status.buf);
                             }

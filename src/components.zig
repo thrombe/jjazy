@@ -545,8 +545,6 @@ fn DiffSlate(Op: type) type {
             context: u32,
         };
         pub const Diff = struct {
-            use_this_y_during_init: i32 = 0,
-
             y: i32 = 0,
             buf: jj_mod.Formatted = .{},
             status: jj_mod.Formatted = .{},

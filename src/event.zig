@@ -363,6 +363,7 @@ pub const Action = union(enum) {
     refresh_master_content,
     scroll: struct { target: enum { log, diff, bookmarks }, dir: enum { up, down } },
     resize_master: enum { left, right },
+    change_diff_context: struct { off: enum { reset, increase, decrease } },
     switch_state_to_log,
     select_focused_change,
     set_where: Where,
@@ -409,6 +410,7 @@ pub const Action = union(enum) {
 
 pub const JujutsuServer = struct {
     alloc: std.mem.Allocator,
+    arena: std.heap.ArenaAllocator,
     quit: utils_mod.Fuse = .{},
     thread: std.Thread,
     requests: utils_mod.Channel(Request),
@@ -420,7 +422,7 @@ pub const JujutsuServer = struct {
         log,
         oplog,
         bookmark,
-        diff: Change,
+        diff: struct { change: Change, context: u32 },
         opshow: Operation,
         evolog: Change,
         file_list: Change,
@@ -453,6 +455,7 @@ pub const JujutsuServer = struct {
             .events = events,
             .requests = try .init(alloc),
             .alloc = alloc,
+            .arena = .init(alloc),
             .thread = undefined,
         };
 
@@ -468,6 +471,7 @@ pub const JujutsuServer = struct {
     pub fn deinit(self: *@This()) void {
         const alloc = self.alloc;
         defer alloc.destroy(self);
+        defer self.arena.deinit();
         defer self.requests.deinit();
         defer self.thread.join();
         _ = self.quit.fuse();
@@ -484,9 +488,13 @@ pub const JujutsuServer = struct {
 
         while (self.requests.wait_recv()) |req| {
             if (self.quit.check()) return;
+
+            const temp = self.arena.allocator();
+            defer _ = self.arena.reset(.retain_capacity);
+
             switch (req) {
                 .log => {
-                    const res = self.jjcall(&[_][]const u8{
+                    const res = self.jjcall(temp, &[_][]const u8{
                         "jj",
                         "--color",
                         "always",
@@ -500,7 +508,7 @@ pub const JujutsuServer = struct {
                     try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(res) } } });
                 },
                 .oplog => {
-                    const res = self.jjcall(&[_][]const u8{
+                    const res = self.jjcall(temp, &[_][]const u8{
                         "jj",
                         "--color",
                         "always",
@@ -515,7 +523,7 @@ pub const JujutsuServer = struct {
                     try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(res) } } });
                 },
                 .evolog => |change| {
-                    const res = self.jjcall(&[_][]const u8{
+                    const res = self.jjcall(temp, &[_][]const u8{
                         "jj",
                         "--color",
                         "always",
@@ -531,31 +539,35 @@ pub const JujutsuServer = struct {
                     };
                     try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(res) } } });
                 },
-                .diff => |change| {
+                .diff => |v| {
                     // TODO: these diffs can get pretty large, maybe add some kinda paging support to this?
                     //  - something like: caller passes some line range info (start, end)
-                    const stat = self.jjcall(&[_][]const u8{
+                    const stat = self.jjcall(temp, &[_][]const u8{
                         "jj",
                         "--color",
                         "always",
                         "show",
                         "--stat",
                         "-r",
-                        change.hash[0..],
+                        v.change.hash[0..],
                     }) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
                     };
                     errdefer self.alloc.free(stat);
-                    const diff = self.jjcall(&[_][]const u8{
-                        "jj",
-                        "--color",
-                        "always",
-                        "diff",
-                        "--tool",
-                        "delta",
-                        "-r",
-                        change.hash[0..],
+
+                    // apparently delta can be used as a pager to get the pretty diff over the default diff output
+                    //   jj diff --no-pager --context 20 -r <> | delta
+                    var diff_cmd = std.ArrayList(u8).init(temp);
+                    try diff_cmd.writer().print("jj diff --context {d} --no-pager -r {s} | delta --true-color always", .{
+                        v.context,
+                        v.change.hash[0..],
+                    });
+
+                    const diff = self.jjcall(temp, &[_][]const u8{
+                        "sh",
+                        "-c",
+                        diff_cmd.items,
                     }) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
@@ -573,7 +585,7 @@ pub const JujutsuServer = struct {
                     } });
                 },
                 .opshow => |op| {
-                    const stat = self.jjcall(&[_][]const u8{
+                    const stat = self.jjcall(temp, &[_][]const u8{
                         "jj",
                         "--color",
                         "always",
@@ -591,7 +603,7 @@ pub const JujutsuServer = struct {
                     try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(stat) } } });
                 },
                 .bookmark => {
-                    const res = self.jjcall(&[_][]const u8{
+                    const res = self.jjcall(temp, &[_][]const u8{
                         "jj",
                         "bookmark",
                         "list",
@@ -605,7 +617,7 @@ pub const JujutsuServer = struct {
                     try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(res) } } });
                 },
                 .file_list => |change| {
-                    const stat = self.jjcall(&[_][]const u8{
+                    const stat = self.jjcall(temp, &[_][]const u8{
                         "jj",
                         "--color",
                         "always",
@@ -618,7 +630,7 @@ pub const JujutsuServer = struct {
                         continue;
                     };
                     errdefer self.alloc.free(stat);
-                    const res = self.jjcall(&[_][]const u8{
+                    const res = self.jjcall(temp, &[_][]const u8{
                         "jj",
                         "file",
                         "list",
@@ -640,7 +652,7 @@ pub const JujutsuServer = struct {
                         payload.path,
                     });
                     defer self.alloc.free(cmd);
-                    const res = self.jjcall(&[_][]const u8{
+                    const res = self.jjcall(temp, &[_][]const u8{
                         "sh",
                         "-c",
                         cmd,
@@ -654,10 +666,10 @@ pub const JujutsuServer = struct {
         }
     }
 
-    fn jjcall(self: *@This(), args: []const []const u8) ![]u8 {
+    fn jjcall(self: *@This(), temp: std.mem.Allocator, args: []const []const u8) ![]u8 {
         const alloc = self.alloc;
 
-        var child = std.process.Child.init(args, alloc);
+        var child = std.process.Child.init(args, temp);
         child.stdin_behavior = .Pipe;
         child.stdout_behavior = .Pipe;
         child.stderr_behavior = .Pipe;
@@ -676,7 +688,7 @@ pub const JujutsuServer = struct {
 
         // similar to child.collectOutput
         const max_output_bytes = 1000 * 1000 * 10;
-        var poller = std.io.poll(alloc, enum { stdout, stderr }, .{
+        var poller = std.io.poll(temp, enum { stdout, stderr }, .{
             .stdout = stdout,
             .stderr = stderr,
         });
@@ -691,7 +703,7 @@ pub const JujutsuServer = struct {
 
         const err = try child.wait();
         blk: {
-            var err_buf = std.ArrayList(u8).init(alloc);
+            var err_buf = std.ArrayList(u8).init(temp);
             defer err_buf.deinit();
 
             switch (err) {
@@ -1365,6 +1377,37 @@ pub const App = struct {
                 null,
                 .{ .resize_master = .right },
             );
+
+            try map.add_many(
+                &[_]Key{
+                    .{ .key = .{ .key = '+', .action = .press, .mod = .{ .shift = true } } },
+                    .{ .key = .{ .key = '+', .action = .repeat, .mod = .{ .shift = true } } },
+                    .{ .key = .{ .key = '+', .action = .press, .mod = .{} } },
+                    .{ .key = .{ .key = '+', .action = .repeat, .mod = .{} } },
+                },
+                null,
+                .{ .change_diff_context = .{ .off = .increase } },
+            );
+            try map.add_many(
+                &[_]Key{
+                    .{ .key = .{ .key = '_', .action = .press, .mod = .{ .shift = true } } },
+                    .{ .key = .{ .key = '_', .action = .repeat, .mod = .{ .shift = true } } },
+                    .{ .key = .{ .key = '_', .action = .press, .mod = .{} } },
+                    .{ .key = .{ .key = '_', .action = .repeat, .mod = .{} } },
+                },
+                null,
+                .{ .change_diff_context = .{ .off = .decrease } },
+            );
+            try map.add_many(
+                &[_]Key{
+                    .{ .key = .{ .key = ')', .action = .press, .mod = .{ .shift = true } } },
+                    .{ .key = .{ .key = ')', .action = .repeat, .mod = .{ .shift = true } } },
+                    .{ .key = .{ .key = ')', .action = .press, .mod = .{} } },
+                    .{ .key = .{ .key = ')', .action = .repeat, .mod = .{} } },
+                },
+                null,
+                .{ .change_diff_context = .{ .off = .reset } },
+            );
         }
         {
             defer map.reset();
@@ -1958,7 +2001,7 @@ pub const App = struct {
                     i += 1;
                 }
 
-                if (self.renderer.diff.cache.get(log.focused_change.hash, .touch)) |_| {
+                if (self.renderer.diff.get(log.focused_change.hash, .touch)) |_| {
                     try self._send_event(.rerender);
                 } else {
                     // debounce diff requests
@@ -1988,7 +2031,7 @@ pub const App = struct {
                     i += 1;
                 }
 
-                if (self.renderer.opshow.cache.get(oplog.focused_op.hash, .touch)) |_| {
+                if (self.renderer.opshow.get(oplog.focused_op.hash, .touch)) |_| {
                     try self._send_event(.rerender);
                 } else {
                     // debounce op show requests
@@ -2001,16 +2044,19 @@ pub const App = struct {
                     else => self.renderer.log.focused_change,
                 };
                 if (std.mem.eql(u8, change.hash[0..], focused.hash[0..])) {
-                    const diff = try self.renderer.diff.cache.getOrPut(change.hash);
+                    const diff = try self.renderer.diff.getOrPut(
+                        change.hash,
+                        self.renderer.diff.context,
+                    );
                     if (!diff.found_existing) {
                         diff.val.* = .{};
-                        try self.jj.requests.send(.{ .diff = change });
+                        try self.jj.requests.send(.{ .diff = .{ .change = change, .context = self.renderer.diff.context } });
                     }
                 }
             },
             .opshow_update => |op| {
                 if (std.mem.eql(u8, op.hash[0..], self.renderer.oplog.focused_op.hash[0..])) {
-                    const diff = try self.renderer.opshow.cache.getOrPut(op.hash);
+                    const diff = try self.renderer.opshow.getOrPut(op.hash, self.renderer.opshow.context);
                     if (!diff.found_existing) {
                         diff.val.* = .{};
                         try self.jj.requests.send(.{ .opshow = op });
@@ -2224,7 +2270,7 @@ pub const App = struct {
                     .diff => {
                         switch (self.state) {
                             .oplog => {
-                                if (self.renderer.opshow.cache.get(self.renderer.oplog.focused_op.hash, .touch)) |opshow| {
+                                if (self.renderer.opshow.get(self.renderer.oplog.focused_op.hash, .touch)) |opshow| {
                                     switch (target.dir) {
                                         .up => opshow.y -= 10,
                                         .down => opshow.y += 10,
@@ -2233,7 +2279,10 @@ pub const App = struct {
                             },
                             .file_tree => {
                                 if (self.renderer.file_tree.cache.get(self.renderer.log.focused_change, .touch).?.get_focused_file()) |focused_file| {
-                                    const key_lookup = components_mod.FileShowSlate.Key{ .change_hash = self.renderer.log.focused_change.hash, .path = focused_file };
+                                    const key_lookup = components_mod.FileShowSlate.Key{
+                                        .change_hash = self.renderer.log.focused_change.hash,
+                                        .path = focused_file,
+                                    };
                                     if (self.renderer.file_show.filecache.get(key_lookup, .touch)) |cfile| {
                                         switch (target.dir) {
                                             .up => cfile.y -= 10,
@@ -2243,7 +2292,7 @@ pub const App = struct {
                                 }
                             },
                             .evolog => {
-                                if (self.renderer.diff.cache.get(self.renderer.evolog.focused_change.hash, .touch)) |diff| {
+                                if (self.renderer.diff.get(self.renderer.evolog.focused_change.hash, .touch)) |diff| {
                                     switch (target.dir) {
                                         .up => diff.y -= 10,
                                         .down => diff.y += 10,
@@ -2251,7 +2300,7 @@ pub const App = struct {
                                 }
                             },
                             else => {
-                                if (self.renderer.diff.cache.get(self.renderer.log.focused_change.hash, .touch)) |diff| {
+                                if (self.renderer.diff.get(self.renderer.log.focused_change.hash, .touch)) |diff| {
                                     switch (target.dir) {
                                         .up => diff.y -= 10,
                                         .down => diff.y += 10,
@@ -2270,6 +2319,35 @@ pub const App = struct {
                 .resize_master => |dir| switch (dir) {
                     .left => self.renderer.x_split -= 0.05,
                     .right => self.renderer.x_split += 0.05,
+                },
+                .change_diff_context => |v| {
+                    const log = switch (self.state) {
+                        .evolog => &self.renderer.evolog,
+                        else => &self.renderer.log,
+                    };
+
+                    const old_diff = self.renderer.diff.get(log.focused_change.hash, .peek);
+
+                    switch (v.off) {
+                        .reset => {
+                            self.renderer.diff.context = 3;
+                        },
+                        .increase => {
+                            self.renderer.diff.context += 10;
+                        },
+                        .decrease => {
+                            self.renderer.diff.context -|= 10;
+                        },
+                    }
+
+                    const diff = try self.renderer.diff.getOrPut(log.focused_change.hash, self.renderer.diff.context);
+                    if (!diff.found_existing) {
+                        diff.val.* = .{};
+                        if (old_diff) |d| {
+                            diff.val.use_this_y_during_init = d.y;
+                        }
+                        try self.jj.requests.send(.{ .diff = .{ .change = log.focused_change, .context = self.renderer.diff.context } });
+                    }
                 },
                 .switch_state_to_log => {
                     self.renderer.log.selected_changes.clearRetainingCapacity();
@@ -2755,7 +2833,22 @@ pub const App = struct {
                 .diff => |req| {
                     switch (res.res) {
                         .with_status => |diff| {
-                            self.renderer.diff.cache.get(req.hash, .touch).?.* = .{ .buf = diff.buf, .status = diff.status };
+                            // NOTE: using the .context from original request
+                            const empty_diff = self.renderer.diff.cache.get(.{
+                                .hash = req.change.hash,
+                                .context = req.context,
+                            }, .touch);
+
+                            if (empty_diff) |d| {
+                                d.* = .{
+                                    .y = d.use_this_y_during_init,
+                                    .buf = diff.buf,
+                                    .status = diff.status,
+                                };
+                            } else {
+                                self.alloc.free(diff.buf.buf);
+                                self.alloc.free(diff.status.buf);
+                            }
                         },
                         .err => |buf| try self._toast(.{ .err = error.JJDiffFailed }, buf.buf),
                         else => unreachable,
@@ -2777,7 +2870,7 @@ pub const App = struct {
                 .opshow => |req| {
                     switch (res.res) {
                         .ok => |op| {
-                            self.renderer.opshow.cache.get(req.hash, .touch).?.* = .{ .buf = op };
+                            self.renderer.opshow.get(req.hash, .touch).?.* = .{ .buf = op };
                         },
                         .err => |buf| try self._toast(.{ .err = error.JJOpShowFailed }, buf.buf),
                         else => unreachable,
@@ -2832,7 +2925,7 @@ pub const App = struct {
         try self._send_event(.rerender);
 
         if (comptime options.env == .debug) {
-            // try self.renderer.screen.term.fancy_features_that_break_gdb(.disable, .{});
+            try self.renderer.screen.term.fancy_features_that_break_gdb(.disable, .{});
         }
 
         while (self._wait_recv_event()) |event| {
@@ -2850,7 +2943,8 @@ pub const App = struct {
                             else => &self.renderer.log,
                         };
                         hasher.update(&std.mem.toBytes(log.y));
-                        if (self.renderer.diff.cache.get(log.focused_change.hash, .peek)) |diff| {
+                        hasher.update(&std.mem.toBytes(self.renderer.diff.context));
+                        if (self.renderer.diff.get(log.focused_change.hash, .peek)) |diff| {
                             hasher.update(&std.mem.toBytes(diff.y));
                         }
                         var it = log.selected_changes.iterator();
@@ -2860,7 +2954,7 @@ pub const App = struct {
                     },
                     .oplog => {
                         hasher.update(&std.mem.toBytes(self.renderer.oplog.y));
-                        if (self.renderer.opshow.cache.get(self.renderer.oplog.focused_op.hash, .peek)) |opshow| {
+                        if (self.renderer.opshow.get(self.renderer.oplog.focused_op.hash, .peek)) |opshow| {
                             hasher.update(&std.mem.toBytes(opshow.y));
                         }
                     },

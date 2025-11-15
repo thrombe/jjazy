@@ -336,6 +336,9 @@ pub fn DllLruCache(K: type, V: type, comptime v: struct { ptr: PtrFollow = .disa
         }, std.hash_map.default_max_load_percentage);
 
         const PopEntry = struct { key: K, val: V };
+        pub const GetOrPutEntry = struct { found_existing: bool, key: *const K, val: *V };
+
+        pub const Op = enum { touch, peek };
 
         pub fn init(alloc: std.mem.Allocator) @This() {
             return .{
@@ -412,7 +415,7 @@ pub fn DllLruCache(K: type, V: type, comptime v: struct { ptr: PtrFollow = .disa
             self.last = key;
         }
 
-        pub fn get(self: *@This(), key: K, op: enum { touch, peek }) ?*V {
+        pub fn get(self: *@This(), key: K, op: Op) ?*V {
             switch (op) {
                 .touch => {
                     const entry = self.map.getEntry(key) orelse return null;
@@ -426,7 +429,7 @@ pub fn DllLruCache(K: type, V: type, comptime v: struct { ptr: PtrFollow = .disa
             }
         }
 
-        pub fn getOrPut(self: *@This(), key: K) !struct { found_existing: bool, key: *const K, val: *V } {
+        pub fn getOrPut(self: *@This(), key: K) !GetOrPutEntry {
             const result = try self.map.getOrPut(key);
 
             if (result.found_existing) {

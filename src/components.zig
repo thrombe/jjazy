@@ -538,9 +538,15 @@ fn DiffSlate(Op: type) type {
     return struct {
         alloc: std.mem.Allocator,
         cache: Cache,
+        context: u32 = 3,
 
-        const Hash = Op.Hash;
-        const Diff = struct {
+        const Hash = struct {
+            hash: Op.Hash,
+            context: u32,
+        };
+        pub const Diff = struct {
+            use_this_y_during_init: i32 = 0,
+
             y: i32 = 0,
             buf: jj_mod.Formatted = .{},
             status: jj_mod.Formatted = .{},
@@ -559,12 +565,24 @@ fn DiffSlate(Op: type) type {
             self.cache.deinit();
         }
 
+        pub fn put(self: *@This(), hash: Op.Hash, context: u32, val: Diff) !void {
+            try self.cache.put(.{ .hash = hash, .context = context }, val);
+        }
+
+        pub fn get(self: *@This(), hash: Op.Hash, op: Cache.Op) ?*Diff {
+            return self.cache.get(.{ .hash = hash, .context = self.context }, op);
+        }
+
+        pub fn getOrPut(self: *@This(), hash: Op.Hash, context: u32) !Cache.GetOrPutEntry {
+            return try self.cache.getOrPut(.{ .hash = hash, .context = context });
+        }
+
         fn render(self: *@This(), surface: *Surface, app: *App, focused: Op) !void {
             _ = app;
             defer while (self.cache.retaining_pop(100)) |diff| {
                 diff.val.deinit(self.alloc);
             };
-            if (self.cache.get(focused.hash, .touch)) |diff| {
+            if (self.get(focused.hash, .touch)) |diff| {
                 diff.y = @max(0, diff.y);
                 // +2 just so it is visually obvious in the UI that the diff has ended
                 diff.y = @min(diff.y, cast(i32, diff.buf.height) - surface.region.size.y + 2);
@@ -1559,8 +1577,8 @@ pub const Renderer = struct {
             .mouse_regions = .init(alloc),
         };
 
-        try self.diff.cache.put(self.log.focused_change.hash, .{});
-        try self.opshow.cache.put(self.oplog.focused_op.hash, .{});
+        try self.diff.put(self.log.focused_change.hash, self.diff.context, .{});
+        try self.opshow.put(self.oplog.focused_op.hash, self.opshow.context, .{});
 
         return self;
     }

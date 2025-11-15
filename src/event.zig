@@ -286,6 +286,14 @@ pub const action_help = [_]struct {
         .action = .apply_bookmark_goto,
         .help = "Goto selected bookmark",
     },
+    .{
+        .action = .{ .file_tree_collapse = .{ .collapse = false } },
+        .help = "Uncollapse dir",
+    },
+    .{
+        .action = .{ .file_tree_collapse = .{ .collapse = true } },
+        .help = "Collapse dir",
+    },
 };
 
 pub const State = union(enum(u8)) {
@@ -403,6 +411,7 @@ pub const Action = union(enum) {
     apply_bookmark_goto,
     switch_state_to_git_fetch,
     switch_state_to_git_push,
+    file_tree_collapse: struct { collapse: bool },
     apply_jj_git_push_selected: struct { allow_new: bool },
     start_search,
     end_search: struct { reset: bool },
@@ -1610,7 +1619,13 @@ pub const App = struct {
             .file_tree,
             .{ .key = .{ .key = 'h' } },
             null,
-            .switch_state_to_log,
+            .{ .file_tree_collapse = .{ .collapse = true } },
+        );
+        try map.add_one_for_state(
+            .file_tree,
+            .{ .key = .{ .key = 'l' } },
+            null,
+            .{ .file_tree_collapse = .{ .collapse = false } },
         );
         try map.add_one_for_state(
             .log,
@@ -2751,6 +2766,28 @@ pub const App = struct {
                     self.state = .{ .git = .push };
                     try self.jj.requests.send(.bookmark);
                 },
+                .file_tree_collapse => |v| {
+                    const list = self.renderer.file_tree.cache.get(self.renderer.log.focused_change, .touch).?;
+                    const node = list.focused_node orelse return;
+                    switch (node.typ) {
+                        .file => {
+                            if (v.collapse) {
+                                const parent = try list.focus_parent();
+                                if (parent == null) {
+                                    try self._handle_event(.{ .action = .switch_state_to_log });
+                                    return;
+                                }
+                            }
+                        },
+                        .dir => {
+                            if (node.collapsed and v.collapse) {
+                                try self._handle_event(.{ .action = .switch_state_to_log });
+                                return;
+                            }
+                            node.collapsed = v.collapse;
+                        },
+                    }
+                },
             },
             .jj => |res| switch (res.req) {
                 .log => {
@@ -2887,10 +2924,11 @@ pub const App = struct {
                         const _tree = self.renderer.file_tree.cache.get(self.renderer.log.focused_change, .peek);
                         if (_tree) |tree| {
                             hasher.update(&std.mem.toBytes(tree.y));
-                            if (tree.get_focused_file()) |path| {
-                                hasher.update(path);
+                            if (tree.focused_node) |node| {
+                                hasher.update(node.path);
+                                hasher.update(&std.mem.toBytes(node.collapsed));
                                 const file = self.renderer.file_show.filecache.get(.{
-                                    .path = path,
+                                    .path = node.path,
                                     .change_hash = self.renderer.log.focused_change.hash,
                                 }, .peek);
                                 if (file) |f| hasher.update(&std.mem.toBytes(f.y));

@@ -1025,7 +1025,7 @@ pub const FileTree = struct {
         typ: enum { dir, file },
         depth: u32,
 
-        collapsed: bool = false,
+        collapsed: bool = true,
         children_names: std.StringHashMapUnmanaged(u32) = .empty,
         children: std.ArrayListUnmanaged(Node) = .empty,
 
@@ -1077,7 +1077,7 @@ pub const FileTree = struct {
 
     pub fn iterator(self: *@This()) !Iterator {
         var indices = try std.ArrayListUnmanaged(Iterator.IterNode).initCapacity(self.alloc, self.height + 1);
-        indices.appendAssumeCapacity(.{ .node = &self.root, .index = 0 });
+        indices.appendAssumeCapacity(.{ .node = &self.root, .index = 0, .iter_index = 0 });
         return .{
             .alloc = self.alloc,
             .root = &self.root,
@@ -1086,6 +1086,7 @@ pub const FileTree = struct {
     }
 
     pub const Iterator = struct {
+        index: u32 = 0,
         root: *Node,
         alloc: std.mem.Allocator,
         indices: std.ArrayListUnmanaged(IterNode),
@@ -1093,13 +1094,14 @@ pub const FileTree = struct {
         const IterNode = struct {
             node: *Node,
             index: u32,
+            iter_index: u32,
         };
 
         pub fn deinit(self: *@This()) void {
             self.indices.deinit(self.alloc);
         }
 
-        pub fn next(self: *@This()) ?*Node {
+        pub fn next(self: *@This()) ?IterNode {
             // If stack empty → finished
             var frame = if (self.indices.items.len > 0) &self.indices.items[self.indices.items.len - 1] else return null;
 
@@ -1107,12 +1109,15 @@ pub const FileTree = struct {
             if (frame.node.children.items.len > frame.index and !frame.node.collapsed) {
                 // Push next child
                 const child = &frame.node.children.items[frame.index];
-                frame.index += 1;
-                self.indices.appendAssumeCapacity(.{
+                defer frame.index += 1;
+                defer self.index += 1;
+                const node = self.indices.addOneAssumeCapacity();
+                node.* = .{
                     .node = child,
                     .index = 0,
-                });
-                return child;
+                    .iter_index = self.index,
+                };
+                return node.*;
             }
 
             // Finished this node → pop and continue upward
@@ -1122,9 +1127,18 @@ pub const FileTree = struct {
             return self.next();
         }
 
+        pub fn parent(self: *@This()) ?IterNode {
+            // NOTE: > 2 because 0 is always root, and we don't want to return root
+            if (self.indices.items.len > 2) {
+                return self.indices.items[self.indices.items.len - 2];
+            }
+            return null;
+        }
+
         pub fn reset(self: *@This()) void {
+            self.index = 0;
             self.indices.clearRetainingCapacity();
-            self.indices.appendAssumeCapacity(.{ .node = self.root, .index = 0 });
+            self.indices.appendAssumeCapacity(.{ .node = self.root, .index = 0, .iter_index = 0 });
         }
 
         pub fn ended(self: *@This()) bool {
@@ -1141,7 +1155,7 @@ pub const FileTreeSlate = struct {
     pub const FileList = struct {
         y: i32 = 0,
         skip_y: i32 = 0,
-        focused_node: ?*const FileTree.Node = null,
+        focused_node: ?*FileTree.Node = null,
         change_status: jj_mod.Formatted = .{},
         files: jj_mod.Formatted = .{},
         tree: FileTree,
@@ -1179,6 +1193,24 @@ pub const FileTreeSlate = struct {
             alloc.free(self.files.buf);
             self.tree.deinit();
             if (self.it) |*it| it.deinit();
+        }
+
+        pub fn focus_parent(self: *@This()) !?*const FileTree.Node {
+            if (self.it == null) {
+                self.it = try self.tree.iterator();
+            }
+            var it = &self.it.?;
+            it.reset();
+            while (it.next()) |e| {
+                if (e.iter_index == self.y) {
+                    const p = it.parent() orelse return null;
+                    self.y = @intCast(p.iter_index);
+                    self.skip_y = @min(self.y -| 2, self.skip_y);
+                    return p.node;
+                }
+            }
+
+            return null;
         }
 
         pub fn get_focused_file(self: *const @This()) ?[]const u8 {
@@ -1240,12 +1272,13 @@ pub const FileTreeSlate = struct {
         it.reset();
         var i: i32 = 0;
         var ended = false;
-        while (it.next()) |node| {
+        while (it.next()) |e| {
             defer i += 1;
             if (tree.skip_y > i) {
                 continue;
             }
 
+            const node = e.node;
             const path = node.path;
             if (i == tree.y) {
                 try gutter.draw_bufln("->");

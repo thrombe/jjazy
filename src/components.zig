@@ -1011,6 +1011,61 @@ const OpLogSlate = struct {
     }
 };
 
+pub const FileTree = struct {
+    arena: std.heap.ArenaAllocator,
+
+    root: Node,
+
+    pub const Node = struct {
+        path: []const u8,
+        name: []const u8,
+        has_conflict_somewhere_inside: bool = false,
+        typ: enum { dir, file },
+
+        collapsed: bool = true,
+        children_names: std.StringHashMapUnmanaged(u32) = .empty,
+        children: std.ArrayListUnmanaged(Node) = .empty,
+
+        const root = @This(){ .path = "./", .name = "", .typ = .dir, .collapsed = false };
+    };
+
+    pub fn init(alloc: std.mem.Allocator) @This() {
+        return .{ .arena = .init(alloc), .root = .root };
+    }
+
+    pub fn deinit(self: *@This()) void {
+        self.arena.deinit();
+    }
+
+    pub fn reset(self: *@This()) void {
+        self.arena.reset(.retain_capacity);
+        self.root = .root;
+    }
+
+    pub fn consume_file_path(self: *@This(), path: []const u8, conflict: bool) !void {
+        const alloc = self.arena.allocator();
+        const it = try std.fs.path.componentIterator(path);
+        var node = &self.root;
+        while (it.next()) |comp| {
+            const child_index = node.children_names.get(comp.name) orelse blk: {
+                const index: u32 = @intCast(node.children.items.len);
+                try node.children_names.put(alloc, comp.name, index);
+                const child = try node.children.addOne(alloc);
+                child.* = Node{
+                    .path = comp.path,
+                    .name = comp.name,
+                    .typ = if (it.peekNext() == null) .file else .dir,
+                };
+                break :blk index;
+            };
+            const child = &node.children.items[child_index];
+
+            child.has_conflict_somewhere_inside = child.has_conflict_somewhere_inside or conflict;
+            node = child;
+        }
+    }
+};
+
 pub const FileTreeSlate = struct {
     alloc: std.mem.Allocator,
     cache: FileListCache,

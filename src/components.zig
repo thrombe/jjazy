@@ -1254,6 +1254,13 @@ pub const FileTreeSlate = struct {
                 try gutter.draw_bufln("  ");
             }
 
+            try surface.apply_style(.faint);
+            for (0..node.depth -| 1) |_| {
+                try surface.draw_buf("  ");
+                try surface.draw_buf(term_mod.symbols.border.thin.edges.vertical);
+            }
+            try surface.apply_style(.reset);
+
             const icon = renderer.icons.get_icon(path) orelse term_mod.Icons.Icon{
                 .icon = if (node.typ == .dir) term_mod.Icons.icons.folder[0..] else term_mod.Icons.icons.file[0..],
                 .color = .from_theme(.info),
@@ -1261,17 +1268,18 @@ pub const FileTreeSlate = struct {
 
             try surface.apply_style(.{ .foreground_color = icon.color });
             try surface.draw_buf(icon.icon);
-            try surface.draw_buf(" ");
             try surface.apply_style(.reset);
+            try surface.draw_buf(" ");
 
             switch (node.typ) {
                 .dir => {
+                    try surface.apply_style(.faint);
                     if (node.collapsed) {
-                        try surface.draw_buf(term_mod.symbols.triangle.line.big.right);
+                        try surface.draw_buf(term_mod.symbols.arrow.line.right);
                     } else {
-                        try surface.draw_buf(term_mod.symbols.triangle.line.big.down);
+                        try surface.draw_buf(term_mod.symbols.arrow.line.down);
                     }
-                    try surface.draw_buf(" ");
+                    try surface.apply_style(.reset);
 
                     try surface.apply_style(.bold);
                     try surface.apply_style(.{ .foreground_color = .from_theme(.info) });

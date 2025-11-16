@@ -282,6 +282,18 @@ pub const action_help = [_]struct {
         .action = .{ .file_tree_collapse = .{ .collapse = true } },
         .help = "Collapse dir",
     },
+    .{
+        .action = .{ .change_diff_context = .{ .off = .reset } },
+        .help = "Reset Diff context size",
+    },
+    .{
+        .action = .{ .change_diff_context = .{ .off = .increase } },
+        .help = "Increase Diff context size",
+    },
+    .{
+        .action = .{ .change_diff_context = .{ .off = .decrease } },
+        .help = "Decrease Diff context size",
+    },
 };
 
 pub const State = union(enum(u8)) {

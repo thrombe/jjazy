@@ -430,7 +430,10 @@ pub const HelpSlate = struct {
         var it = app.input_action_map.map.iterator();
         while (it.next()) |iam| {
             if (!cmp.eql_state(iam.key_ptr.state, app.state)) continue;
-            const help = self.action_help_map.get(iam.value_ptr.*) orelse return error.MissingHelpEntry;
+            const help = self.action_help_map.get(iam.value_ptr.*) orelse {
+                std.log.debug("missing help entry for: {any}", .{iam.value_ptr.*});
+                return error.MissingHelpEntry;
+            };
             switch (iam.key_ptr.input) {
                 inline .key, .functional, .mouse => |key| if (key.action == .repeat) continue,
                 else => continue,

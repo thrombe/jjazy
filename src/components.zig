@@ -711,14 +711,18 @@ const BookmarkSlate = struct {
     }
 
     // TODO: make window width dynamic with a min size
-    fn render(self: *@This(), surface: *Surface, renderer: *Renderer, app: *App, include: struct {
+    fn render(self: *@This(), surface: *Surface, renderer: *Renderer, app: *App, v: struct {
+        update_search: bool = true,
+    }, include: struct {
         local_only: bool = true,
         remotes: bool = true,
         git_as_remote: bool = false,
     }, show: struct {
         targets: bool = true,
     }) !void {
-        try self.maybe_update_search(renderer);
+        if (v.update_search) {
+            try self.maybe_update_search(renderer);
+        }
         try surface.clear();
 
         try surface.apply_style(.bold);
@@ -1709,7 +1713,7 @@ pub const Renderer = struct {
                 var surface = try Surface.init(&self.screen, 1, .{ .origin = region.origin, .size = region.size });
                 defer self._register_mouse_region(.bookmarks, &surface);
 
-                if (tropes.bookmark_search_enabled or self.text_input.text.items.len > 0) {
+                if (tropes.bookmark_search_enabled or (self.text_input.text.items.len > 0 and !std.meta.eql(state, .{ .bookmark = .create }))) {
                     var input_box = try surface.split_y(3, .none, .bottom);
 
                     try input_box.clear();
@@ -1721,13 +1725,15 @@ pub const Renderer = struct {
                 }
 
                 if (std.meta.eql(state, .{ .bookmark = .view_goto }) or std.meta.eql(state, .{ .bookmark = .search_goto })) {
-                    try self.bookmarks.render(&surface, self, app, .{}, .{});
+                    try self.bookmarks.render(&surface, self, app, .{}, .{}, .{});
                 } else if (state == .bookmark) {
-                    try self.bookmarks.render(&surface, self, app, .{ .remotes = false }, .{});
+                    try self.bookmarks.render(&surface, self, app, .{
+                        .update_search = state.bookmark != .create,
+                    }, .{ .remotes = false }, .{});
                 } else if (std.meta.eql(state, .{ .git = .push }) or std.meta.eql(state, .{ .git = .push_search })) {
-                    try self.bookmarks.render(&surface, self, app, .{ .remotes = false }, .{});
+                    try self.bookmarks.render(&surface, self, app, .{}, .{ .remotes = false }, .{});
                 } else if (std.meta.eql(state, .{ .git = .fetch }) or std.meta.eql(state, .{ .git = .fetch_search })) {
-                    try self.bookmarks.render(&surface, self, app, .{ .remotes = false }, .{ .targets = false });
+                    try self.bookmarks.render(&surface, self, app, .{}, .{ .remotes = false }, .{ .targets = false });
                 } else unreachable;
             }
 

@@ -55,11 +55,35 @@ pub const action_help = [_]struct {
         .help = "Scroll down bookmarks",
     },
     .{
+        .action = .{ .scroll = .{ .target = .log, .dir = .up, .pan = true } },
+        .help = "Pan up logs",
+    },
+    .{
+        .action = .{ .scroll = .{ .target = .log, .dir = .down, .pan = true } },
+        .help = "Pan down logs",
+    },
+    .{
+        .action = .{ .scroll = .{ .target = .bookmarks, .dir = .up, .pan = true } },
+        .help = "Pan up bookmarks",
+    },
+    .{
+        .action = .{ .scroll = .{ .target = .bookmarks, .dir = .down, .pan = true } },
+        .help = "Pan down bookmarks",
+    },
+    .{
         .action = .{ .scroll = .{ .target = .diff, .dir = .up } },
         .help = "Scroll up diff",
     },
     .{
         .action = .{ .scroll = .{ .target = .diff, .dir = .down } },
+        .help = "Scroll up diff",
+    },
+    .{
+        .action = .{ .scroll = .{ .target = .diff, .dir = .up, .pan = true } },
+        .help = "Scroll up diff",
+    },
+    .{
+        .action = .{ .scroll = .{ .target = .diff, .dir = .down, .pan = true } },
         .help = "Scroll up diff",
     },
     .{
@@ -375,7 +399,7 @@ pub const Action = union(enum) {
     fancy_terminal_features_that_break_gdb: enum { enable, disable },
     trigger_breakpoint,
     refresh_master_content,
-    scroll: struct { target: enum { log, diff, bookmarks }, dir: enum { up, down } },
+    scroll: struct { target: enum { log, diff, bookmarks }, dir: enum { up, down }, pan: bool = false },
     resize_master: enum { left, right },
     change_diff_context: struct { off: enum { reset, increase, decrease } },
     switch_state_to_log,
@@ -1272,6 +1296,27 @@ pub const App = struct {
             });
             try map.add_many(
                 &[_]Key{
+                    .{ .key = .{ .key = 'J', .action = .press, .mod = .{} } },
+                    .{ .key = .{ .key = 'J', .action = .repeat, .mod = .{} } },
+                    .{ .key = .{ .key = 'J', .action = .press, .mod = .{ .shift = true } } },
+                    .{ .key = .{ .key = 'J', .action = .repeat, .mod = .{ .shift = true } } },
+                },
+                null,
+                .{ .scroll = .{ .target = .log, .dir = .down, .pan = true } },
+            );
+            try map.add_many(
+                &[_]Key{
+                    .{ .key = .{ .key = 'K', .action = .press } },
+                    .{ .key = .{ .key = 'K', .action = .repeat } },
+                    .{ .key = .{ .key = 'K', .action = .press, .mod = .{ .shift = true } } },
+                    .{ .key = .{ .key = 'K', .action = .repeat, .mod = .{ .shift = true } } },
+                },
+                null,
+                .{ .scroll = .{ .target = .log, .dir = .up, .pan = true } },
+            );
+
+            try map.add_many(
+                &[_]Key{
                     .{ .key = .{ .key = 'j', .action = .press } },
                     .{ .key = .{ .key = 'j', .action = .repeat } },
                 },
@@ -1302,6 +1347,23 @@ pub const App = struct {
                 },
                 .status,
                 .{ .scroll = .{ .target = .log, .dir = .down } },
+            );
+
+            try map.add_many(
+                &[_]Key{
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .press, .mod = .{ .shift = true } } },
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .repeat, .mod = .{ .shift = true } } },
+                },
+                .status,
+                .{ .scroll = .{ .target = .log, .dir = .up, .pan = true } },
+            );
+            try map.add_many(
+                &[_]Key{
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .press, .mod = .{ .shift = true } } },
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .repeat, .mod = .{ .shift = true } } },
+                },
+                .status,
+                .{ .scroll = .{ .target = .log, .dir = .down, .pan = true } },
             );
         }
         {
@@ -1496,6 +1558,27 @@ pub const App = struct {
             });
             try map.add_many(
                 &[_]Key{
+                    .{ .key = .{ .key = 'J', .action = .press, .mod = .{} } },
+                    .{ .key = .{ .key = 'J', .action = .repeat, .mod = .{} } },
+                    .{ .key = .{ .key = 'J', .action = .press, .mod = .{ .shift = true } } },
+                    .{ .key = .{ .key = 'J', .action = .repeat, .mod = .{ .shift = true } } },
+                },
+                null,
+                .{ .scroll = .{ .target = .bookmarks, .dir = .down, .pan = true } },
+            );
+            try map.add_many(
+                &[_]Key{
+                    .{ .key = .{ .key = 'K', .action = .press } },
+                    .{ .key = .{ .key = 'K', .action = .repeat } },
+                    .{ .key = .{ .key = 'K', .action = .press, .mod = .{ .shift = true } } },
+                    .{ .key = .{ .key = 'K', .action = .repeat, .mod = .{ .shift = true } } },
+                },
+                null,
+                .{ .scroll = .{ .target = .bookmarks, .dir = .up, .pan = true } },
+            );
+
+            try map.add_many(
+                &[_]Key{
                     .{ .key = .{ .key = 'j', .action = .press } },
                     .{ .key = .{ .key = 'j', .action = .repeat } },
                 },
@@ -1526,6 +1609,23 @@ pub const App = struct {
                 },
                 .bookmarks,
                 .{ .scroll = .{ .target = .bookmarks, .dir = .down } },
+            );
+
+            try map.add_many(
+                &[_]Key{
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .press, .mod = .{ .shift = true } } },
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .repeat, .mod = .{ .shift = true } } },
+                },
+                .bookmarks,
+                .{ .scroll = .{ .target = .bookmarks, .dir = .up, .pan = true } },
+            );
+            try map.add_many(
+                &[_]Key{
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .press, .mod = .{ .shift = true } } },
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .repeat, .mod = .{ .shift = true } } },
+                },
+                .bookmarks,
+                .{ .scroll = .{ .target = .bookmarks, .dir = .down, .pan = true } },
             );
         }
 
@@ -2303,37 +2403,67 @@ pub const App = struct {
                 },
                 .scroll => |target| switch (target.target) {
                     .log => {
-                        switch (self.state) {
-                            .oplog => {
-                                switch (target.dir) {
-                                    .up => self.renderer.oplog.y -= 1,
-                                    .down => self.renderer.oplog.y += 1,
-                                }
-                                try self._send_event(.op_update);
-                            },
-                            .evolog => {
-                                switch (target.dir) {
-                                    .up => self.renderer.evolog.y -= 1,
-                                    .down => self.renderer.evolog.y += 1,
-                                }
-                                try self._send_event(.scroll_update);
-                            },
-                            .file_tree => {
-                                const tree = self.renderer.file_tree.cache.get(self.renderer.log.focused_change, .touch).?;
-                                switch (target.dir) {
-                                    .up => tree.y -= 1,
-                                    .down => tree.y += 1,
-                                }
-                                try tree.update_focused_node();
-                                try self._send_event(.file_show_scroll_update);
-                            },
-                            else => {
-                                switch (target.dir) {
-                                    .up => self.renderer.log.y -= 1,
-                                    .down => self.renderer.log.y += 1,
-                                }
-                                try self._send_event(.scroll_update);
-                            },
+                        if (target.pan) {
+                            switch (self.state) {
+                                .oplog => {
+                                    switch (target.dir) {
+                                        .up => self.renderer.oplog.skip_y = @max(0, self.renderer.oplog.skip_y - 1),
+                                        .down => self.renderer.oplog.skip_y += 1,
+                                    }
+                                },
+                                .evolog => {
+                                    switch (target.dir) {
+                                        .up => self.renderer.evolog.skip_y = @max(0, self.renderer.evolog.skip_y - 1),
+                                        .down => self.renderer.evolog.skip_y += 1,
+                                    }
+                                },
+                                .file_tree => {
+                                    const tree = self.renderer.file_tree.cache.get(self.renderer.log.focused_change, .touch).?;
+                                    switch (target.dir) {
+                                        .up => tree.skip_y = @max(0, tree.skip_y - 1),
+                                        .down => tree.skip_y += 1,
+                                    }
+                                },
+                                else => {
+                                    switch (target.dir) {
+                                        .up => self.renderer.log.skip_y = @max(0, self.renderer.log.skip_y - 1),
+                                        .down => self.renderer.log.skip_y += 1,
+                                    }
+                                },
+                            }
+                        } else {
+                            switch (self.state) {
+                                .oplog => {
+                                    switch (target.dir) {
+                                        .up => self.renderer.oplog.y -= 1,
+                                        .down => self.renderer.oplog.y += 1,
+                                    }
+                                    try self._send_event(.op_update);
+                                },
+                                .evolog => {
+                                    switch (target.dir) {
+                                        .up => self.renderer.evolog.y -= 1,
+                                        .down => self.renderer.evolog.y += 1,
+                                    }
+                                    try self._send_event(.scroll_update);
+                                },
+                                .file_tree => {
+                                    const tree = self.renderer.file_tree.cache.get(self.renderer.log.focused_change, .touch).?;
+                                    switch (target.dir) {
+                                        .up => tree.y -= 1,
+                                        .down => tree.y += 1,
+                                    }
+                                    try tree.update_focused_node();
+                                    try self._send_event(.file_show_scroll_update);
+                                },
+                                else => {
+                                    switch (target.dir) {
+                                        .up => self.renderer.log.y -= 1,
+                                        .down => self.renderer.log.y += 1,
+                                    }
+                                    try self._send_event(.scroll_update);
+                                },
+                            }
                         }
                     },
                     .diff => {
@@ -3021,6 +3151,7 @@ pub const App = struct {
                             else => &self.renderer.log,
                         };
                         hasher.update(&std.mem.toBytes(log.y));
+                        hasher.update(&std.mem.toBytes(log.skip_y));
                         hasher.update(&std.mem.toBytes(self.renderer.diff.context));
                         if (self.renderer.diff.get(log.focused_change.hash, .peek)) |diff| {
                             hasher.update(&std.mem.toBytes(diff.y));
@@ -3032,6 +3163,7 @@ pub const App = struct {
                     },
                     .oplog => {
                         hasher.update(&std.mem.toBytes(self.renderer.oplog.y));
+                        hasher.update(&std.mem.toBytes(self.renderer.oplog.skip_y));
                         if (self.renderer.opshow.get(self.renderer.oplog.focused_op.hash, .peek)) |opshow| {
                             hasher.update(&std.mem.toBytes(opshow.y));
                         }
@@ -3040,6 +3172,7 @@ pub const App = struct {
                         const _tree = self.renderer.file_tree.cache.get(self.renderer.log.focused_change, .peek);
                         if (_tree) |tree| {
                             hasher.update(&std.mem.toBytes(tree.y));
+                            hasher.update(&std.mem.toBytes(tree.skip_y));
                             if (tree.focused_node) |node| {
                                 hasher.update(node.path);
                                 hasher.update(&std.mem.toBytes(node.collapsed));
@@ -3056,6 +3189,7 @@ pub const App = struct {
                 hasher.update(&std.mem.toBytes(self.renderer.text_input.text.items.len));
                 hasher.update(&std.mem.toBytes(self.renderer.text_input.cursor));
                 hasher.update(&std.mem.toBytes(self.renderer.bookmarks.y));
+                hasher.update(&std.mem.toBytes(self.renderer.bookmarks.skip_y));
                 // hasher.update(self.log.status); // too much text for hashing on every event
 
                 const final_hash = hasher.final();

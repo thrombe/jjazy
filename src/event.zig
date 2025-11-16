@@ -558,27 +558,7 @@ pub const JujutsuServer = struct {
                     };
                     errdefer self.alloc.free(stat);
 
-                    // apparently delta can be used as a pager to get the pretty diff over the default diff output
-                    //   jj diff --no-pager --context 20 -r <> | delta
-                    // var diff_cmd = std.ArrayList(u8).init(temp);
-                    // try diff_cmd.writer().print("jj diff --context {d} --no-pager -r {s} | delta --true-color always", .{
-                    //     v.context,
-                    //     v.change.hash[0..],
-                    // });
-
-                    // const diff = self.jjcall(temp, &[_][]const u8{
-                    //     "sh",
-                    //     "-c",
-                    //     diff_cmd.items,
-                    // }) catch |e| {
-                    //     utils_mod.dump_error(e);
-                    //     continue;
-                    // };
-                    // errdefer self.alloc.free(diff);
-
-                    // NOTE:(1008)
-                    // TODO: piping diff to delta gives very broken syntax highlighting as it cannot parse incomplete code blocks
-                    //  so not using .context :/
+                    // jj diff -r lqo --tool delta --config merge-tools.delta.diff-args='["--diff-args=\"-U50\"", "$left", "$right"]'
                     const diff = self.jjcall(temp, &[_][]const u8{
                         "jj",
                         "--color",
@@ -586,6 +566,10 @@ pub const JujutsuServer = struct {
                         "diff",
                         "--tool",
                         "delta",
+                        "--config",
+                        try std.fmt.allocPrint(temp,
+                            \\merge-tools.delta.diff-args=["--diff-args=\"-U{d}\"", "$left", "$right"]
+                        , .{v.context}),
                         "-r",
                         v.change.hash[0..],
                     }) catch |e| {
@@ -1398,38 +1382,36 @@ pub const App = struct {
                 .{ .resize_master = .right },
             );
 
-            // NOTE:(1008)
-            //
-            // try map.add_many(
-            //     &[_]Key{
-            //         .{ .key = .{ .key = '+', .action = .press, .mod = .{ .shift = true } } },
-            //         .{ .key = .{ .key = '+', .action = .repeat, .mod = .{ .shift = true } } },
-            //         .{ .key = .{ .key = '+', .action = .press, .mod = .{} } },
-            //         .{ .key = .{ .key = '+', .action = .repeat, .mod = .{} } },
-            //     },
-            //     null,
-            //     .{ .change_diff_context = .{ .off = .increase } },
-            // );
-            // try map.add_many(
-            //     &[_]Key{
-            //         .{ .key = .{ .key = '_', .action = .press, .mod = .{ .shift = true } } },
-            //         .{ .key = .{ .key = '_', .action = .repeat, .mod = .{ .shift = true } } },
-            //         .{ .key = .{ .key = '_', .action = .press, .mod = .{} } },
-            //         .{ .key = .{ .key = '_', .action = .repeat, .mod = .{} } },
-            //     },
-            //     null,
-            //     .{ .change_diff_context = .{ .off = .decrease } },
-            // );
-            // try map.add_many(
-            //     &[_]Key{
-            //         .{ .key = .{ .key = ')', .action = .press, .mod = .{ .shift = true } } },
-            //         .{ .key = .{ .key = ')', .action = .repeat, .mod = .{ .shift = true } } },
-            //         .{ .key = .{ .key = ')', .action = .press, .mod = .{} } },
-            //         .{ .key = .{ .key = ')', .action = .repeat, .mod = .{} } },
-            //     },
-            //     null,
-            //     .{ .change_diff_context = .{ .off = .reset } },
-            // );
+            try map.add_many(
+                &[_]Key{
+                    .{ .key = .{ .key = '+', .action = .press, .mod = .{ .shift = true } } },
+                    .{ .key = .{ .key = '+', .action = .repeat, .mod = .{ .shift = true } } },
+                    .{ .key = .{ .key = '+', .action = .press, .mod = .{} } },
+                    .{ .key = .{ .key = '+', .action = .repeat, .mod = .{} } },
+                },
+                null,
+                .{ .change_diff_context = .{ .off = .increase } },
+            );
+            try map.add_many(
+                &[_]Key{
+                    .{ .key = .{ .key = '_', .action = .press, .mod = .{ .shift = true } } },
+                    .{ .key = .{ .key = '_', .action = .repeat, .mod = .{ .shift = true } } },
+                    .{ .key = .{ .key = '_', .action = .press, .mod = .{} } },
+                    .{ .key = .{ .key = '_', .action = .repeat, .mod = .{} } },
+                },
+                null,
+                .{ .change_diff_context = .{ .off = .decrease } },
+            );
+            try map.add_many(
+                &[_]Key{
+                    .{ .key = .{ .key = ')', .action = .press, .mod = .{ .shift = true } } },
+                    .{ .key = .{ .key = ')', .action = .repeat, .mod = .{ .shift = true } } },
+                    .{ .key = .{ .key = ')', .action = .press, .mod = .{} } },
+                    .{ .key = .{ .key = ')', .action = .repeat, .mod = .{} } },
+                },
+                null,
+                .{ .change_diff_context = .{ .off = .reset } },
+            );
         }
         {
             defer map.reset();

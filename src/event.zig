@@ -1274,8 +1274,6 @@ pub const App = struct {
                 &[_]Key{
                     .{ .key = .{ .key = 'j', .action = .press } },
                     .{ .key = .{ .key = 'j', .action = .repeat } },
-                    .{ .functional = .{ .key = .down, .action = .press } },
-                    .{ .functional = .{ .key = .down, .action = .repeat } },
                 },
                 null,
                 .{ .scroll = .{ .target = .log, .dir = .down } },
@@ -1284,8 +1282,6 @@ pub const App = struct {
                 &[_]Key{
                     .{ .key = .{ .key = 'k', .action = .press } },
                     .{ .key = .{ .key = 'k', .action = .repeat } },
-                    .{ .functional = .{ .key = .up, .action = .press } },
-                    .{ .functional = .{ .key = .up, .action = .repeat } },
                 },
                 null,
                 .{ .scroll = .{ .target = .log, .dir = .up } },
@@ -1362,16 +1358,16 @@ pub const App = struct {
 
             try map.add_many(
                 &[_]Key{
-                    .{ .functional = .{ .key = .page_up, .action = .press } },
-                    .{ .functional = .{ .key = .page_up, .action = .repeat } },
+                    .{ .functional = .{ .key = .up, .action = .press } },
+                    .{ .functional = .{ .key = .up, .action = .repeat } },
                 },
                 null,
                 .{ .scroll = .{ .target = .diff, .dir = .up } },
             );
             try map.add_many(
                 &[_]Key{
-                    .{ .functional = .{ .key = .page_down, .action = .press } },
-                    .{ .functional = .{ .key = .page_down, .action = .repeat } },
+                    .{ .functional = .{ .key = .down, .action = .press } },
+                    .{ .functional = .{ .key = .down, .action = .repeat } },
                 },
                 null,
                 .{ .scroll = .{ .target = .diff, .dir = .down } },
@@ -1502,8 +1498,6 @@ pub const App = struct {
                 &[_]Key{
                     .{ .key = .{ .key = 'j', .action = .press } },
                     .{ .key = .{ .key = 'j', .action = .repeat } },
-                    .{ .functional = .{ .key = .down, .action = .press } },
-                    .{ .functional = .{ .key = .down, .action = .repeat } },
                 },
                 null,
                 .{ .scroll = .{ .target = .bookmarks, .dir = .down } },
@@ -1512,8 +1506,6 @@ pub const App = struct {
                 &[_]Key{
                     .{ .key = .{ .key = 'k', .action = .press } },
                     .{ .key = .{ .key = 'k', .action = .repeat } },
-                    .{ .functional = .{ .key = .up, .action = .press } },
-                    .{ .functional = .{ .key = .up, .action = .repeat } },
                 },
                 null,
                 .{ .scroll = .{ .target = .bookmarks, .dir = .up } },

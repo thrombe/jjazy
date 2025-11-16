@@ -1384,6 +1384,23 @@ pub const App = struct {
 
             try map.add_many(
                 &[_]Key{
+                    .{ .functional = .{ .key = .left, .action = .press, .mod = .{} } },
+                    .{ .functional = .{ .key = .left, .action = .repeat, .mod = .{} } },
+                },
+                null,
+                .{ .resize_master = .left },
+            );
+            try map.add_many(
+                &[_]Key{
+                    .{ .functional = .{ .key = .right, .action = .press, .mod = .{} } },
+                    .{ .functional = .{ .key = .right, .action = .repeat, .mod = .{} } },
+                },
+                null,
+                .{ .resize_master = .right },
+            );
+
+            try map.add_many(
+                &[_]Key{
                     .{ .key = .{ .key = '+', .action = .press, .mod = .{ .shift = true } } },
                     .{ .key = .{ .key = '+', .action = .repeat, .mod = .{ .shift = true } } },
                     .{ .key = .{ .key = '+', .action = .press, .mod = .{} } },

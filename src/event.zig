@@ -1128,7 +1128,7 @@ pub const App = struct {
             @cInclude("sys/select.h");
             @cInclude("errno.h");
         });
-        const tty_fd = self.screen.term.tty.handle;
+        const tty_fd = self.renderer.screen.term.tty.handle;
         const fd_arr_type = if (builtin.os.tag.isDarwin()) c_int else c_long;
         const fd_field_name = if (builtin.os.tag.isDarwin()) "fds_bits" else "__fds_bits";
 
@@ -1141,7 +1141,7 @@ pub const App = struct {
         // timeout of 20ms
         var tv: c.struct_timeval = .{
             .tv_sec = 0,
-            .tv_usec = @as(c_long, @intCast(wait_ms)) * 1000,
+            .tv_usec = @as(fd_arr_type, @intCast(wait_ms)) * 1000,
         };
 
         const nfds = tty_fd + 1;

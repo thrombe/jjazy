@@ -160,7 +160,8 @@ pub fn AutoHashMap(key: type, val: type, v: AutoHashArgs) type {
 pub const FileLogger = struct {
     path: []const u8 = "./zig-out/log.log",
     file: ?std.fs.File = null,
-    enabled: bool = true,
+    file_logs: bool = false,
+    console_logs: bool = true,
 
     pub const Writer = std.io.Writer(*const @This(), anyerror, @This().write);
 
@@ -170,11 +171,12 @@ pub const FileLogger = struct {
     pub fn init(self: *@This(), v: struct {
         path: ?[]const u8 = null,
         allow_fail: bool = false,
+        console_logs: bool = true,
     }) !void {
         if (v.path) |path| self.path = path;
         const file = std.fs.cwd().createFile(self.path, .{}) catch |e| {
             if (v.allow_fail) {
-                self.enabled = false;
+                self.file_logs = false;
                 return;
             }
             return e;
@@ -185,6 +187,8 @@ pub const FileLogger = struct {
         try file.seekTo(stat.size);
 
         self.file = file;
+        self.file_logs = true;
+        self.console_logs = v.console_logs;
     }
 
     pub fn deinit(self: *@This()) void {
@@ -212,7 +216,11 @@ pub const FileLogger = struct {
         comptime format: []const u8,
         args: anytype,
     ) void {
-        if (!self.enabled) {
+        if (self.console_logs) {
+            std.debug.print(format, args);
+        }
+
+        if (!self.file_logs) {
             return;
         }
         if (self.file == null) {

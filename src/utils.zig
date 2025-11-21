@@ -160,7 +160,6 @@ pub fn AutoHashMap(key: type, val: type, v: AutoHashArgs) type {
 pub const FileLogger = struct {
     path: []const u8 = "./zig-out/log.log",
     file: ?std.fs.File = null,
-    alloc: ?std.mem.Allocator = null,
     enabled: bool = true,
 
     pub const Writer = std.io.Writer(*const @This(), anyerror, @This().write);
@@ -168,7 +167,7 @@ pub const FileLogger = struct {
     pub var logger = @This(){};
     pub var writer = Writer{ .context = &logger };
 
-    pub fn init(self: *@This(), alloc: std.mem.Allocator, v: struct {
+    pub fn init(self: *@This(), v: struct {
         path: ?[]const u8 = null,
         allow_fail: bool = false,
     }) !void {
@@ -186,13 +185,11 @@ pub const FileLogger = struct {
         try file.seekTo(stat.size);
 
         self.file = file;
-        self.alloc = alloc;
     }
 
     pub fn deinit(self: *@This()) void {
         if (self.file) |file| file.close();
         self.file = null;
-        self.alloc = null;
     }
 
     pub fn log(
@@ -224,14 +221,7 @@ pub const FileLogger = struct {
             return;
         }
 
-        // TODO: don't alloc here. maybe cache buffers in threadlocals or just use a statically sized buf + bufprint
-        const message = std.fmt.allocPrint(self.alloc.?, format, args) catch |err| {
-            std.debug.print("Failed to format log message with args: {}\n", .{err});
-            return;
-        };
-        defer self.alloc.?.free(message);
-
-        self.file.?.writeAll(message) catch |err| {
+        self.file.?.writer().print(format, args) catch |err| {
             std.debug.print("Failed to write to log file: {}\n", .{err});
         };
     }

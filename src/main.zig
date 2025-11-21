@@ -13,7 +13,7 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
     const alloc = gpa.allocator();
 
-    try utils_mod.FileLogger.logger.init(alloc, .{ .allow_fail = true });
+    try utils_mod.FileLogger.logger.init(.{ .allow_fail = true });
     defer utils_mod.FileLogger.logger.deinit();
 
     defer _ = gpa.deinit();

@@ -457,6 +457,118 @@ pub fn DllLruCache(K: type, V: type, comptime v: struct { ptr: PtrFollow = .disa
     };
 }
 
+pub fn MaxHeap(T: type, Ctx: type) type {
+    return struct {
+        alloc: std.mem.Allocator,
+        ctx: Ctx,
+        buf: []T,
+        capacity: usize,
+
+        pub fn init(alloc: std.mem.Allocator, ctx: Ctx) @This() {
+            return .{
+                .alloc = alloc,
+                .ctx = ctx,
+                .buf = &.{},
+                .capacity = 0,
+            };
+        }
+
+        pub fn from(alloc: std.mem.Allocator, ctx: Ctx, buf: []T) @This() {
+            var self = @This(){ .alloc = alloc, .ctx = ctx, .buf = buf, .capacity = buf.len };
+            if (self.buf.len == 0) return self;
+            const n = (self.buf.len - 1) / 2;
+            for (0..n + 1) |i| {
+                self.heapify(n - i);
+            }
+        }
+
+        pub fn deinit(self: *@This()) void {
+            defer self.buf = &.{};
+            defer self.capacity = 0;
+            var buf = self.buf;
+            buf.len = self.capacity;
+            self.alloc.free(buf);
+        }
+
+        fn heapify(self: *@This(), i: usize) void {
+            var index = i;
+            while (true) {
+                var largest = index;
+                const left = 2 * index + 1;
+                const right = 2 * index + 2;
+
+                if (left < self.buf.len and self.ctx.lessThan(&self.buf[largest], &self.buf[left])) {
+                    largest = left;
+                }
+                if (right < self.buf.len and self.ctx.lessThan(&self.buf[largest], &self.buf[right])) {
+                    largest = right;
+                }
+
+                if (largest == index) {
+                    break;
+                }
+
+                std.mem.swap(T, &self.buf[index], &self.buf[largest]);
+                index = largest;
+            }
+        }
+
+        fn grow(self: *@This(), num: usize) !void {
+            std.debug.assert(self.capacity < num);
+            const old = self.buf;
+            const buf = try self.alloc.alloc(T, num);
+            @memcpy(buf[0..old.len], old);
+            self.buf = buf[0..old.len];
+            self.capacity = buf.len;
+            self.alloc.free(old);
+        }
+
+        fn addOne(self: *@This()) !*T {
+            if (self.buf.len == self.capacity) {
+                const new_cap = if (self.capacity == 0) 16 else self.capacity * 2;
+                try self.grow(new_cap);
+            }
+            self.buf.len += 1;
+            return &self.buf[self.buf.len - 1];
+        }
+
+        pub fn push(self: *@This(), t: T) !void {
+            const last = try self.addOne();
+            last.* = t;
+
+            var index = self.buf.len - 1;
+            while (true) {
+                const parent = (index -| 1) / 2;
+                if (index == 0 or self.ctx.lessThan(&self.buf[parent], &self.buf[index])) {
+                    break;
+                }
+                std.mem.swap(T, &self.buf[index], &self.buf[parent]);
+                index = parent;
+            }
+        }
+
+        // caller is not allowed to modify it in a way that changes it's 'max-ness'
+        pub fn peek(self: *@This()) ?*T {
+            if (self.buf.len == 0) return null;
+            return &self.buf[0];
+        }
+
+        pub fn pop(self: *@This()) ?T {
+            if (self.buf.len == 0) return null;
+            if (self.buf.len == 1) {
+                defer self.buf.len -= 1;
+                return self.buf[self.buf.len - 1];
+            } else {
+                const t = self.buf[0];
+                self.buf[0] = self.buf[self.buf.len - 1];
+                self.buf.len -= 1;
+                self.heapify(0);
+                return t;
+            }
+        }
+    };
+}
+
 pub fn Deque(typ: type) type {
     return struct {
         allocator: std.mem.Allocator,

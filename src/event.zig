@@ -782,12 +782,17 @@ pub const Sleeper = struct {
     thread: std.Thread,
     quit: utils_mod.Fuse = .{},
     requests: utils_mod.Channel(Request),
-    sleeps: std.ArrayList(Request),
+    sleeps: Sleeps,
 
     // not owned
     events: utils_mod.Channel(Event),
 
     const Request = struct { target_ts: i128, event: Event };
+    const Sleeps = utils_mod.MaxHeap(Request, struct {
+        pub fn lessThan(_: *@This(), a: *Request, b: *Request) bool {
+            return a.target_ts < b.target_ts;
+        }
+    });
 
     pub fn init(alloc: std.mem.Allocator, events: utils_mod.Channel(Event)) !*@This() {
         const self = try alloc.create(@This());
@@ -798,7 +803,7 @@ pub const Sleeper = struct {
 
         self.* = .{
             .alloc = alloc,
-            .sleeps = .init(alloc),
+            .sleeps = .init(alloc, .{}),
             .requests = requests,
             .events = events,
             .thread = undefined,
@@ -836,20 +841,14 @@ pub const Sleeper = struct {
         while (true) {
             if (self.quit.check()) return;
             if (self.requests.try_recv()) |e| {
-                try self.sleeps.append(e);
+                try self.sleeps.push(e);
             }
 
             const now = std.time.nanoTimestamp();
-            var i: usize = 0;
-            while (i < self.sleeps.items.len) {
-                const e = self.sleeps.items[i];
-                if (now >= e.target_ts) {
-                    _ = self.sleeps.swapRemove(i);
-                    try self.events.send(e.event);
-                } else {
-                    i += 1;
-                }
-            }
+            if (self.sleeps.peek()) |s| if (now >= s.target_ts) {
+                const sleep = self.sleeps.pop().?;
+                try self.events.send(sleep.event);
+            };
 
             std.Thread.sleep(std.time.ns_per_ms * 2);
         }

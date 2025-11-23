@@ -791,6 +791,22 @@ pub fn ArrayXar(T: type, base_chunk_size_log2: comptime_int) type {
             }
         }
 
+        pub fn swap_remove(self: *@This(), index: usize) ?T {
+            if (self.size > index) {
+                if (index == self.size - 1) {
+                    return self.pop();
+                } else {
+                    defer self.size -= 1;
+                    const last = self.getPtr(self.size - 1).?;
+                    const curr = self.getPtr(index).?;
+                    defer curr.* = last.*;
+                    return curr.*;
+                }
+            } else {
+                return null;
+            }
+        }
+
         pub fn ownedSlice(self: *@This(), v: struct {
             alloc: ?std.mem.Allocator = null,
             reset: enum { none, deinit, clear_retaining_capacity } = .none,

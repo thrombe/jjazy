@@ -704,12 +704,10 @@ pub fn Channel(typ: type) type {
             self.pinned.lock.lock();
             // defer self.pinned.lock.unlock();
 
-            while (true) {
+            while (self.pinned.waiting.fetchAdd(0, .monotonic) > 0) {
+                self.pinned.notify.signal();
                 // timeouts are fine here.
                 self.pinned.notify.timedWait(&self.pinned.lock, std.time.ns_per_us * 100) catch {};
-                const waiting = self.pinned.waiting.fetchAdd(0, .monotonic);
-                if (waiting == 0) break;
-                self.pinned.notify.signal();
             }
 
             self.pinned.dq.deinit();

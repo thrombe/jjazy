@@ -495,6 +495,7 @@ pub const JujutsuServer = struct {
         },
         git_fetch: struct { branch: ?[]const u8, remote: ?[]const u8 },
         git_push: struct { branch: ?[]const u8, remote: ?[]const u8, allow_new: bool },
+        command: []const []const u8,
     };
 
     pub const FileContentMode = enum { plain, diff };
@@ -512,6 +513,7 @@ pub const JujutsuServer = struct {
             diffs: Formatted,
         },
         ok: Formatted,
+        command_result: utils_mod.Command.Result,
         err: Formatted,
     };
 
@@ -571,7 +573,7 @@ pub const JujutsuServer = struct {
 
             switch (req) {
                 .log => |v| {
-                    const res = self.jjcall(temp, &[_][]const u8{
+                    const res = utils_mod.Command.exec_capture(self.alloc, temp, &[_][]const u8{
                         "jj",
                         "--color",
                         "always",
@@ -587,7 +589,7 @@ pub const JujutsuServer = struct {
                     try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(res) } } });
                 },
                 .oplog => {
-                    const res = self.jjcall(temp, &[_][]const u8{
+                    const res = utils_mod.Command.exec_capture(self.alloc, temp, &[_][]const u8{
                         "jj",
                         "--color",
                         "always",
@@ -602,7 +604,7 @@ pub const JujutsuServer = struct {
                     try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(res) } } });
                 },
                 .evolog => |change| {
-                    const res = self.jjcall(temp, &[_][]const u8{
+                    const res = utils_mod.Command.exec_capture(self.alloc, temp, &[_][]const u8{
                         "jj",
                         "--color",
                         "always",
@@ -621,7 +623,7 @@ pub const JujutsuServer = struct {
                 .diff => |v| {
                     // TODO: these diffs can get pretty large, maybe add some kinda paging support to this?
                     //  - something like: caller passes some line range info (start, end)
-                    const stat = self.jjcall(temp, &[_][]const u8{
+                    const stat = utils_mod.Command.exec_capture(self.alloc, temp, &[_][]const u8{
                         "jj",
                         "--color",
                         "always",
@@ -636,7 +638,7 @@ pub const JujutsuServer = struct {
                     errdefer self.alloc.free(stat);
 
                     // jj diff -r lqo --tool delta --config merge-tools.delta.diff-args='["--diff-args=\"-U50\"", "$left", "$right"]'
-                    const diff = self.jjcall(temp, &[_][]const u8{
+                    const diff = utils_mod.Command.exec_capture(self.alloc, temp, &[_][]const u8{
                         "jj",
                         "--color",
                         "always",
@@ -666,7 +668,7 @@ pub const JujutsuServer = struct {
                     } });
                 },
                 .opshow => |op| {
-                    const stat = self.jjcall(temp, &[_][]const u8{
+                    const stat = utils_mod.Command.exec_capture(self.alloc, temp, &[_][]const u8{
                         "jj",
                         "--color",
                         "always",
@@ -684,7 +686,7 @@ pub const JujutsuServer = struct {
                     try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(stat) } } });
                 },
                 .bookmark => {
-                    const res = self.jjcall(temp, &[_][]const u8{
+                    const res = utils_mod.Command.exec_capture(self.alloc, temp, &[_][]const u8{
                         "jj",
                         "bookmark",
                         "list",
@@ -698,7 +700,7 @@ pub const JujutsuServer = struct {
                     try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(res) } } });
                 },
                 .file_tree => |change| {
-                    const stat = self.jjcall(temp, &[_][]const u8{
+                    const stat = utils_mod.Command.exec_capture(self.alloc, temp, &[_][]const u8{
                         "jj",
                         "--color",
                         "always",
@@ -712,7 +714,7 @@ pub const JujutsuServer = struct {
                     };
                     errdefer self.alloc.free(stat);
 
-                    const res = self.jjcall(temp, &[_][]const u8{
+                    const res = utils_mod.Command.exec_capture(self.alloc, temp, &[_][]const u8{
                         "jj",
                         "file",
                         "list",
@@ -726,7 +728,7 @@ pub const JujutsuServer = struct {
                     };
                     errdefer self.alloc.free(res);
 
-                    const diffs = self.jjcall(temp, &[_][]const u8{
+                    const diffs = utils_mod.Command.exec_capture(self.alloc, temp, &[_][]const u8{
                         "jj",
                         "diff",
                         "-r",
@@ -760,7 +762,7 @@ pub const JujutsuServer = struct {
                         }),
                     };
                     defer self.alloc.free(cmd);
-                    const res = self.jjcall(temp, &[_][]const u8{
+                    const res = utils_mod.Command.exec_capture(self.alloc, temp, &[_][]const u8{
                         "sh",
                         "-c",
                         cmd,
@@ -785,7 +787,7 @@ pub const JujutsuServer = struct {
                         }
                     }
 
-                    const res = self.jjcall(temp, args.items) catch |e| {
+                    const res = utils_mod.Command.exec_capture(self.alloc, temp, args.items) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
                     };
@@ -808,84 +810,21 @@ pub const JujutsuServer = struct {
                         try args.append(remote);
                     }
 
-                    const res = self.jjcall(temp, args.items) catch |e| {
+                    const res = utils_mod.Command.exec_capture(self.alloc, temp, args.items) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
                     };
                     try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(res) } } });
                 },
-            }
-        }
-    }
-
-    pub fn jjcall(self: *@This(), temp: std.mem.Allocator, args: []const []const u8) ![]u8 {
-        const alloc = self.alloc;
-
-        var child = std.process.Child.init(args, temp);
-        child.stdin_behavior = .Pipe;
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Pipe;
-
-        try child.spawn();
-
-        const stdin = child.stdin orelse return error.NoStdin;
-        child.stdin = null;
-        const stdout = child.stdout orelse return error.NoStdout;
-        child.stdout = null;
-        const stderr = child.stderr orelse return error.NoStderr;
-        child.stderr = null;
-        defer stdout.close();
-        defer stderr.close();
-        stdin.close();
-
-        // similar to child.collectOutput
-        const max_output_bytes = 1000 * 1000 * 10;
-        var poller = std.io.poll(temp, enum { stdout, stderr }, .{
-            .stdout = stdout,
-            .stderr = stderr,
-        });
-        defer poller.deinit();
-
-        while (try poller.poll()) {
-            if (poller.fifo(.stdout).count > max_output_bytes)
-                return error.StdoutStreamTooLong;
-            if (poller.fifo(.stderr).count > max_output_bytes)
-                return error.StderrStreamTooLong;
-        }
-
-        const err = try child.wait();
-        blk: {
-            var err_buf = std.ArrayList(u8).init(temp);
-            defer err_buf.deinit();
-
-            switch (err) {
-                .Exited => |e| {
-                    if (e != 0) {
-                        _ = try err_buf.writer().print("exited with code: {}\n", .{e});
-                    } else {
-                        err_buf.deinit();
-                        break :blk;
-                    }
-                },
-                // .Signal => |code| {},
-                // .Stopped => |code| {},
-                // .Unknown => |code| {},
-                else => |e| {
-                    try err_buf.writer().print("exited with code: {}\n", .{e});
+                .command => |args| {
+                    const res = utils_mod.Command.exec_status(self.alloc, args) catch |e| {
+                        utils_mod.dump_error(e);
+                        continue;
+                    };
+                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .command_result = res } } });
                 },
             }
-
-            const fifo = poller.fifo(.stderr);
-            try err_buf.appendSlice(fifo.buf[fifo.head..][0..fifo.count]);
-
-            std.debug.print("{s}\n", .{err_buf.items});
-            return error.SomeErrorIdk;
         }
-
-        const fifo = poller.fifo(.stdout);
-        var out = std.ArrayList(u8).init(alloc);
-        try out.appendSlice(fifo.buf[fifo.head..][0..fifo.count]);
-        return try out.toOwnedSlice();
     }
 };
 
@@ -1137,7 +1076,7 @@ pub const App = struct {
 
         // set working directory to workspace root
         {
-            const root = jj.jjcall(arena.allocator(), &[_][]const u8{ "jj", "workspace", "root" }) catch |e| {
+            const root = utils_mod.Command.exec_capture(arena.allocator(), arena.allocator(), &[_][]const u8{ "jj", "workspace", "root" }) catch |e| {
                 utils_mod.dump_error(e);
                 return e;
             };
@@ -1188,6 +1127,10 @@ pub const App = struct {
         defer {
             while (self.events.try_recv()) |e| switch (e) {
                 .jj => |res| switch (res.res) {
+                    .command_result => |r| {
+                        self.alloc.free(r.err);
+                        self.alloc.free(r.out);
+                    },
                     .ok, .err => |buf| self.alloc.free(buf.buf),
                     .with_status => |r| {
                         self.alloc.free(r.status.buf);
@@ -2859,7 +2802,6 @@ pub const App = struct {
                         "edit",
                         self.renderer.log.focused_change.id[0..],
                     });
-                    try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },
                 .switch_state_to_git => {
                     self.state = .{ .git = .none };
@@ -2975,8 +2917,6 @@ pub const App = struct {
                     }
 
                     try self.execute_non_interactive_command(args.items);
-
-                    try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },
                 .apply_jj_abandon => |v| {
                     defer {
@@ -2999,8 +2939,6 @@ pub const App = struct {
                     }
 
                     try self.execute_non_interactive_command(args.items);
-
-                    try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },
                 .apply_jj_squash => |v| {
                     defer {
@@ -3031,8 +2969,6 @@ pub const App = struct {
                     }
 
                     try self.execute_non_interactive_command(args.items);
-
-                    try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },
                 .apply_jj_new => {
                     defer {
@@ -3053,7 +2989,6 @@ pub const App = struct {
 
                     self.renderer.log.y = 0;
                     self.renderer.log.limit = self.renderer.log.calc_limit();
-                    try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },
                 .execute_command_in_input_buffer => |e| {
                     defer {
@@ -3092,7 +3027,6 @@ pub const App = struct {
                     self.renderer.oplog.y = 0;
                     try self.jj_request(.oplog);
                     self.renderer.log.limit = self.renderer.log.calc_limit();
-                    try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },
                 .apply_jj_duplicate => {
                     defer {
@@ -3123,8 +3057,6 @@ pub const App = struct {
                     try args.append(self.renderer.log.focused_change.id[0..]);
 
                     try self.execute_non_interactive_command(args.items);
-
-                    try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },
                 .switch_state_to_bookmark_create => {
                     self.state = .{ .bookmark = .create };
@@ -3161,7 +3093,6 @@ pub const App = struct {
                         "-r",
                         target,
                     });
-                    try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },
                 .move_bookmark_to_selected => |v| {
                     defer self.state = .log;
@@ -3179,7 +3110,6 @@ pub const App = struct {
                     }
 
                     try self.execute_non_interactive_command(args.items);
-                    try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },
                 .apply_jj_bookmark_delete => {
                     defer self.state = .log;
@@ -3220,7 +3150,6 @@ pub const App = struct {
                         self.renderer.log.focused_change.id[0..],
                         self.renderer.text_input.text.items,
                     });
-                    try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },
                 .apply_jj_git_fetch_new => {
                     defer {
@@ -3292,7 +3221,7 @@ pub const App = struct {
                     if (node.typ != .file) return;
 
                     // TODO: .jjcall() is actully generic. maybe don't put it in jj server so that anything else can use it
-                    const content = self.jj.jjcall(temp, &[_][]const u8{
+                    const content = utils_mod.Command.exec_capture(self.alloc, temp, &[_][]const u8{
                         "jj",
                         "file",
                         "show",
@@ -3563,6 +3492,36 @@ pub const App = struct {
                     }
                     try self._send_event(.rerender);
                 },
+                .command => {
+                    switch (res.res) {
+                        .command_result => |c_res| {
+                            if (c_res.errored) {
+                                try self._toast(.{ .err = error.CommandExecutionError }, c_res.err);
+                                if (c_res.out.len > 0) {
+                                    try self._toast(.none, c_res.out);
+                                }
+                            } else {
+                                if (c_res.err.len > 0) {
+                                    if (c_res.out.len > 0) {
+                                        try self._toast(.warn, c_res.err);
+                                    } else {
+                                        try self._toast(.info, c_res.err);
+                                    }
+                                }
+                                if (c_res.out.len > 0) {
+                                    if (c_res.err.len > 0) {
+                                        try self._toast(.none, c_res.out);
+                                    } else {
+                                        try self._toast(.success, c_res.out);
+                                    }
+                                }
+                            }
+
+                            try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
+                        },
+                        else => unreachable,
+                    }
+                },
             },
         }
     }
@@ -3645,124 +3604,7 @@ pub const App = struct {
     }
 
     fn execute_non_interactive_command(self: *@This(), args: []const []const u8) !void {
-        // better error messages. nothing bad. so i just do this for now :|
-        // OOF: some jj commands print output when successful. so this mode will dump output in real stdout :/
-        // try self.execute_interactive_command(args);
-
-        const res = self._execute_non_interactive_command(args) catch |e| switch (e) {
-            error.FileNotFound => CommandResult{
-                .errored = true,
-                .err = try std.fmt.allocPrint(self.alloc, "Executable not found", .{}),
-                .out = &.{},
-            },
-            else => return e,
-        };
-        if (res.errored) {
-            try self._toast(.{ .err = error.CommandExecutionError }, res.err);
-            if (res.out.len > 0) {
-                try self._toast(.none, res.out);
-            }
-        } else {
-            if (res.err.len > 0) {
-                if (res.out.len > 0) {
-                    try self._toast(.warn, res.err);
-                } else {
-                    try self._toast(.info, res.err);
-                }
-            }
-            if (res.out.len > 0) {
-                if (res.err.len > 0) {
-                    try self._toast(.none, res.out);
-                } else {
-                    try self._toast(.success, res.out);
-                }
-            }
-        }
-
-        try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
-    }
-
-    fn _execute_non_interactive_command(self: *@This(), args: []const []const u8) !CommandResult {
-        const alloc = self.alloc;
-
-        var child = std.process.Child.init(args, alloc);
-        child.stdin_behavior = .Pipe;
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Pipe;
-
-        try child.spawn();
-
-        const stdin = child.stdin orelse return error.NoStdin;
-        child.stdin = null;
-        const stdout = child.stdout orelse return error.NoStdout;
-        child.stdout = null;
-        const stderr = child.stderr orelse return error.NoStderr;
-        child.stderr = null;
-        defer stdout.close();
-        defer stderr.close();
-        stdin.close();
-
-        // similar to child.collectOutput
-        const max_output_bytes = 1000 * 1000;
-        var poller = std.io.poll(alloc, enum { stdout, stderr }, .{
-            .stdout = stdout,
-            .stderr = stderr,
-        });
-        defer poller.deinit();
-
-        while (try poller.poll()) {
-            if (poller.fifo(.stdout).count > max_output_bytes)
-                return error.StdoutStreamTooLong;
-            if (poller.fifo(.stderr).count > max_output_bytes)
-                return error.StderrStreamTooLong;
-        }
-
-        const err = try child.wait();
-
-        const err_fifo = poller.fifo(.stderr);
-        const err_out = err_fifo.buf[err_fifo.head..][0..err_fifo.count];
-
-        var err_buf = std.ArrayList(u8).init(alloc);
-        errdefer err_buf.deinit();
-        var errored: bool = false;
-        if (err_fifo.count > 0) {
-            std.log.err("{s}", .{err_out});
-            try err_buf.writer().print("{s}\n", .{err_out});
-        }
-
-        switch (err) {
-            .Exited => |e| {
-                if (e != 0) {
-                    std.log.err("exited with code: {}", .{e});
-                    try err_buf.writer().print("exited with code: {}\n", .{e});
-                    errored = true;
-                }
-            },
-            // .Signal => |code| {},
-            // .Stopped => |code| {},
-            // .Unknown => |code| {},
-            else => |e| {
-                std.log.err("exited with code: {}", .{e});
-                try err_buf.writer().print("exited with code: {}\n", .{e});
-                errored = true;
-            },
-        }
-
-        const out_fifo = poller.fifo(.stdout);
-        const out_out = out_fifo.buf[out_fifo.head..][0..out_fifo.count];
-
-        var out_buf = std.ArrayList(u8).init(alloc);
-        errdefer out_buf.deinit();
-        if (out_fifo.count > 0) {
-            std.log.debug("{s}", .{out_out});
-            try out_buf.appendSlice(out_out);
-        }
-
-        return .{
-            .errored = errored,
-            .err = try err_buf.toOwnedSlice(),
-            .out = try out_buf.toOwnedSlice(),
-        };
+        try self.jj_request(.{ .command = args });
     }
 
     fn execute_interactive_command(self: *@This(), args: []const []const u8) !void {

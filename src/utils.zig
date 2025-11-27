@@ -1042,6 +1042,169 @@ pub const Fuse = struct {
     }
 };
 
+pub const Command = struct {
+    pub const Result = struct {
+        errored: bool,
+        err: []u8,
+        out: []u8,
+
+        pub fn deinit(self: @This(), alloc: std.mem.Allocator) void {
+            alloc.free(self.err);
+            alloc.free(self.out);
+        }
+    };
+
+    pub fn exec_status(alloc: std.mem.Allocator, args: []const []const u8) !Result {
+        var child = std.process.Child.init(args, alloc);
+        child.stdin_behavior = .Pipe;
+        child.stdout_behavior = .Pipe;
+        child.stderr_behavior = .Pipe;
+
+        try child.spawn();
+
+        const stdin = child.stdin orelse return error.NoStdin;
+        child.stdin = null;
+        const stdout = child.stdout orelse return error.NoStdout;
+        child.stdout = null;
+        const stderr = child.stderr orelse return error.NoStderr;
+        child.stderr = null;
+        defer stdout.close();
+        defer stderr.close();
+        stdin.close();
+
+        // similar to child.collectOutput
+        const max_output_bytes = 1000 * 1000;
+        var poller = std.io.poll(alloc, enum { stdout, stderr }, .{
+            .stdout = stdout,
+            .stderr = stderr,
+        });
+        defer poller.deinit();
+
+        while (try poller.poll()) {
+            if (poller.fifo(.stdout).count > max_output_bytes)
+                return error.StdoutStreamTooLong;
+            if (poller.fifo(.stderr).count > max_output_bytes)
+                return error.StderrStreamTooLong;
+        }
+
+        const err = try child.wait();
+
+        const err_fifo = poller.fifo(.stderr);
+        const err_out = err_fifo.buf[err_fifo.head..][0..err_fifo.count];
+
+        var err_buf = std.ArrayList(u8).init(alloc);
+        errdefer err_buf.deinit();
+        var errored: bool = false;
+        if (err_fifo.count > 0) {
+            std.log.err("{s}", .{err_out});
+            try err_buf.writer().print("{s}\n", .{err_out});
+        }
+
+        switch (err) {
+            .Exited => |e| {
+                if (e != 0) {
+                    std.log.err("exited with code: {}", .{e});
+                    try err_buf.writer().print("exited with code: {}\n", .{e});
+                    errored = true;
+                }
+            },
+            // .Signal => |code| {},
+            // .Stopped => |code| {},
+            // .Unknown => |code| {},
+            else => |e| {
+                std.log.err("exited with code: {}", .{e});
+                try err_buf.writer().print("exited with code: {}\n", .{e});
+                errored = true;
+            },
+        }
+
+        const out_fifo = poller.fifo(.stdout);
+        const out_out = out_fifo.buf[out_fifo.head..][0..out_fifo.count];
+
+        var out_buf = std.ArrayList(u8).init(alloc);
+        errdefer out_buf.deinit();
+        if (out_fifo.count > 0) {
+            std.log.debug("{s}", .{out_out});
+            try out_buf.appendSlice(out_out);
+        }
+
+        return .{
+            .errored = errored,
+            .err = try err_buf.toOwnedSlice(),
+            .out = try out_buf.toOwnedSlice(),
+        };
+    }
+
+    pub fn exec_capture(alloc: std.mem.Allocator, temp: std.mem.Allocator, args: []const []const u8) ![]u8 {
+        var child = std.process.Child.init(args, temp);
+        child.stdin_behavior = .Pipe;
+        child.stdout_behavior = .Pipe;
+        child.stderr_behavior = .Pipe;
+
+        try child.spawn();
+
+        const stdin = child.stdin orelse return error.NoStdin;
+        child.stdin = null;
+        const stdout = child.stdout orelse return error.NoStdout;
+        child.stdout = null;
+        const stderr = child.stderr orelse return error.NoStderr;
+        child.stderr = null;
+        defer stdout.close();
+        defer stderr.close();
+        stdin.close();
+
+        // similar to child.collectOutput
+        const max_output_bytes = 1000 * 1000 * 10;
+        var poller = std.io.poll(temp, enum { stdout, stderr }, .{
+            .stdout = stdout,
+            .stderr = stderr,
+        });
+        defer poller.deinit();
+
+        // TODO: maybe get a small threadpool + channels + arrays to capture this output
+        //  asynchronously and use it on the renderer
+        // TODO: also cache the parsed output instead of parsing it every time we want to use (where possible)
+        while (try poller.poll()) {
+            if (poller.fifo(.stdout).count > max_output_bytes)
+                return error.StdoutStreamTooLong;
+            if (poller.fifo(.stderr).count > max_output_bytes)
+                return error.StderrStreamTooLong;
+        }
+
+        const err = try child.wait();
+        blk: {
+            var err_buf = std.ArrayList(u8).init(temp);
+            defer err_buf.deinit();
+
+            switch (err) {
+                .Exited => |e| {
+                    if (e != 0) {
+                        _ = try err_buf.writer().print("exited with code: {}\n", .{e});
+                    } else {
+                        err_buf.deinit();
+                        break :blk;
+                    }
+                },
+                // .Signal => |code| {},
+                // .Stopped => |code| {},
+                // .Unknown => |code| {},
+                else => |e| {
+                    try err_buf.writer().print("exited with code: {}\n", .{e});
+                },
+            }
+
+            const fifo = poller.fifo(.stderr);
+            try err_buf.appendSlice(fifo.buf[fifo.head..][0..fifo.count]);
+
+            std.debug.print("{s}\n", .{err_buf.items});
+            return error.ExternalCommandError;
+        }
+
+        const out_fifo = poller.fifo(.stdout);
+        return try alloc.dupe(u8, out_fifo.buf[out_fifo.head..][0..out_fifo.count]);
+    }
+};
+
 test "Xar test base 1" {
     const alloc = std.testing.allocator;
 

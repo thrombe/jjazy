@@ -1381,9 +1381,9 @@ pub const FileTreeSlate = struct {
                 .dir => {
                     try surface.apply_style(.faint);
                     if (node.collapsed) {
-                        try surface.draw_buf(term_mod.symbols.arrow.line.right);
+                        try surface.draw_buf(term_mod.symbols.arrow.line.small.right);
                     } else {
-                        try surface.draw_buf(term_mod.symbols.arrow.line.down);
+                        try surface.draw_buf(term_mod.symbols.arrow.line.small.down);
                     }
                     try surface.apply_style(.reset);
 

@@ -84,10 +84,16 @@ pub const symbols = struct {
             pub const right = "→";
         };
         pub const line = struct {
-            pub const right = "›";
-            pub const down = "⌄";
-            pub const left = "‹";
-            pub const up = "⌃";
+            pub const small = struct {
+                pub const right = "›";
+                pub const down = "⌄";
+                pub const left = "‹";
+                pub const up = "⌃";
+            };
+            pub const giant = struct {
+                pub const right = "";
+                pub const left = "";
+            };
         };
     };
     pub const triangle = struct {
@@ -109,6 +115,10 @@ pub const symbols = struct {
                 pub const down = "▼";
                 pub const left = "◀";
                 pub const up = "▲";
+            };
+            pub const giant = struct {
+                pub const right = "";
+                pub const left = "";
             };
         };
         pub const line = struct {

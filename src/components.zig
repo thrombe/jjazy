@@ -509,11 +509,11 @@ pub const HelpSlate = struct {
         // +2 for border :|
         surface.region = surface.region.split_y(-cast(i32, help_items.items.len + 2), false).bottom;
 
-        try surface.apply_style(.{ .foreground_color = .from_theme(.default_foreground) });
-        try surface.apply_style(.bold);
-
         try surface.clear();
+        try surface.apply_style(.bold);
+        try surface.apply_style(.{ .foreground_color = .from_theme(.bright_info) });
         try surface.draw_border(symbols.thin.rounded);
+        try surface.apply_style(.{ .foreground_color = .from_theme(.default_foreground) });
         try scratch.writer().print(" Help: {s} ", .{app.state.short_display()});
         try surface.draw_border_heading(scratch.items);
         try surface.apply_style(.reset);
@@ -529,8 +529,19 @@ pub const HelpSlate = struct {
             }
             const item = help_items.items[i];
 
+            const pad = keys.region.size.x - @as(i32, @intCast(item.key.len));
+            for (0..@intCast(@max(0, pad))) |_| {
+                try keys.draw_buf(" ");
+            }
+            try keys.apply_style(.bold);
+            try keys.apply_style(.{ .foreground_color = .from_theme(.alt_info) });
             try keys.draw_bufln(item.key);
+            try keys.apply_style(.reset);
+
+            try desc.apply_style(.bold);
+            try desc.apply_style(.{ .foreground_color = .from_theme(.info) });
             try desc.draw_bufln(item.desc);
+            try desc.apply_style(.reset);
         }
     }
 };

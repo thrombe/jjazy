@@ -809,6 +809,7 @@ const LogSlate = struct {
     y: i32 = 0,
     skip_y: i32 = 0,
     limit: u32 = 200,
+    request_count: u32 = 0,
     status: jj_mod.Formatted,
     changes: jj_mod.Change.Parsed.Iterator,
     focused_change: jj_mod.Change = .{},
@@ -1666,6 +1667,13 @@ pub const Renderer = struct {
                 try surface.apply_style(.{ .foreground_color = .from_theme(.default_background) });
                 try surface.apply_style(.bold);
                 try surface.draw_buf(try std.fmt.allocPrint(temp, " log:{d} ", .{self.log.limit}));
+                try surface.apply_style(.reset);
+
+                try surface.draw_buf(" ");
+                try surface.apply_style(.{ .background_color = .from_theme(.default_foreground) });
+                try surface.apply_style(.{ .foreground_color = .from_theme(.default_background) });
+                try surface.apply_style(.bold);
+                try surface.draw_buf(try std.fmt.allocPrint(temp, " reqs:{d} ", .{self.log.request_count}));
                 try surface.apply_style(.reset);
             }
         }

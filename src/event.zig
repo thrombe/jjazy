@@ -3487,6 +3487,10 @@ pub const App = struct {
     }
 
     pub fn jj_request(self: *@This(), req: JujutsuServer.Request) !void {
+        switch (req) {
+            .log => self.renderer.log.request_count += 1,
+            else => {},
+        }
         try self.jj.requests.send(.{ .id = null, .req = req });
     }
 

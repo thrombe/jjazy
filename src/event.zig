@@ -689,6 +689,7 @@ pub const JujutsuServer = struct {
                     try self.events.send(.{ .jj = .{ .req = req, .res = .{ .with_status = .{ .status = .from(stat), .buf = .from(res) } } } });
                 },
                 .file_show => |payload| {
+                    // NOTE: file path needs to be relative to current path instead of from repo root, but we fix this by just changing the cwd to the workspace root
                     const cmd = try std.fmt.allocPrint(self.alloc, "jj file show -r {s} {s} | bat --color=always --style numbers,plain --file-name {s}", .{
                         payload.change.id[0..],
                         payload.path,
@@ -753,7 +754,7 @@ pub const JujutsuServer = struct {
         }
     }
 
-    fn jjcall(self: *@This(), temp: std.mem.Allocator, args: []const []const u8) ![]u8 {
+    pub fn jjcall(self: *@This(), temp: std.mem.Allocator, args: []const []const u8) ![]u8 {
         const alloc = self.alloc;
 
         var child = std.process.Child.init(args, temp);
@@ -1065,6 +1066,16 @@ pub const App = struct {
 
         const jj = try JujutsuServer.init(alloc, events);
         errdefer jj.deinit();
+
+        // set working directory to workspace root
+        {
+            const root = jj.jjcall(arena.allocator(), &[_][]const u8{ "jj", "workspace", "root" }) catch |e| {
+                utils_mod.dump_error(e);
+                return e;
+            };
+            const trimmed = std.mem.trim(u8, root, &std.ascii.whitespace);
+            try std.process.changeCurDir(trimmed);
+        }
 
         try jj.requests.send(.{ .req = .{ .log = .{ .n = renderer.log.limit } }, .id = null });
         try jj.requests.send(.{ .req = .bookmark, .id = null });

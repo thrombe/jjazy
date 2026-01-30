@@ -1660,6 +1660,13 @@ pub const Renderer = struct {
                 try surface.apply_style(.bold);
                 try surface.draw_buf(try std.fmt.allocPrint(temp, " frame: {d} ", .{self.render_count}));
                 try surface.apply_style(.reset);
+
+                try surface.draw_buf(" ");
+                try surface.apply_style(.{ .background_color = .from_theme(.default_foreground) });
+                try surface.apply_style(.{ .foreground_color = .from_theme(.default_background) });
+                try surface.apply_style(.bold);
+                try surface.draw_buf(try std.fmt.allocPrint(temp, " log:{d} ", .{self.log.limit}));
+                try surface.apply_style(.reset);
             }
         }
     }

@@ -2444,6 +2444,7 @@ pub const App = struct {
                         .evolog => try self.jj_request(.{ .evolog = self.renderer.log.focused_change }),
                         else => {},
                     }
+                    self.renderer.log.limit = 200;
                     try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },
                 .scroll => |target| switch (target.target) {
@@ -2802,8 +2803,9 @@ pub const App = struct {
 
                     try self.execute_non_interactive_command(args.items);
 
-                    try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                     self.renderer.log.y = 0;
+                    self.renderer.log.limit = 200;
+                    try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },
                 .execute_command_in_input_buffer => |e| {
                     defer {
@@ -2841,6 +2843,7 @@ pub const App = struct {
                     });
                     self.renderer.oplog.y = 0;
                     try self.jj_request(.oplog);
+                    self.renderer.log.limit = 200;
                     try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },
                 .apply_jj_duplicate => {

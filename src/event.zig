@@ -267,10 +267,6 @@ pub const action_help = [_]struct {
         .help = "jj git fetch a remote",
     },
     .{
-        .action = .apply_jj_git_push_all,
-        .help = "Git push all",
-    },
-    .{
         .action = .switch_state_to_git_push,
         .help = "Git push a bookmark",
     },
@@ -435,7 +431,6 @@ pub const Action = union(enum) {
     apply_jj_bookmark_forget: struct { include_remotes: bool },
     apply_jj_bookmark_create_from_input_buffer_on_selected_change,
     apply_jj_git_fetch,
-    apply_jj_git_push_all,
     switch_state_to_bookmark_goto,
     apply_bookmark_goto,
     switch_state_to_git_fetch,
@@ -451,7 +446,7 @@ pub const JujutsuServer = struct {
     arena: std.heap.ArenaAllocator,
     quit: utils_mod.Fuse = .{},
     thread: std.Thread,
-    requests: utils_mod.Channel(Request),
+    requests: utils_mod.Channel(struct { id: ?u32, req: Request }),
 
     // not owned
     events: utils_mod.Channel(Event),
@@ -468,6 +463,8 @@ pub const JujutsuServer = struct {
             change: Change,
             path: []const u8,
         },
+        git_fetch: struct { branch: ?[]const u8, remote: ?[]const u8 },
+        git_push: struct { branch: ?[]const u8, remote: ?[]const u8, allow_new: bool },
     };
 
     pub const OkWithStatus = struct {
@@ -524,11 +521,15 @@ pub const JujutsuServer = struct {
         // - [Templating language - Jujutsu docs](https://jj-vcs.github.io/jj/latest/templates/)
         //   - [default templates](https://github.com/jj-vcs/jj/blob/main/cli/src/config/templates.toml)
 
-        while (self.requests.wait_recv()) |req| {
+        while (self.requests.wait_recv()) |request| {
             if (self.quit.check()) return;
 
             const temp = self.arena.allocator();
             defer _ = self.arena.reset(.retain_capacity);
+
+            defer if (request.id) |id| self.events.send(.{ .pop_toast = id }) catch {};
+
+            const req = request.req;
 
             switch (req) {
                 .log => {
@@ -697,6 +698,50 @@ pub const JujutsuServer = struct {
                         "-c",
                         cmd,
                     }) catch |e| {
+                        utils_mod.dump_error(e);
+                        continue;
+                    };
+                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(res) } } });
+                },
+                .git_fetch => |v| {
+                    var args = std.ArrayList([]const u8).init(temp);
+                    try args.append("jj");
+                    try args.append("git");
+                    try args.append("fetch");
+
+                    if (v.branch) |branch| {
+                        try args.append("--branch");
+                        try args.append(branch);
+                        if (v.remote) |remote| {
+                            try args.append("--remote");
+                            try args.append(remote);
+                        }
+                    }
+
+                    const res = self.jjcall(temp, args.items) catch |e| {
+                        utils_mod.dump_error(e);
+                        continue;
+                    };
+                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(res) } } });
+                },
+                .git_push => |v| {
+                    var args = std.ArrayList([]const u8).init(temp);
+                    try args.append("jj");
+                    try args.append("git");
+                    try args.append("push");
+
+                    if (v.branch) |branch| {
+                        try args.append("--bookmark");
+                        try args.append(branch);
+                    }
+                    if (v.allow_new) {
+                        try args.append("--allow-new");
+                    } else if (v.remote) |remote| {
+                        try args.append("--remote");
+                        try args.append(remote);
+                    }
+
+                    const res = self.jjcall(temp, args.items) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
                     };
@@ -1019,8 +1064,8 @@ pub const App = struct {
         const jj = try JujutsuServer.init(alloc, events);
         errdefer jj.deinit();
 
-        try jj.requests.send(.log);
-        try jj.requests.send(.bookmark);
+        try jj.requests.send(.{ .req = .log, .id = null });
+        try jj.requests.send(.{ .req = .bookmark, .id = null });
 
         self.* = .{
             .alloc = alloc,
@@ -1183,7 +1228,7 @@ pub const App = struct {
         // terminal might resize when a command is active
         try self.renderer.screen.update_size();
         try self._send_event(.rerender);
-        try self.jj.requests.send(.log);
+        try self.jj_request(.log);
     }
 
     fn init_input_action_map(alloc: std.mem.Allocator) !InputActionMap {
@@ -1937,12 +1982,6 @@ pub const App = struct {
         );
         try map.add_one_for_state(
             .{ .git = .none },
-            .{ .key = .{ .key = 'P', .mod = .{ .shift = true } } },
-            null,
-            .apply_jj_git_push_all,
-        );
-        try map.add_one_for_state(
-            .{ .git = .none },
             .{ .key = .{ .key = 'f' } },
             null,
             .switch_state_to_git_fetch,
@@ -2117,7 +2156,7 @@ pub const App = struct {
                         const diff = try self.diff.cache.getOrPut(change.hash);
                         if (!diff.found_existing) {
                             diff.val.* = .{};
-                            try self.jj.requests.send(.{ .diff = change });
+                            try self.jj_request(.{ .diff = change });
                         }
                     } else if (log.y + n < i) {
                         break;
@@ -2164,7 +2203,7 @@ pub const App = struct {
                         });
                         if (!file.found_existing) {
                             file.val.* = .{};
-                            try app.jj.requests.send(.{ .file_show = .{
+                            try app.jj_request(.{ .file_show = .{
                                 .change = v.change,
                                 .path = path,
                             } });
@@ -2189,7 +2228,7 @@ pub const App = struct {
                         const diff = try self.opshow.cache.getOrPut(op.hash);
                         if (!diff.found_existing) {
                             diff.val.* = .{};
-                            try self.jj.requests.send(.{ .opshow = op });
+                            try self.jj_request(.{ .opshow = op });
                         }
                     } else if (oplog.y + n < i) {
                         break;
@@ -2216,7 +2255,7 @@ pub const App = struct {
                     );
                     if (!diff.found_existing) {
                         diff.val.* = .{};
-                        try self.jj.requests.send(.{ .diff = .{ .change = v.change, .context = v.context } });
+                        try self.jj_request(.{ .diff = .{ .change = v.change, .context = v.context } });
                     }
                 }
             },
@@ -2225,7 +2264,7 @@ pub const App = struct {
                     const diff = try self.renderer.opshow.getOrPut(op.hash, self.renderer.opshow.context);
                     if (!diff.found_existing) {
                         diff.val.* = .{};
-                        try self.jj.requests.send(.{ .opshow = op });
+                        try self.jj_request(.{ .opshow = op });
                     }
                 }
             },
@@ -2394,11 +2433,11 @@ pub const App = struct {
                 },
                 .refresh_master_content => {
                     switch (self.state) {
-                        .oplog => try self.jj.requests.send(.oplog),
-                        .evolog => try self.jj.requests.send(.{ .evolog = self.renderer.log.focused_change }),
+                        .oplog => try self.jj_request(.oplog),
+                        .evolog => try self.jj_request(.{ .evolog = self.renderer.log.focused_change }),
                         else => {},
                     }
-                    try self.jj.requests.send(.log);
+                    try self.jj_request(.log);
                 },
                 .scroll => |target| switch (target.target) {
                     .log => {
@@ -2578,7 +2617,7 @@ pub const App = struct {
                         "edit",
                         self.renderer.log.focused_change.id[0..],
                     });
-                    try self.jj.requests.send(.log);
+                    try self.jj_request(.log);
                 },
                 .switch_state_to_git => {
                     self.state = .{ .git = .none };
@@ -2600,7 +2639,7 @@ pub const App = struct {
                     self.state = .oplog;
                     self.renderer.oplog.y = 0;
                     self.renderer.oplog.focused_op = .{};
-                    try self.jj.requests.send(.oplog);
+                    try self.jj_request(.oplog);
                 },
                 .switch_state_to_duplicate => {
                     self.state = .{ .duplicate = .onto };
@@ -2608,19 +2647,19 @@ pub const App = struct {
                 },
                 .switch_state_to_bookmarks_view => {
                     self.state = .{ .bookmark = .view };
-                    try self.jj.requests.send(.bookmark);
+                    try self.jj_request(.bookmark);
                 },
                 .switch_state_to_bookmark_goto => {
                     self.state = .{ .bookmark = .view_goto };
                 },
                 .switch_state_to_evolog => {
                     self.state = .evolog;
-                    try self.jj.requests.send(.{ .evolog = self.renderer.log.focused_change });
+                    try self.jj_request(.{ .evolog = self.renderer.log.focused_change });
                 },
                 .switch_state_to_file_tree => {
                     self.state = .file_tree;
                     if (self.renderer.file_tree.cache.get(self.renderer.log.focused_change, .touch) == null) {
-                        try self.jj.requests.send(.{ .file_list = self.renderer.log.focused_change });
+                        try self.jj_request(.{ .file_list = self.renderer.log.focused_change });
                     }
                 },
                 .toggle_help => {
@@ -2681,7 +2720,7 @@ pub const App = struct {
 
                     try self.execute_non_interactive_command(args.items);
 
-                    try self.jj.requests.send(.log);
+                    try self.jj_request(.log);
                 },
                 .apply_jj_abandon => |v| {
                     defer {
@@ -2705,7 +2744,7 @@ pub const App = struct {
 
                     try self.execute_non_interactive_command(args.items);
 
-                    try self.jj.requests.send(.log);
+                    try self.jj_request(.log);
                 },
                 .apply_jj_squash => |v| {
                     defer {
@@ -2737,7 +2776,7 @@ pub const App = struct {
 
                     try self.execute_non_interactive_command(args.items);
 
-                    try self.jj.requests.send(.log);
+                    try self.jj_request(.log);
                 },
                 .apply_jj_new => {
                     defer {
@@ -2756,7 +2795,7 @@ pub const App = struct {
 
                     try self.execute_non_interactive_command(args.items);
 
-                    try self.jj.requests.send(.log);
+                    try self.jj_request(.log);
                     self.renderer.log.y = 0;
                 },
                 .execute_command_in_input_buffer => |e| {
@@ -2794,8 +2833,8 @@ pub const App = struct {
                         self.renderer.oplog.focused_op.hash[0..],
                     });
                     self.renderer.oplog.y = 0;
-                    try self.jj.requests.send(.oplog);
-                    try self.jj.requests.send(.log);
+                    try self.jj_request(.oplog);
+                    try self.jj_request(.log);
                 },
                 .apply_jj_duplicate => {
                     defer {
@@ -2827,7 +2866,7 @@ pub const App = struct {
 
                     try self.execute_non_interactive_command(args.items);
 
-                    try self.jj.requests.send(.log);
+                    try self.jj_request(.log);
                 },
                 .switch_state_to_bookmark_create => {
                     self.state = .{ .bookmark = .create };
@@ -2862,7 +2901,7 @@ pub const App = struct {
                         "-r",
                         bookmark.parsed.target[0][0..8],
                     });
-                    try self.jj.requests.send(.log);
+                    try self.jj_request(.log);
                 },
                 .move_bookmark_to_selected => |v| {
                     defer self.state = .log;
@@ -2880,7 +2919,7 @@ pub const App = struct {
                     }
 
                     try self.execute_non_interactive_command(args.items);
-                    try self.jj.requests.send(.log);
+                    try self.jj_request(.log);
                 },
                 .apply_jj_bookmark_delete => {
                     defer self.state = .log;
@@ -2921,65 +2960,52 @@ pub const App = struct {
                         self.renderer.log.focused_change.id[0..],
                         self.renderer.text_input.text.items,
                     });
-                    try self.jj.requests.send(.log);
+                    try self.jj_request(.log);
                 },
                 .apply_jj_git_fetch => {
                     defer self.state = .log;
-                    var args = std.ArrayList([]const u8).init(temp);
-                    try args.append("jj");
-                    try args.append("git");
-                    try args.append("fetch");
-
+                    var req = JujutsuServer.Request{
+                        .git_fetch = .{
+                            .branch = null,
+                            .remote = null,
+                        },
+                    };
                     if (self.state.git == .fetch) {
                         const bookmark = self.renderer.bookmarks.selected_bookmark orelse return;
-                        try args.append("--branch");
-                        try args.append(bookmark.parsed.name);
+                        req.git_fetch.branch = bookmark.parsed.name;
                         if (bookmark.parsed.remote) |remote| {
-                            try args.append("--remote");
-                            try args.append(remote);
+                            req.git_fetch.remote = remote;
                         }
                     }
 
-                    try self.execute_non_interactive_command(args.items);
-                    try self.jj.requests.send(.log);
-                },
-                .apply_jj_git_push_all => {
-                    defer self.state = .log;
-                    try self.execute_non_interactive_command(&[_][]const u8{
-                        "jj",
-                        "git",
-                        "push",
-                        "--all",
-                    });
-                    try self.jj.requests.send(.log);
+                    try self.jj_toasted_request(req, "Fetching from remote...");
                 },
                 .apply_jj_git_push_selected => |v| {
                     defer self.state = .log;
                     const bookmark = self.renderer.bookmarks.selected_bookmark orelse return;
 
-                    var args = std.ArrayList([]const u8).init(temp);
-                    try args.append("jj");
-                    try args.append("git");
-                    try args.append("push");
-                    try args.append("--bookmark");
-                    try args.append(bookmark.parsed.name);
+                    var req = JujutsuServer.Request{
+                        .git_push = .{
+                            .branch = null,
+                            .remote = null,
+                            .allow_new = false,
+                        },
+                    };
+                    req.git_push.branch = bookmark.parsed.name;
                     if (v.allow_new) {
-                        try args.append("--allow-new");
+                        req.git_push.allow_new = true;
                     } else if (bookmark.parsed.remote) |remote| {
-                        try args.append("--remote");
-                        try args.append(remote);
+                        req.git_push.remote = remote;
                     }
-
-                    try self.execute_non_interactive_command(args.items);
-                    try self.jj.requests.send(.log);
+                    try self.jj_toasted_request(req, "Pushing to remote...");
                 },
                 .switch_state_to_git_fetch => {
                     self.state = .{ .git = .fetch };
-                    try self.jj.requests.send(.bookmark);
+                    try self.jj_request(.bookmark);
                 },
                 .switch_state_to_git_push => {
                     self.state = .{ .git = .push };
-                    try self.jj.requests.send(.bookmark);
+                    try self.jj_request(.bookmark);
                 },
                 .file_tree_collapse => |v| {
                     const list = self.renderer.file_tree.cache.get(self.renderer.log.focused_change, .touch).?;
@@ -3102,7 +3128,7 @@ pub const App = struct {
 
                             const path = try self.alloc.dupe(u8, focused_file);
                             try self.renderer.file_show.filecache.put(.{ .change_hash = req.hash, .path = path }, .{});
-                            try self.jj.requests.send(.{ .file_show = .{
+                            try self.jj_request(.{ .file_show = .{
                                 .change = req,
                                 .path = path,
                             } });
@@ -3120,6 +3146,34 @@ pub const App = struct {
                             entry.* = .{ .content = buf.buf, .len = @intCast(buf.height) };
                         },
                         .err => |buf| try self._toast(.{ .err = error.JJFileShowFailed }, buf.buf),
+                        else => unreachable,
+                    }
+                    try self._send_event(.rerender);
+                },
+                .git_fetch => |req| {
+                    _ = req;
+                    switch (res.res) {
+                        .ok => |buf| {
+                            self.alloc.free(buf.buf);
+                            try self._toast_timed(.success, try self.alloc.dupe(u8, "Git fetch successful"), std.time.ms_per_s);
+
+                            try self.jj_request(.log);
+                        },
+                        .err => |buf| try self._toast(.{ .err = error.GitFetchFailed }, buf.buf),
+                        else => unreachable,
+                    }
+                    try self._send_event(.rerender);
+                },
+                .git_push => |req| {
+                    _ = req;
+                    switch (res.res) {
+                        .ok => |buf| {
+                            self.alloc.free(buf.buf);
+                            try self._toast_timed(.success, try self.alloc.dupe(u8, "Git push successful"), std.time.ms_per_s);
+
+                            try self.jj_request(.log);
+                        },
+                        .err => |buf| try self._toast(.{ .err = error.GitPushFailed }, buf.buf),
                         else => unreachable,
                     }
                     try self._send_event(.rerender);
@@ -3240,7 +3294,7 @@ pub const App = struct {
             }
         }
 
-        try self.jj.requests.send(.log);
+        try self.jj_request(.log);
     }
 
     fn _execute_non_interactive_command(self: *@This(), args: []const []const u8) !CommandResult {
@@ -3415,5 +3469,19 @@ pub const App = struct {
     pub fn _toast(self: *@This(), mode: components_mod.Toaster.Toast.Mode, msg: []const u8) !void {
         const id = try self.renderer.toaster.add(.{ .mode = mode, .msg = msg });
         try self.sleeper.delay_event(5000, .{ .pop_toast = id });
+    }
+
+    pub fn _toast_timed(self: *@This(), mode: components_mod.Toaster.Toast.Mode, msg: []const u8, ms: i128) !void {
+        const id = try self.renderer.toaster.add(.{ .mode = mode, .msg = msg });
+        try self.sleeper.delay_event(ms, .{ .pop_toast = id });
+    }
+
+    pub fn jj_request(self: *@This(), req: JujutsuServer.Request) !void {
+        try self.jj.requests.send(.{ .id = null, .req = req });
+    }
+
+    pub fn jj_toasted_request(self: *@This(), req: JujutsuServer.Request, msg: []const u8) !void {
+        const id = try self.renderer.toaster.add(.{ .mode = .info, .msg = try self.alloc.dupe(u8, msg) });
+        try self.jj.requests.send(.{ .id = id, .req = req });
     }
 };

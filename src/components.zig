@@ -1339,9 +1339,11 @@ pub const FileTreeSlate = struct {
             tree.skip_y = tree.y;
         }
 
+        const status_draw_height: i32 = @intCast(@min(tree.change_status.height, 7));
+
         var gutter = try surface.split_x(3, .none, .right);
-        _ = try gutter.split_y(@intCast(tree.change_status.height), .gap, .bottom);
-        var status = try surface.split_y(@intCast(tree.change_status.height), .gap, .bottom);
+        _ = try gutter.split_y(status_draw_height, .gap, .bottom);
+        var status = try surface.split_y(status_draw_height, .gap, .bottom);
 
         try status.draw_buf(tree.change_status.buf);
 

@@ -103,8 +103,9 @@
 
           ghostty
           kitty
+
+          jjui
         ])
-        ++ []
         ++ (custom-commands pkgs);
 
       stdenv = pkgs.clangStdenv;

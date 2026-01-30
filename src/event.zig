@@ -271,6 +271,14 @@ pub const action_help = [_]struct {
         .help = "Git push a bookmark",
     },
     .{
+        .action = .switch_state_to_git_fetch_new,
+        .help = "Fetch a new branch",
+    },
+    .{
+        .action = .apply_jj_git_fetch_new,
+        .help = "Apply git fetch new",
+    },
+    .{
         .action = .{ .apply_jj_git_push_selected = .{ .allow_new = false } },
         .help = "Git push selected bookmark",
     },
@@ -334,6 +342,7 @@ pub const State = union(enum(u8)) {
         push,
         fetch_search,
         push_search,
+        fetch_new,
     },
     command,
     rebase: Where,
@@ -438,6 +447,8 @@ pub const Action = union(enum) {
     file_tree_collapse: struct { collapse: bool },
     apply_jj_git_push_selected: struct { allow_new: bool },
     start_search,
+    switch_state_to_git_fetch_new,
+    apply_jj_git_fetch_new,
     end_search: struct { reset: bool },
 };
 
@@ -2017,6 +2028,18 @@ pub const App = struct {
             null,
             .{ .apply_jj_git_push_selected = .{ .allow_new = false } },
         );
+        try map.add_one_for_state(
+            .{ .git = .fetch_new },
+            .{ .functional = .{ .key = .enter } },
+            null,
+            .apply_jj_git_fetch_new,
+        );
+        try map.add_one_for_state(
+            .{ .git = .fetch_new },
+            .{ .functional = .{ .key = .escape } },
+            null,
+            .{ .end_search = .{ .reset = true } },
+        );
         {
             defer map.reset();
             try map.for_state(.{ .git = .push });
@@ -2031,6 +2054,24 @@ pub const App = struct {
                 .{ .apply_jj_git_push_selected = .{ .allow_new = true } },
             );
         }
+        try map.add_one_for_state(
+            .{ .git = .fetch },
+            .{ .key = .{ .key = 'n' } },
+            null,
+            .switch_state_to_git_fetch_new,
+        );
+        try map.add_one_for_state(
+            .{ .git = .fetch_new },
+            .{ .functional = .{ .key = .enter } },
+            null,
+            .apply_jj_git_fetch_new,
+        );
+        try map.add_one_for_state(
+            .{ .git = .fetch_new },
+            .{ .functional = .{ .key = .escape } },
+            null,
+            .{ .end_search = .{ .reset = true } },
+        );
 
         return map.build();
     }
@@ -2124,6 +2165,11 @@ pub const App = struct {
                 .push_search => .{
                     .bookmarks_enabled = true,
                     .bookmark_search_enabled = true,
+                    .input_text = true,
+                    .show_help = true,
+                },
+                .fetch_new => .{
+                    .bookmarks_enabled = false,
                     .input_text = true,
                     .show_help = true,
                 },
@@ -2434,6 +2480,10 @@ pub const App = struct {
                                 self.state = .{ .git = .push };
                                 return;
                             },
+                            .fetch_new => {
+                                self.state = .{ .git = .fetch };
+                                return;
+                            },
                             else => {},
                         },
                         else => {},
@@ -2699,6 +2749,10 @@ pub const App = struct {
                         "-r",
                         self.renderer.log.focused_change.id[0..],
                     });
+                },
+                .switch_state_to_git_fetch_new => {
+                    self.state = .{ .git = .fetch_new };
+                    self.renderer.text_input.reset();
                 },
                 .switch_state_to_command => {
                     self.state = .command;
@@ -2982,6 +3036,23 @@ pub const App = struct {
                         self.renderer.text_input.text.items,
                     });
                     try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
+                },
+                .apply_jj_git_fetch_new => {
+                    defer {
+                        self.renderer.text_input.reset();
+                        self.state = .log;
+                    }
+                    var req = JujutsuServer.Request{
+                        .git_fetch = .{
+                            .branch = null,
+                            .remote = null,
+                        },
+                    };
+                    const text = std.mem.trim(u8, self.renderer.text_input.text.items, &std.ascii.whitespace);
+                    if (text.len > 0) {
+                        req.git_fetch.branch = text;
+                        try self.jj_toasted_request(req, "Fetching from remote...");
+                    }
                 },
                 .apply_jj_git_fetch => {
                     defer self.state = .log;

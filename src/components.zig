@@ -1761,12 +1761,12 @@ pub const Renderer = struct {
                     }, .{ .remotes = false }, .{});
                 } else if (std.meta.eql(state, .{ .git = .push }) or std.meta.eql(state, .{ .git = .push_search })) {
                     try self.bookmarks.render(&surface, self, app, .{}, .{ .remotes = false }, .{});
-                } else if (std.meta.eql(state, .{ .git = .fetch }) or std.meta.eql(state, .{ .git = .fetch_search })) {
+                } else if (std.meta.eql(state, .{ .git = .fetch }) or std.meta.eql(state, .{ .git = .fetch_search }) or std.meta.eql(state, .{ .git = .fetch_new })) {
                     try self.bookmarks.render(&surface, self, app, .{}, .{ .remotes = false }, .{ .targets = false });
                 } else unreachable;
             }
 
-            if (state == .command or (state == .bookmark and state.bookmark == .create)) {
+            if (state == .command or (state == .bookmark and state.bookmark == .create) or (state == .git and state.git == .fetch_new)) {
                 const popup_size = Vec2{ .x = 55, .y = 5 };
                 const origin = max_popup_region.origin.add(max_popup_region.size.mul(0.5)).sub(popup_size.mul(0.5));
                 const region = max_popup_region.clamp(.{ .origin = origin, .size = popup_size });
@@ -1777,6 +1777,8 @@ pub const Renderer = struct {
 
                 if (state == .command) {
                     try input_box.draw_border_heading(" Command ");
+                } else if (state == .git and state.git == .fetch_new) {
+                    try input_box.draw_border_heading(" Enter branch to fetch ");
                 } else {
                     try input_box.draw_border_heading(" Enter new bookmark name ");
                 }

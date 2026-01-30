@@ -452,7 +452,7 @@ pub const JujutsuServer = struct {
     events: utils_mod.Channel(Event),
 
     pub const Request = union(enum) {
-        log,
+        log: struct { n: u32 },
         oplog,
         bookmark,
         diff: struct { change: Change, context: u32 },
@@ -532,7 +532,7 @@ pub const JujutsuServer = struct {
             const req = request.req;
 
             switch (req) {
-                .log => {
+                .log => |v| {
                     const res = self.jjcall(temp, &[_][]const u8{
                         "jj",
                         "--color",
@@ -540,6 +540,8 @@ pub const JujutsuServer = struct {
                         "log",
                         "--template",
                         Change.Parsed.template,
+                        "--limit",
+                        try std.fmt.allocPrint(temp, "{d}", .{v.n}),
                     }) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
@@ -1064,7 +1066,7 @@ pub const App = struct {
         const jj = try JujutsuServer.init(alloc, events);
         errdefer jj.deinit();
 
-        try jj.requests.send(.{ .req = .log, .id = null });
+        try jj.requests.send(.{ .req = .{ .log = .{ .n = renderer.log.limit } }, .id = null });
         try jj.requests.send(.{ .req = .bookmark, .id = null });
 
         self.* = .{
@@ -1228,7 +1230,7 @@ pub const App = struct {
         // terminal might resize when a command is active
         try self.renderer.screen.update_size();
         try self._send_event(.rerender);
-        try self.jj_request(.log);
+        try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
     }
 
     fn init_input_action_map(alloc: std.mem.Allocator) !InputActionMap {
@@ -2161,6 +2163,11 @@ pub const App = struct {
                     } else if (log.y + n < i) {
                         break;
                     }
+
+                    if (self.state == .log and i > log.limit - 50) {
+                        log.limit += 200;
+                        try self.jj_request(.{ .log = .{ .n = log.limit } });
+                    }
                     i += 1;
                 }
 
@@ -2437,7 +2444,7 @@ pub const App = struct {
                         .evolog => try self.jj_request(.{ .evolog = self.renderer.log.focused_change }),
                         else => {},
                     }
-                    try self.jj_request(.log);
+                    try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },
                 .scroll => |target| switch (target.target) {
                     .log => {
@@ -2617,7 +2624,7 @@ pub const App = struct {
                         "edit",
                         self.renderer.log.focused_change.id[0..],
                     });
-                    try self.jj_request(.log);
+                    try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },
                 .switch_state_to_git => {
                     self.state = .{ .git = .none };
@@ -2720,7 +2727,7 @@ pub const App = struct {
 
                     try self.execute_non_interactive_command(args.items);
 
-                    try self.jj_request(.log);
+                    try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },
                 .apply_jj_abandon => |v| {
                     defer {
@@ -2744,7 +2751,7 @@ pub const App = struct {
 
                     try self.execute_non_interactive_command(args.items);
 
-                    try self.jj_request(.log);
+                    try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },
                 .apply_jj_squash => |v| {
                     defer {
@@ -2776,7 +2783,7 @@ pub const App = struct {
 
                     try self.execute_non_interactive_command(args.items);
 
-                    try self.jj_request(.log);
+                    try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },
                 .apply_jj_new => {
                     defer {
@@ -2795,7 +2802,7 @@ pub const App = struct {
 
                     try self.execute_non_interactive_command(args.items);
 
-                    try self.jj_request(.log);
+                    try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                     self.renderer.log.y = 0;
                 },
                 .execute_command_in_input_buffer => |e| {
@@ -2834,7 +2841,7 @@ pub const App = struct {
                     });
                     self.renderer.oplog.y = 0;
                     try self.jj_request(.oplog);
-                    try self.jj_request(.log);
+                    try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },
                 .apply_jj_duplicate => {
                     defer {
@@ -2866,7 +2873,7 @@ pub const App = struct {
 
                     try self.execute_non_interactive_command(args.items);
 
-                    try self.jj_request(.log);
+                    try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },
                 .switch_state_to_bookmark_create => {
                     self.state = .{ .bookmark = .create };
@@ -2901,7 +2908,7 @@ pub const App = struct {
                         "-r",
                         bookmark.parsed.target[0][0..8],
                     });
-                    try self.jj_request(.log);
+                    try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },
                 .move_bookmark_to_selected => |v| {
                     defer self.state = .log;
@@ -2919,7 +2926,7 @@ pub const App = struct {
                     }
 
                     try self.execute_non_interactive_command(args.items);
-                    try self.jj_request(.log);
+                    try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },
                 .apply_jj_bookmark_delete => {
                     defer self.state = .log;
@@ -2960,7 +2967,7 @@ pub const App = struct {
                         self.renderer.log.focused_change.id[0..],
                         self.renderer.text_input.text.items,
                     });
-                    try self.jj_request(.log);
+                    try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },
                 .apply_jj_git_fetch => {
                     defer self.state = .log;
@@ -3157,7 +3164,7 @@ pub const App = struct {
                             self.alloc.free(buf.buf);
                             try self._toast_timed(.success, try self.alloc.dupe(u8, "Git fetch successful"), std.time.ms_per_s);
 
-                            try self.jj_request(.log);
+                            try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                         },
                         .err => |buf| try self._toast(.{ .err = error.GitFetchFailed }, buf.buf),
                         else => unreachable,
@@ -3171,7 +3178,7 @@ pub const App = struct {
                             self.alloc.free(buf.buf);
                             try self._toast_timed(.success, try self.alloc.dupe(u8, "Git push successful"), std.time.ms_per_s);
 
-                            try self.jj_request(.log);
+                            try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                         },
                         .err => |buf| try self._toast(.{ .err = error.GitPushFailed }, buf.buf),
                         else => unreachable,
@@ -3294,7 +3301,7 @@ pub const App = struct {
             }
         }
 
-        try self.jj_request(.log);
+        try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
     }
 
     fn _execute_non_interactive_command(self: *@This(), args: []const []const u8) !CommandResult {

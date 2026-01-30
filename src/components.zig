@@ -808,6 +808,7 @@ const BookmarkSlate = struct {
 const LogSlate = struct {
     y: i32 = 0,
     skip_y: i32 = 0,
+    limit: u32 = 200,
     status: jj_mod.Formatted,
     changes: jj_mod.Change.Parsed.Iterator,
     focused_change: jj_mod.Change = .{},

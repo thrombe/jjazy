@@ -1230,7 +1230,6 @@ pub const Term = struct {
 
     features: Features,
     emulator: Emulator,
-    envmap: std.process.EnvMap,
     alloc: std.mem.Allocator,
 
     const Emulator = struct {
@@ -1254,10 +1253,7 @@ pub const Term = struct {
         }
     };
 
-    pub fn init(alloc: std.mem.Allocator) !@This() {
-        var envmap = try std.process.getEnvMap(alloc);
-        errdefer envmap.deinit();
-
+    pub fn init(alloc: std.mem.Allocator, envmap: *const std.process.EnvMap) !@This() {
         const tty = try std.fs.cwd().openFile("/dev/tty", .{ .mode = .read_write });
         errdefer tty.close();
 
@@ -1274,7 +1270,6 @@ pub const Term = struct {
             .tty = tty,
             .features = .init(emu),
             .emulator = emu,
-            .envmap = envmap,
             .alloc = alloc,
         };
 
@@ -1284,7 +1279,6 @@ pub const Term = struct {
     }
 
     pub fn deinit(self: *@This()) void {
-        self.envmap.deinit();
         self.tty.close();
     }
 

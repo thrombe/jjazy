@@ -1678,7 +1678,7 @@ pub const Renderer = struct {
         kind: event_mod.MouseRegionKind,
     };
 
-    pub fn init(alloc: std.mem.Allocator, handler: type) !@This() {
+    pub fn init(alloc: std.mem.Allocator, envmap: *const std.process.EnvMap, handler: type) !@This() {
         var icons = try term_mod.Icons.init(alloc);
         errdefer icons.deinit();
 
@@ -1686,7 +1686,7 @@ pub const Renderer = struct {
         errdefer help.deinit();
 
         var screen = blk: {
-            var term = try term_mod.Term.init(alloc);
+            var term = try term_mod.Term.init(alloc, envmap);
             errdefer term.deinit();
 
             break :blk try term_mod.Screen.init(alloc, term);

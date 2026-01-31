@@ -322,6 +322,14 @@ pub const action_help = [_]struct {
         .action = .{ .change_diff_context = .{ .off = .decrease } },
         .help = "Decrease Diff context size",
     },
+    .{
+        .action = .open_temp_file,
+        .help = "Open temporary copy of selected file",
+    },
+    .{
+        .action = .open_source_file,
+        .help = "Open file from cwd",
+    },
 };
 
 pub const State = union(enum(u8)) {
@@ -454,6 +462,8 @@ pub const Action = union(enum) {
     switch_state_to_git_fetch_new,
     apply_jj_git_fetch_new,
     end_search: struct { reset: bool },
+    open_temp_file,
+    open_source_file,
 };
 
 pub const JujutsuServer = struct {
@@ -1073,6 +1083,7 @@ pub const InputActionMap = struct {
 pub const App = struct {
     alloc: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
+    envmap: std.process.EnvMap,
 
     quit_input_loop: utils_mod.Fuse = .{},
 
@@ -1102,7 +1113,10 @@ pub const App = struct {
         var arena = std.heap.ArenaAllocator.init(alloc);
         errdefer arena.deinit();
 
-        var renderer = try components_mod.Renderer.init(alloc, @This());
+        var envmap = try std.process.getEnvMap(alloc);
+        errdefer envmap.deinit();
+
+        var renderer = try components_mod.Renderer.init(alloc, &envmap, @This());
         errdefer renderer.deinit();
 
         var events = try utils_mod.Channel(Event).init(alloc);
@@ -1134,6 +1148,7 @@ pub const App = struct {
         self.* = .{
             .alloc = alloc,
             .arena = arena,
+            .envmap = envmap,
             .renderer = renderer,
             .input_iterator = .{
                 .input = try .init(alloc),
@@ -1162,6 +1177,7 @@ pub const App = struct {
         const alloc = self.alloc;
         defer alloc.destroy(self);
         defer self.arena.deinit();
+        defer self.envmap.deinit();
         defer self.input_action_map.deinit();
         defer self.renderer.deinit();
         defer self.input_iterator.input.deinit();
@@ -1837,6 +1853,18 @@ pub const App = struct {
             .switch_state_to_file_diff,
         );
         try map.add_one_for_state(
+            .{ .file_tree = .list },
+            .{ .key = .{ .key = 'o' } },
+            null,
+            .open_temp_file,
+        );
+        try map.add_one_for_state(
+            .{ .file_tree = .list },
+            .{ .key = .{ .key = 'O', .mod = .{ .shift = true } } },
+            null,
+            .open_source_file,
+        );
+        try map.add_one_for_state(
             .{ .file_tree = .diff },
             .{ .key = .{ .key = 'h' } },
             null,
@@ -1853,6 +1881,18 @@ pub const App = struct {
             .{ .key = .{ .key = 'd' } },
             null,
             .switch_state_to_file_tree,
+        );
+        try map.add_one_for_state(
+            .{ .file_tree = .diff },
+            .{ .key = .{ .key = 'o' } },
+            null,
+            .open_temp_file,
+        );
+        try map.add_one_for_state(
+            .{ .file_tree = .diff },
+            .{ .key = .{ .key = 'O', .mod = .{ .shift = true } } },
+            null,
+            .open_source_file,
         );
         try map.add_one_for_state(
             .log,
@@ -3206,6 +3246,98 @@ pub const App = struct {
                 .switch_state_to_git_push => {
                     self.state = .{ .git = .push };
                     try self.jj_request(.bookmark);
+                },
+                .open_temp_file => {
+                    if (self.state != .file_tree) return;
+                    const change = self.renderer.log.focused_change;
+                    const list = self.renderer.file_tree.cache.get(change, .touch) orelse return;
+                    const node = list.focused_node orelse return;
+                    if (node.typ != .file) return;
+
+                    // TODO: .jjcall() is actully generic. maybe don't put it in jj server so that anything else can use it
+                    const content = self.jj.jjcall(temp, &[_][]const u8{
+                        "jj",
+                        "file",
+                        "show",
+                        "-r",
+                        change.hash[0..],
+                        node.path,
+                    }) catch |e| {
+                        try self._toast(.{ .err = e }, try self.alloc.dupe(u8, "Could not read contents of file"));
+                        return;
+                    };
+
+                    var content_it = try term_mod.TermStyledGraphemeIterator.init(&self.renderer.screen.unicode_width_table, content);
+
+                    const temp_file_name = try temp.dupe(u8, node.path);
+                    std.mem.replaceScalar(u8, temp_file_name, '/', '_');
+
+                    const temp_file_path = try std.fmt.allocPrint(
+                        temp,
+                        "/tmp/jjazy/{s}-{s}",
+                        .{
+                            change.hash,
+                            temp_file_name,
+                        },
+                    );
+
+                    std.fs.makeDirAbsolute("/tmp/jjazy") catch |e| switch (e) {
+                        error.PathAlreadyExists => {},
+                        else => {
+                            try self._toast(.{ .err = e }, try self.alloc.dupe(u8, "Could not create temp file"));
+                            return;
+                        },
+                    };
+                    blk: {
+                        const temp_file = std.fs.createFileAbsolute(temp_file_path, .{}) catch |e| {
+                            try self._toast(.{ .err = e }, try self.alloc.dupe(u8, "Could not create temp file"));
+                            return;
+                        };
+                        defer temp_file.close();
+
+                        while (content_it.next() catch |e| {
+                            try self._toast(.{ .err = e }, try self.alloc.dupe(u8, "Could not create temp file"));
+                            return;
+                        }) |tok| {
+                            // skip non utf8
+                            if (tok.codepoint) |_| continue;
+
+                            temp_file.writeAll(tok.grapheme) catch |e| {
+                                try self._toast(.{ .err = e }, try self.alloc.dupe(u8, "Could not create temp file"));
+                                return;
+                            };
+                        }
+
+                        // set file as readonly just to stop user from forgetting that this is a temp file
+                        const meta = temp_file.metadata() catch break :blk;
+                        var perms = meta.permissions();
+                        perms.setReadOnly(true);
+                        temp_file.setPermissions(perms) catch break :blk;
+                    }
+
+                    const editor = self.envmap.get("EDITOR") orelse "vi";
+                    try self.execute_interactive_command(&[_][]const u8{
+                        editor,
+                        temp_file_path,
+                    });
+
+                    std.fs.deleteFileAbsolute(temp_file_path) catch |e| {
+                        try self._toast(.{ .err = e }, try self.alloc.dupe(u8, "Could not delete temp file"));
+                        return;
+                    };
+                },
+                .open_source_file => {
+                    if (self.state != .file_tree) return;
+                    const change = self.renderer.log.focused_change;
+                    const list = self.renderer.file_tree.cache.get(change, .touch) orelse return;
+                    const node = list.focused_node orelse return;
+                    if (node.typ != .file) return;
+
+                    const editor = self.envmap.get("EDITOR") orelse "vi";
+                    try self.execute_interactive_command(&[_][]const u8{
+                        editor,
+                        node.path,
+                    });
                 },
                 .file_tree_collapse => |v| {
                     const list = self.renderer.file_tree.cache.get(self.renderer.log.focused_change, .touch).?;

@@ -328,7 +328,10 @@ pub const State = union(enum(u8)) {
     log,
     oplog,
     evolog,
-    file_tree,
+    file_tree: enum {
+        list,
+        diff,
+    },
     bookmark: enum {
         view,
         create,
@@ -353,7 +356,7 @@ pub const State = union(enum(u8)) {
 
     pub inline fn short_display(self: @This()) []const u8 {
         return switch (self) {
-            inline .rebase, .duplicate => |_p, t| switch (_p) {
+            inline .file_tree, .rebase, .duplicate => |_p, t| switch (_p) {
                 inline else => |p| @tagName(t) ++ "." ++ @tagName(p),
             },
             inline .bookmark => |_p, t| switch (_p) {
@@ -421,7 +424,8 @@ pub const Action = union(enum) {
     switch_state_to_evolog,
     switch_state_to_duplicate,
     switch_state_to_bookmarks_view,
-    switch_state_to_file_tree,
+    switch_state_to_file_tree, // Defaults to list
+    switch_state_to_file_diff,
     toggle_help,
     jj_split,
     jj_describe,
@@ -470,7 +474,12 @@ pub const JujutsuServer = struct {
         opshow: Operation,
         evolog: Change,
         file_list: Change,
+        file_diff_list: Change,
         file_show: struct {
+            change: Change,
+            path: []const u8,
+        },
+        file_diff_show: struct {
             change: Change,
             path: []const u8,
         },
@@ -484,6 +493,11 @@ pub const JujutsuServer = struct {
     };
     pub const Result = union(enum) {
         with_status: OkWithStatus,
+        with_diffs: struct {
+            status: Formatted,
+            buf: Formatted,
+            diffs: Formatted,
+        },
         ok: Formatted,
         err: Formatted,
     };
@@ -699,11 +713,75 @@ pub const JujutsuServer = struct {
                     errdefer self.alloc.free(res);
                     try self.events.send(.{ .jj = .{ .req = req, .res = .{ .with_status = .{ .status = .from(stat), .buf = .from(res) } } } });
                 },
+                .file_diff_list => |change| {
+                    const stat = self.jjcall(temp, &[_][]const u8{
+                        "jj",
+                        "--color",
+                        "always",
+                        "show",
+                        "--stat",
+                        "-r",
+                        change.hash[0..],
+                    }) catch |e| {
+                        utils_mod.dump_error(e);
+                        continue;
+                    };
+                    errdefer self.alloc.free(stat);
+
+                    const res = self.jjcall(temp, &[_][]const u8{
+                        "jj",
+                        "file",
+                        "list",
+                        "-r",
+                        change.id[0..],
+                        "--template",
+                        FileTreeEntry.Parsed.template,
+                    }) catch |e| {
+                        utils_mod.dump_error(e);
+                        continue;
+                    };
+                    errdefer self.alloc.free(res);
+
+                    const diffs = self.jjcall(temp, &[_][]const u8{
+                        "jj",
+                        "diff",
+                        "-r",
+                        change.id[0..],
+                        "--template",
+                        jj_mod.FileTreeDiffEntry.Parsed.template,
+                    }) catch |e| {
+                        utils_mod.dump_error(e);
+                        continue;
+                    };
+                    errdefer self.alloc.free(diffs);
+
+                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .with_diffs = .{
+                        .status = .from(stat),
+                        .buf = .from(res),
+                        .diffs = .from(diffs),
+                    } } } });
+                },
                 .file_show => |payload| {
                     // NOTE: file path needs to be relative to current path instead of from repo root, but we fix this by just changing the cwd to the workspace root
                     const cmd = try std.fmt.allocPrint(self.alloc, "jj file show -r {s} {s} | bat --color=always --style numbers,plain --file-name {s}", .{
                         payload.change.id[0..],
                         payload.path,
+                        payload.path,
+                    });
+                    defer self.alloc.free(cmd);
+                    const res = self.jjcall(temp, &[_][]const u8{
+                        "sh",
+                        "-c",
+                        cmd,
+                    }) catch |e| {
+                        utils_mod.dump_error(e);
+                        continue;
+                    };
+                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(res) } } });
+                },
+                .file_diff_show => |payload| {
+                    const cmd = try std.fmt.allocPrint(self.alloc, "jj diff -r {s} {s} --tool delta --config merge-tools.delta.diff-args='[\"--diff-args=-U99999\", \"$left\", \"$right\"]'", .{
+                        payload.change.id[0..],
                         payload.path,
                     });
                     defer self.alloc.free(cmd);
@@ -1133,6 +1211,11 @@ pub const App = struct {
                         self.alloc.free(r.status.buf);
                         self.alloc.free(r.buf.buf);
                     },
+                    .with_diffs => |r| {
+                        self.alloc.free(r.status.buf);
+                        self.alloc.free(r.buf.buf);
+                        self.alloc.free(r.diffs.buf);
+                    },
                 },
                 else => {},
             };
@@ -1266,7 +1349,8 @@ pub const App = struct {
                 .log,
                 .oplog,
                 .evolog,
-                .file_tree,
+                .{ .file_tree = .list },
+                .{ .file_tree = .diff },
                 .command,
                 .{ .bookmark = .view },
                 .{ .bookmark = .view_goto },
@@ -1306,7 +1390,8 @@ pub const App = struct {
                 .log,
                 .oplog,
                 .evolog,
-                .file_tree,
+                .{ .file_tree = .list },
+                .{ .file_tree = .diff },
                 .{ .bookmark = .view },
                 .{ .bookmark = .view_goto },
                 .{ .bookmark = .search },
@@ -1351,7 +1436,8 @@ pub const App = struct {
                 .log,
                 .oplog,
                 .evolog,
-                .file_tree,
+                .{ .file_tree = .list },
+                .{ .file_tree = .diff },
                 .{ .rebase = .onto },
                 .{ .rebase = .after },
                 .{ .rebase = .before },
@@ -1440,7 +1526,8 @@ pub const App = struct {
                 .log,
                 .oplog,
                 .evolog,
-                .file_tree,
+                .{ .file_tree = .list },
+                .{ .file_tree = .diff },
                 .{ .rebase = .onto },
                 .{ .rebase = .after },
                 .{ .rebase = .before },
@@ -1770,16 +1857,40 @@ pub const App = struct {
             .switch_state_to_evolog,
         );
         try map.add_one_for_state(
-            .file_tree,
+            .{ .file_tree = .list },
             .{ .key = .{ .key = 'h' } },
             null,
             .{ .file_tree_collapse = .{ .collapse = true } },
         );
         try map.add_one_for_state(
-            .file_tree,
+            .{ .file_tree = .list },
             .{ .key = .{ .key = 'l' } },
             null,
             .{ .file_tree_collapse = .{ .collapse = false } },
+        );
+        try map.add_one_for_state(
+            .{ .file_tree = .list },
+            .{ .key = .{ .key = 'd' } },
+            null,
+            .switch_state_to_file_diff,
+        );
+        try map.add_one_for_state(
+            .{ .file_tree = .diff },
+            .{ .key = .{ .key = 'h' } },
+            null,
+            .{ .file_tree_collapse = .{ .collapse = true } },
+        );
+        try map.add_one_for_state(
+            .{ .file_tree = .diff },
+            .{ .key = .{ .key = 'l' } },
+            null,
+            .{ .file_tree_collapse = .{ .collapse = false } },
+        );
+        try map.add_one_for_state(
+            .{ .file_tree = .diff },
+            .{ .key = .{ .key = 'd' } },
+            null,
+            .switch_state_to_file_tree,
         );
         try map.add_one_for_state(
             .log,
@@ -2174,7 +2285,10 @@ pub const App = struct {
                     .show_help = true,
                 },
             },
-            .oplog, .evolog, .log, .file_tree => .{},
+            .oplog, .evolog, .log => .{},
+            .file_tree => |state| switch (state) {
+                .list, .diff => .{},
+            },
         };
 
         switch (event) {
@@ -2267,10 +2381,21 @@ pub const App = struct {
                         });
                         if (!file.found_existing) {
                             file.val.* = .{};
-                            try app.jj_request(.{ .file_show = .{
-                                .change = v.change,
-                                .path = path,
-                            } });
+                            const is_diff_mode = switch (self.state) {
+                                .file_tree => |m| m == .diff,
+                                else => false,
+                            };
+                            if (is_diff_mode and tree.focused_node.?.status != null) {
+                                try app.jj_request(.{ .file_diff_show = .{
+                                    .change = v.change,
+                                    .path = path,
+                                } });
+                            } else {
+                                try app.jj_request(.{ .file_show = .{
+                                    .change = v.change,
+                                    .path = path,
+                                } });
+                            }
                         } else {
                             self.alloc.free(path);
                         }
@@ -2524,7 +2649,7 @@ pub const App = struct {
                                         .down => self.renderer.evolog.skip_y += 1,
                                     }
                                 },
-                                .file_tree => {
+                                .file_tree => |_| {
                                     const tree = self.renderer.file_tree.cache.get(self.renderer.log.focused_change, .touch).?;
                                     switch (target.dir) {
                                         .up => tree.skip_y = @max(0, tree.skip_y - 1),
@@ -2554,7 +2679,7 @@ pub const App = struct {
                                     }
                                     try self._send_event(.scroll_update);
                                 },
-                                .file_tree => {
+                                .file_tree => |_| {
                                     const tree = self.renderer.file_tree.cache.get(self.renderer.log.focused_change, .touch).?;
                                     switch (target.dir) {
                                         .up => tree.y -= 1,
@@ -2583,7 +2708,7 @@ pub const App = struct {
                                     }
                                 }
                             },
-                            .file_tree => {
+                            .file_tree => |_| {
                                 if (self.renderer.file_tree.cache.get(self.renderer.log.focused_change, .touch).?.get_focused_file()) |focused_file| {
                                     const key_lookup = components_mod.FileShowSlate.Key{
                                         .change_hash = self.renderer.log.focused_change.hash,
@@ -2726,10 +2851,34 @@ pub const App = struct {
                     try self.jj_request(.{ .evolog = self.renderer.log.focused_change });
                 },
                 .switch_state_to_file_tree => {
-                    self.state = .file_tree;
-                    if (self.renderer.file_tree.cache.get(self.renderer.log.focused_change, .touch) == null) {
-                        try self.jj_request(.{ .file_list = self.renderer.log.focused_change });
+                    self.state = .{ .file_tree = .list };
+                    const change = self.renderer.log.focused_change;
+                    if (self.renderer.file_tree.cache.get(change, .touch)) |list| {
+                        if (list.get_focused_file()) |focused_file| {
+                            const path = try self.alloc.dupe(u8, focused_file);
+                            const res = try self.renderer.file_show.filecache.getOrPut(.{ .change_hash = change.hash, .path = path });
+                            res.val.* = .{};
+                            if (res.found_existing) self.alloc.free(path);
+                        }
+                        try self.jj_request(.{ .file_list = change });
+                    } else {
+                        try self.jj_request(.{ .file_list = change });
                     }
+                    try self._send_event(.rerender);
+                },
+                .switch_state_to_file_diff => {
+                    self.state = .{ .file_tree = .diff };
+                    const change = self.renderer.log.focused_change;
+                    if (self.renderer.file_tree.cache.get(change, .touch)) |list| {
+                        if (list.get_focused_file()) |focused_file| {
+                            const path = try self.alloc.dupe(u8, focused_file);
+                            const res = try self.renderer.file_show.filecache.getOrPut(.{ .change_hash = change.hash, .path = path });
+                            res.val.* = .{};
+                            if (res.found_existing) self.alloc.free(path);
+                        }
+                    }
+                    try self.jj_request(.{ .file_diff_list = change });
+                    try self._send_event(.rerender);
                 },
                 .toggle_help => {
                     self.renderer.show_help = !self.renderer.show_help;
@@ -3219,10 +3368,14 @@ pub const App = struct {
                             const focused_file = list.get_focused_file() orelse return;
 
                             const path = try self.alloc.dupe(u8, focused_file);
-                            try self.renderer.file_show.filecache.put(.{ .change_hash = req.hash, .path = path }, .{});
+                            const res_put = try self.renderer.file_show.filecache.getOrPut(.{ .change_hash = req.hash, .path = path });
+                            res_put.val.* = .{};
+                            if (res_put.found_existing) {
+                                self.alloc.free(path);
+                            }
                             try self.jj_request(.{ .file_show = .{
                                 .change = req,
-                                .path = path,
+                                .path = res_put.key.path,
                             } });
                         },
                         .err => |buf| try self._toast(.{ .err = error.JJFileListFailed }, buf.buf),
@@ -3230,14 +3383,63 @@ pub const App = struct {
                     }
                     try self._send_event(.rerender);
                 },
+                .file_diff_list => |req| {
+                    switch (res.res) {
+                        .with_diffs => |buf| {
+                            const list = try self.renderer.file_tree.add_diff_list(req, buf.status, buf.buf, buf.diffs);
+                            const focused_file = list.get_focused_file() orelse return;
+
+                            const path = try self.alloc.dupe(u8, focused_file);
+                            const res_put = try self.renderer.file_show.filecache.getOrPut(.{ .change_hash = req.hash, .path = path });
+                            res_put.val.* = .{};
+                            if (res_put.found_existing) {
+                                self.alloc.free(path);
+                            }
+                            if (list.focused_node.?.status != null) {
+                                try self.jj_request(.{ .file_diff_show = .{
+                                    .change = req,
+                                    .path = res_put.key.path,
+                                } });
+                            } else {
+                                try self.jj_request(.{ .file_show = .{
+                                    .change = req,
+                                    .path = res_put.key.path,
+                                } });
+                            }
+                        },
+                        .err => |buf| try self._toast(.{ .err = error.JJFileDiffListFailed }, buf.buf),
+                        else => unreachable,
+                    }
+                    try self._send_event(.rerender);
+                },
                 .file_show => |req| {
                     switch (res.res) {
                         .ok => |buf| {
-                            const key = components_mod.FileShowSlate.Key{ .change_hash = req.change.hash, .path = req.path };
-                            const entry = self.renderer.file_show.filecache.get(key, .touch).?;
-                            entry.* = .{ .content = buf.buf, .len = @intCast(buf.height) };
+                            const key_lookup = components_mod.FileShowSlate.Key{ .change_hash = req.change.hash, .path = req.path };
+                            const file = self.renderer.file_show.filecache.get(key_lookup, .touch);
+                            if (file) |f| {
+                                f.* = .{ .content = buf.buf, .len = @intCast(buf.height) };
+                            } else {
+                                self.alloc.free(buf.buf);
+                            }
                         },
                         .err => |buf| try self._toast(.{ .err = error.JJFileShowFailed }, buf.buf),
+                        else => unreachable,
+                    }
+                    try self._send_event(.rerender);
+                },
+                .file_diff_show => |req| {
+                    switch (res.res) {
+                        .ok => |buf| {
+                            const key_lookup = components_mod.FileShowSlate.Key{ .change_hash = req.change.hash, .path = req.path };
+                            const file = self.renderer.file_show.filecache.get(key_lookup, .touch);
+                            if (file) |f| {
+                                f.* = .{ .content = buf.buf, .len = @intCast(buf.height) };
+                            } else {
+                                self.alloc.free(buf.buf);
+                            }
+                        },
+                        .err => |buf| try self._toast(.{ .err = error.JJFileDiffShowFailed }, buf.buf),
                         else => unreachable,
                     }
                     try self._send_event(.rerender);
@@ -3278,7 +3480,7 @@ pub const App = struct {
         try self._send_event(.rerender);
 
         if (comptime options.env == .debug) {
-            // try self.renderer.screen.term.fancy_features_that_break_gdb(.disable, .{});
+            try self.renderer.screen.term.fancy_features_that_break_gdb(.disable, .{});
         }
 
         while (self._wait_recv_event()) |event| {

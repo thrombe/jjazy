@@ -64,6 +64,19 @@ pub const Schema = struct {
             @"git-submodule",
         },
     };
+    pub const FileTreeDiffEntry = struct {
+        pub const Status = enum {
+            modified,
+            added,
+            removed,
+            copied,
+            renamed,
+        };
+        path: []const u8,
+        status: Status,
+        source: Schema.FileTreeEntry,
+        target: Schema.FileTreeEntry,
+    };
 };
 
 pub const Formatted = struct {
@@ -277,4 +290,31 @@ pub const FileTreeEntry = struct {
     pub fn from_parsed(parsed: *const Parsed) void {
         return .{ .path = parsed.parsed.path, .conflict = parsed.parsed.conflict };
     }
+};
+
+pub const FileTreeDiffEntry = struct {
+    path: []const u8,
+    status: Schema.FileTreeDiffEntry.Status,
+    source: Schema.FileTreeEntry,
+    target: Schema.FileTreeEntry,
+
+    pub const Parsed = Template(
+        Schema.FileTreeDiffEntry,
+        \\concat("{",
+        \\  "\"path\": \"", path, "\", ",
+        \\  "\"status\": \"", status, "\", ",
+        \\  "\"source\": {",
+        \\      "\"path\": \"", self.source().path(), "\", ",
+        \\      "\"conflict\": ", self.source().conflict(), ", ",
+        \\      "\"file_type\": \"", self.source().file_type(), "\"",
+        \\  "}, ",
+        \\  "\"target\": {",
+        \\      "\"path\": \"", self.target().path(), "\", ",
+        \\      "\"conflict\": ", self.target().conflict(), ", ",
+        \\      "\"file_type\": \"", self.target().file_type(), "\"",
+        \\  "}",
+        \\"}")
+    ++ "++" ++ "\"" ++ template_sep.escaped ++ "\"" ++ "++" ++ "\"\\n\"",
+        template_sep.sep,
+    );
 };

@@ -1069,12 +1069,21 @@ pub const FileTree = struct {
         has_conflict_somewhere_inside: bool = false,
         typ: enum { dir, file },
         depth: u32,
+        status: ?jj_mod.Schema.FileTreeDiffEntry.Status = null,
 
         collapsed: bool = true,
         children_names: std.StringHashMapUnmanaged(u32) = .empty,
         children: std.ArrayListUnmanaged(Node) = .empty,
 
         pub const root = @This(){ .path = "./", .name = "", .depth = 0, .typ = .dir, .collapsed = false };
+
+        pub fn find_child(self: *@This(), path: []const u8) ?*Node {
+            if (std.mem.eql(u8, self.path, path)) return self;
+            for (self.children.items) |*child| {
+                if (child.find_child(path)) |found| return found;
+            }
+            return null;
+        }
     };
 
     pub fn init(alloc: std.mem.Allocator) @This() {
@@ -1090,6 +1099,18 @@ pub const FileTree = struct {
         self.root = .root;
     }
 
+    pub fn clear_statuses(self: *@This()) void {
+        const Clearer = struct {
+            fn clear(node: *Node) void {
+                node.status = null;
+                for (node.children.items) |*child| {
+                    clear(child);
+                }
+            }
+        };
+        Clearer.clear(&self.root);
+    }
+
     pub fn consume_file_path(self: *@This(), path: []const u8, conflict: bool) !void {
         const alloc = self.arena.allocator();
         var it = try std.fs.path.componentIterator(path);
@@ -1098,11 +1119,12 @@ pub const FileTree = struct {
         while (it.next()) |comp| {
             const child_index = node.children_names.get(comp.name) orelse blk: {
                 const index: u32 = @intCast(node.children.items.len);
-                try node.children_names.put(alloc, comp.name, index);
+                const duped_name = try alloc.dupe(u8, comp.name);
+                try node.children_names.put(alloc, duped_name, index);
                 const child = try node.children.addOne(alloc);
                 child.* = Node{
-                    .path = comp.path,
-                    .name = comp.name,
+                    .path = try alloc.dupe(u8, comp.path),
+                    .name = duped_name,
                     .typ = if (it.peekNext() == null) .file else .dir,
                     .depth = node.depth + 1,
                 };
@@ -1143,6 +1165,10 @@ pub const FileTree = struct {
             .root = &self.root,
             .indices = indices,
         };
+    }
+
+    pub fn find_node(self: *@This(), path: []const u8) ?*Node {
+        return self.root.find_child(path);
     }
 
     pub const Iterator = struct {
@@ -1211,6 +1237,7 @@ pub const FileTreeSlate = struct {
     alloc: std.mem.Allocator,
     cache: FileListCache,
     it: jj_mod.FileTreeEntry.Parsed.Iterator,
+    diff_it: jj_mod.FileTreeDiffEntry.Parsed.Iterator,
 
     pub const FileList = struct {
         y: i32 = 0,
@@ -1304,16 +1331,54 @@ pub const FileTreeSlate = struct {
         }
         self.cache.deinit();
         self.it.deinit();
+        self.diff_it.deinit();
     }
 
     pub fn add_list(self: *@This(), change: jj_mod.Change, change_status: jj_mod.Formatted, files: jj_mod.Formatted) !*FileList {
+        const res = try self.cache.getOrPut(change);
+        if (res.found_existing) {
+            self.alloc.free(res.val.change_status.buf);
+            self.alloc.free(res.val.files.buf);
+            res.val.change_status = change_status;
+            res.val.files = files;
+            res.val.tree.clear_statuses();
+            return res.val;
+        }
+
         var list = try FileList.init(self.alloc, &self.it, change_status, files);
         errdefer list.deinit(self.alloc);
-
-        const res = try self.cache.getOrPut(change);
-        if (res.found_existing) return error.ListExists;
         res.val.* = list;
         return res.val;
+    }
+
+    pub fn add_diff_list(self: *@This(), change: jj_mod.Change, change_status: jj_mod.Formatted, files: jj_mod.Formatted, diffs: jj_mod.Formatted) !*FileList {
+        const res = try self.cache.getOrPut(change);
+        var list: *FileList = undefined;
+        if (res.found_existing) {
+            self.alloc.free(res.val.change_status.buf);
+            self.alloc.free(res.val.files.buf);
+            res.val.change_status = change_status;
+            res.val.files = files;
+            res.val.tree.clear_statuses();
+            list = res.val;
+        } else {
+            res.val.* = try FileList.init(self.alloc, &self.it, change_status, files);
+            list = res.val;
+        }
+
+        // Parse diffs and update nodes with status
+        self.diff_it.reset(diffs.buf);
+        while (try self.diff_it.next()) |parsed| {
+            const diff_entry = parsed.parsed;
+            // Ensure node exists (needed for removed files)
+            try list.tree.consume_file_path(diff_entry.path, false);
+            // Find the node for this path and update its status
+            if (list.tree.find_node(diff_entry.path)) |node| {
+                node.status = diff_entry.status;
+            }
+        }
+
+        return list;
     }
 
     fn render(
@@ -1371,6 +1436,8 @@ pub const FileTreeSlate = struct {
             }
             try surface.apply_style(.reset);
 
+            try surface.draw_buf("  ");
+
             const icon = renderer.icons.get_icon(node.path) orelse term_mod.Icons.Icon{
                 .icon = if (node.typ == .dir) term_mod.Icons.icons.folder[0..] else term_mod.Icons.icons.file[0..],
                 .color = .from_theme(.info),
@@ -1395,12 +1462,56 @@ pub const FileTreeSlate = struct {
                     try surface.apply_style(.{ .foreground_color = .from_theme(.info) });
                     try surface.draw_buf(node.name);
                     try surface.apply_style(.reset);
+
+                    if (node.status) |s| {
+                        const char: u8 = switch (s) {
+                            .modified => 'M',
+                            .added => 'A',
+                            .removed => 'D',
+                            .copied => 'C',
+                            .renamed => 'R',
+                        };
+                        const color = switch (s) {
+                            .modified => term_mod.TermStyledGraphemeIterator.Color.from_theme(.warnings),
+                            .added => term_mod.TermStyledGraphemeIterator.Color.from_theme(.success),
+                            .removed => term_mod.TermStyledGraphemeIterator.Color.from_theme(.errors),
+                            .copied => term_mod.TermStyledGraphemeIterator.Color.from_theme(.info),
+                            .renamed => term_mod.TermStyledGraphemeIterator.Color.from_theme(.status),
+                        };
+
+                        try surface.draw_buf(" ");
+                        try surface.apply_style(.{ .foreground_color = color });
+                        try surface.draw_buf(&[_]u8{char});
+                        try surface.apply_style(.reset);
+                    }
                 },
                 .file => {
                     try surface.apply_style(.bold);
                     try surface.apply_style(.{ .foreground_color = .from_theme(.default_foreground) });
                     try surface.draw_buf(node.name);
                     try surface.apply_style(.reset);
+
+                    if (node.status) |s| {
+                        const char: u8 = switch (s) {
+                            .modified => 'M',
+                            .added => 'A',
+                            .removed => 'D',
+                            .copied => 'C',
+                            .renamed => 'R',
+                        };
+                        const color = switch (s) {
+                            .modified => term_mod.TermStyledGraphemeIterator.Color.from_theme(.warnings),
+                            .added => term_mod.TermStyledGraphemeIterator.Color.from_theme(.success),
+                            .removed => term_mod.TermStyledGraphemeIterator.Color.from_theme(.errors),
+                            .copied => term_mod.TermStyledGraphemeIterator.Color.from_theme(.info),
+                            .renamed => term_mod.TermStyledGraphemeIterator.Color.from_theme(.status),
+                        };
+
+                        try surface.draw_buf(" ");
+                        try surface.apply_style(.{ .foreground_color = color });
+                        try surface.draw_buf(&[_]u8{char});
+                        try surface.apply_style(.reset);
+                    }
                 },
             }
 
@@ -1579,6 +1690,7 @@ pub const Renderer = struct {
                 .alloc = alloc,
                 .cache = .init(alloc),
                 .it = .init(alloc, &.{}),
+                .diff_it = .init(alloc, &.{}),
             },
             .file_show = .{
                 .alloc = alloc,

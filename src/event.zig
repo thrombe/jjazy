@@ -2690,7 +2690,11 @@ pub const App = struct {
                                         .up => tree.y -= 1,
                                         .down => tree.y += 1,
                                     }
-                                    try tree.update_focused_node();
+                                    const is_diff_view = switch (self.state) {
+                                        .file_tree => |m| m == .diff,
+                                        else => false,
+                                    };
+                                    try tree.update_focused_node(!is_diff_view);
                                     try self._send_event(.file_show_scroll_update);
                                 },
                                 else => {
@@ -3239,7 +3243,11 @@ pub const App = struct {
                     switch (node.typ) {
                         .file => {
                             if (v.collapse) {
-                                const parent = try list.focus_parent();
+                                const is_diff_view = switch (self.state) {
+                                    .file_tree => |m| m == .diff,
+                                    else => false,
+                                };
+                                const parent = try list.focus_parent(!is_diff_view);
                                 if (parent == null) {
                                     try self._handle_event(.{ .action = .switch_state_to_log });
                                     return;
@@ -3253,7 +3261,11 @@ pub const App = struct {
                                     return;
                                 }
 
-                                const parent = try list.focus_parent();
+                                const is_diff_view = switch (self.state) {
+                                    .file_tree => |m| m == .diff,
+                                    else => false,
+                                };
+                                const parent = try list.focus_parent(!is_diff_view);
                                 if (parent) |_| {
                                     return;
                                 }

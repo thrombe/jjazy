@@ -1071,6 +1071,7 @@ pub const FileTree = struct {
         depth: u32,
         status: ?jj_mod.Schema.FileTreeDiffEntry.Status = null,
         aggregate_statuses: std.EnumSet(jj_mod.Schema.FileTreeDiffEntry.Status) = .initEmpty(),
+        original_name: ?[]const u8 = null,
 
         collapsed: bool = true,
         children_names: std.StringHashMapUnmanaged(u32) = .empty,
@@ -1105,6 +1106,7 @@ pub const FileTree = struct {
             fn clear(node: *Node) void {
                 node.status = null;
                 node.aggregate_statuses = .initEmpty();
+                node.original_name = null;
                 for (node.children.items) |*child| {
                     clear(child);
                 }
@@ -1140,7 +1142,7 @@ pub const FileTree = struct {
         }
     }
 
-    pub fn set_node_status(self: *@This(), path: []const u8, status: jj_mod.Schema.FileTreeDiffEntry.Status) !void {
+    pub fn set_node_status(self: *@This(), path: []const u8, status: jj_mod.Schema.FileTreeDiffEntry.Status, original_path: ?[]const u8) !void {
         var it = try std.fs.path.componentIterator(path);
         var node = &self.root;
         while (it.next()) |comp| {
@@ -1149,6 +1151,9 @@ pub const FileTree = struct {
             child.aggregate_statuses.insert(status);
             if (it.peekNext() == null) {
                 child.status = status;
+                if (status == .renamed and original_path != null) {
+                    child.original_name = std.fs.path.basename(original_path.?);
+                }
             }
             node = child;
         }
@@ -1175,13 +1180,14 @@ pub const FileTree = struct {
         Sorter.sort(&self.root);
     }
 
-    pub fn iterator(self: *@This()) !Iterator {
+    pub fn iterator(self: *@This(), skip_removed: bool) !Iterator {
         var indices = try std.ArrayListUnmanaged(Iterator.IterNode).initCapacity(self.alloc, self.height + 1);
         indices.appendAssumeCapacity(.{ .node = &self.root, .index = 0, .iter_index = 0 });
         return .{
             .alloc = self.alloc,
             .root = &self.root,
             .indices = indices,
+            .skip_removed = skip_removed,
         };
     }
 
@@ -1194,6 +1200,7 @@ pub const FileTree = struct {
         root: *Node,
         alloc: std.mem.Allocator,
         indices: std.ArrayListUnmanaged(IterNode),
+        skip_removed: bool,
 
         const IterNode = struct {
             node: *Node,
@@ -1214,6 +1221,11 @@ pub const FileTree = struct {
                 // Push next child
                 const child = &frame.node.children.items[frame.index];
                 defer frame.index += 1;
+
+                if (self.skip_removed and child.status == .removed) {
+                    return self.next();
+                }
+
                 defer self.index += 1;
                 const node = self.indices.addOneAssumeCapacity();
                 node.* = .{
@@ -1300,11 +1312,12 @@ pub const FileTreeSlate = struct {
             if (self.it) |*it| it.deinit();
         }
 
-        pub fn update_focused_node(self: *@This()) !void {
+        pub fn update_focused_node(self: *@This(), skip_removed: bool) !void {
             if (self.it == null) {
-                self.it = try self.tree.iterator();
+                self.it = try self.tree.iterator(skip_removed);
             }
             var it = &self.it.?;
+            it.skip_removed = skip_removed;
             it.reset();
             var i: i32 = 0;
             while (it.next()) |e| {
@@ -1316,11 +1329,12 @@ pub const FileTreeSlate = struct {
             }
         }
 
-        pub fn focus_parent(self: *@This()) !?*const FileTree.Node {
+        pub fn focus_parent(self: *@This(), skip_removed: bool) !?*const FileTree.Node {
             if (self.it == null) {
-                self.it = try self.tree.iterator();
+                self.it = try self.tree.iterator(skip_removed);
             }
             var it = &self.it.?;
+            it.skip_removed = skip_removed;
             it.reset();
             while (it.next()) |e| {
                 if (e.iter_index == self.y) {
@@ -1374,7 +1388,7 @@ pub const FileTreeSlate = struct {
                 const diff_entry = parsed.parsed;
                 // Ensure node exists (needed for removed files)
                 try list.tree.consume_file_path(diff_entry.path, false);
-                try list.tree.set_node_status(diff_entry.path, diff_entry.status);
+                try list.tree.set_node_status(diff_entry.path, diff_entry.status, diff_entry.source.path);
             }
         }
 
@@ -1392,14 +1406,21 @@ pub const FileTreeSlate = struct {
             val.deinit(self.alloc);
         };
 
+        const is_diff_view = switch (app.state) {
+            .file_tree => |m| m == .diff,
+            else => false,
+        };
+
         const change = renderer.log.focused_change;
         const tree = self.cache.get(change, .touch) orelse return;
+        tree.y = @max(0, tree.y);
+
         if (tree.it == null) {
-            tree.it = try tree.tree.iterator();
+            tree.it = try tree.tree.iterator(!is_diff_view);
         }
         var it = &tree.it.?;
-
-        tree.y = @max(0, tree.y);
+        it.skip_removed = !is_diff_view;
+        it.reset();
         if (tree.skip_y > tree.y) {
             tree.skip_y = tree.y;
         }
@@ -1436,11 +1457,6 @@ pub const FileTreeSlate = struct {
             }
             try surface.apply_style(.reset);
 
-            const is_diff_view = switch (app.state) {
-                .file_tree => |m| m == .diff,
-                else => false,
-            };
-
             const icon = renderer.icons.get_icon(node.path) orelse term_mod.Icons.Icon{
                 .icon = if (node.typ == .dir) term_mod.Icons.icons.folder[0..] else term_mod.Icons.icons.file[0..],
                 .color = .from_theme(.info),
@@ -1463,6 +1479,10 @@ pub const FileTreeSlate = struct {
 
                     try surface.apply_style(.bold);
                     try surface.apply_style(.{ .foreground_color = .from_theme(.info) });
+                    if (is_diff_view and node.original_name != null) {
+                        try surface.draw_buf(node.original_name.?);
+                        try surface.draw_buf(" -> ");
+                    }
                     try surface.draw_buf(node.name);
                     try surface.apply_style(.reset);
 
@@ -1494,6 +1514,10 @@ pub const FileTreeSlate = struct {
                 .file => {
                     try surface.apply_style(.bold);
                     try surface.apply_style(.{ .foreground_color = .from_theme(.default_foreground) });
+                    if (is_diff_view and node.original_name != null) {
+                        try surface.draw_buf(node.original_name.?);
+                        try surface.draw_buf(" -> ");
+                    }
                     try surface.draw_buf(node.name);
                     try surface.apply_style(.reset);
 

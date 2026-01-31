@@ -163,6 +163,10 @@ pub const action_help = [_]struct {
         .help = "View file tree for change",
     },
     .{
+        .action = .switch_state_to_file_diff,
+        .help = "View file diff tree for change",
+    },
+    .{
         .action = .toggle_help,
         .help = "Toggle help menu",
     },
@@ -328,7 +332,7 @@ pub const action_help = [_]struct {
     },
     .{
         .action = .open_source_file,
-        .help = "Open file from cwd",
+        .help = "Open file from current commit",
     },
 };
 
@@ -1601,6 +1605,23 @@ pub const App = struct {
                 null,
                 .{ .resize_master = .right },
             );
+        }
+        {
+            defer map.reset();
+            try map.for_states(&[_]State{
+                .log,
+                .oplog,
+                .evolog,
+                .{ .rebase = .onto },
+                .{ .rebase = .after },
+                .{ .rebase = .before },
+                .{ .duplicate = .onto },
+                .{ .duplicate = .after },
+                .{ .duplicate = .before },
+                .new,
+                .squash,
+                .abandon,
+            });
 
             try map.add_many(
                 &[_]Key{
@@ -1860,6 +1881,12 @@ pub const App = struct {
         );
         try map.add_one_for_state(
             .{ .file_tree = .list },
+            .{ .key = .{ .key = 'O' } },
+            null,
+            .open_source_file,
+        );
+        try map.add_one_for_state(
+            .{ .file_tree = .list },
             .{ .key = .{ .key = 'O', .mod = .{ .shift = true } } },
             null,
             .open_source_file,
@@ -1887,6 +1914,12 @@ pub const App = struct {
             .{ .key = .{ .key = 'o' } },
             null,
             .open_temp_file,
+        );
+        try map.add_one_for_state(
+            .{ .file_tree = .diff },
+            .{ .key = .{ .key = 'O' } },
+            null,
+            .open_source_file,
         );
         try map.add_one_for_state(
             .{ .file_tree = .diff },
@@ -3534,7 +3567,7 @@ pub const App = struct {
         try self._send_event(.rerender);
 
         if (comptime options.env == .debug) {
-            try self.renderer.screen.term.fancy_features_that_break_gdb(.disable, .{});
+            // try self.renderer.screen.term.fancy_features_that_break_gdb(.disable, .{});
         }
 
         while (self._wait_recv_event()) |event| {

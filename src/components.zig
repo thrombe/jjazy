@@ -1334,24 +1334,7 @@ pub const FileTreeSlate = struct {
         self.diff_it.deinit();
     }
 
-    pub fn add_list(self: *@This(), change: jj_mod.Change, change_status: jj_mod.Formatted, files: jj_mod.Formatted) !*FileList {
-        const res = try self.cache.getOrPut(change);
-        if (res.found_existing) {
-            self.alloc.free(res.val.change_status.buf);
-            self.alloc.free(res.val.files.buf);
-            res.val.change_status = change_status;
-            res.val.files = files;
-            res.val.tree.clear_statuses();
-            return res.val;
-        }
-
-        var list = try FileList.init(self.alloc, &self.it, change_status, files);
-        errdefer list.deinit(self.alloc);
-        res.val.* = list;
-        return res.val;
-    }
-
-    pub fn add_diff_list(self: *@This(), change: jj_mod.Change, change_status: jj_mod.Formatted, files: jj_mod.Formatted, diffs: jj_mod.Formatted) !*FileList {
+    pub fn update_list(self: *@This(), change: jj_mod.Change, change_status: jj_mod.Formatted, files: jj_mod.Formatted, diffs: ?jj_mod.Formatted) !*FileList {
         const res = try self.cache.getOrPut(change);
         var list: *FileList = undefined;
         if (res.found_existing) {
@@ -1366,15 +1349,17 @@ pub const FileTreeSlate = struct {
             list = res.val;
         }
 
-        // Parse diffs and update nodes with status
-        self.diff_it.reset(diffs.buf);
-        while (try self.diff_it.next()) |parsed| {
-            const diff_entry = parsed.parsed;
-            // Ensure node exists (needed for removed files)
-            try list.tree.consume_file_path(diff_entry.path, false);
-            // Find the node for this path and update its status
-            if (list.tree.find_node(diff_entry.path)) |node| {
-                node.status = diff_entry.status;
+        if (diffs) |d| {
+            // Parse diffs and update nodes with status
+            self.diff_it.reset(d.buf);
+            while (try self.diff_it.next()) |parsed| {
+                const diff_entry = parsed.parsed;
+                // Ensure node exists (needed for removed files)
+                try list.tree.consume_file_path(diff_entry.path, false);
+                // Find the node for this path and update its status
+                if (list.tree.find_node(diff_entry.path)) |node| {
+                    node.status = diff_entry.status;
+                }
             }
         }
 
@@ -1436,7 +1421,10 @@ pub const FileTreeSlate = struct {
             }
             try surface.apply_style(.reset);
 
-            try surface.draw_buf("  ");
+            const is_diff_view = switch (app.state) {
+                .file_tree => |m| m == .diff,
+                else => false,
+            };
 
             const icon = renderer.icons.get_icon(node.path) orelse term_mod.Icons.Icon{
                 .icon = if (node.typ == .dir) term_mod.Icons.icons.folder[0..] else term_mod.Icons.icons.file[0..],
@@ -1463,26 +1451,28 @@ pub const FileTreeSlate = struct {
                     try surface.draw_buf(node.name);
                     try surface.apply_style(.reset);
 
-                    if (node.status) |s| {
-                        const char: u8 = switch (s) {
-                            .modified => 'M',
-                            .added => 'A',
-                            .removed => 'D',
-                            .copied => 'C',
-                            .renamed => 'R',
-                        };
-                        const color = switch (s) {
-                            .modified => term_mod.TermStyledGraphemeIterator.Color.from_theme(.warnings),
-                            .added => term_mod.TermStyledGraphemeIterator.Color.from_theme(.success),
-                            .removed => term_mod.TermStyledGraphemeIterator.Color.from_theme(.errors),
-                            .copied => term_mod.TermStyledGraphemeIterator.Color.from_theme(.info),
-                            .renamed => term_mod.TermStyledGraphemeIterator.Color.from_theme(.status),
-                        };
+                    if (is_diff_view) {
+                        if (node.status) |s| {
+                            const char: u8 = switch (s) {
+                                .modified => 'M',
+                                .added => 'A',
+                                .removed => 'D',
+                                .copied => 'C',
+                                .renamed => 'R',
+                            };
+                            const color = switch (s) {
+                                .modified => term_mod.TermStyledGraphemeIterator.Color.from_theme(.warnings),
+                                .added => term_mod.TermStyledGraphemeIterator.Color.from_theme(.success),
+                                .removed => term_mod.TermStyledGraphemeIterator.Color.from_theme(.errors),
+                                .copied => term_mod.TermStyledGraphemeIterator.Color.from_theme(.info),
+                                .renamed => term_mod.TermStyledGraphemeIterator.Color.from_theme(.status),
+                            };
 
-                        try surface.draw_buf(" ");
-                        try surface.apply_style(.{ .foreground_color = color });
-                        try surface.draw_buf(&[_]u8{char});
-                        try surface.apply_style(.reset);
+                            try surface.draw_buf(" ");
+                            try surface.apply_style(.{ .foreground_color = color });
+                            try surface.draw_buf(&[_]u8{char});
+                            try surface.apply_style(.reset);
+                        }
                     }
                 },
                 .file => {
@@ -1491,26 +1481,28 @@ pub const FileTreeSlate = struct {
                     try surface.draw_buf(node.name);
                     try surface.apply_style(.reset);
 
-                    if (node.status) |s| {
-                        const char: u8 = switch (s) {
-                            .modified => 'M',
-                            .added => 'A',
-                            .removed => 'D',
-                            .copied => 'C',
-                            .renamed => 'R',
-                        };
-                        const color = switch (s) {
-                            .modified => term_mod.TermStyledGraphemeIterator.Color.from_theme(.warnings),
-                            .added => term_mod.TermStyledGraphemeIterator.Color.from_theme(.success),
-                            .removed => term_mod.TermStyledGraphemeIterator.Color.from_theme(.errors),
-                            .copied => term_mod.TermStyledGraphemeIterator.Color.from_theme(.info),
-                            .renamed => term_mod.TermStyledGraphemeIterator.Color.from_theme(.status),
-                        };
+                    if (is_diff_view) {
+                        if (node.status) |s| {
+                            const char: u8 = switch (s) {
+                                .modified => 'M',
+                                .added => 'A',
+                                .removed => 'D',
+                                .copied => 'C',
+                                .renamed => 'R',
+                            };
+                            const color = switch (s) {
+                                .modified => term_mod.TermStyledGraphemeIterator.Color.from_theme(.warnings),
+                                .added => term_mod.TermStyledGraphemeIterator.Color.from_theme(.success),
+                                .removed => term_mod.TermStyledGraphemeIterator.Color.from_theme(.errors),
+                                .copied => term_mod.TermStyledGraphemeIterator.Color.from_theme(.info),
+                                .renamed => term_mod.TermStyledGraphemeIterator.Color.from_theme(.status),
+                            };
 
-                        try surface.draw_buf(" ");
-                        try surface.apply_style(.{ .foreground_color = color });
-                        try surface.draw_buf(&[_]u8{char});
-                        try surface.apply_style(.reset);
+                            try surface.draw_buf(" ");
+                            try surface.apply_style(.{ .foreground_color = color });
+                            try surface.draw_buf(&[_]u8{char});
+                            try surface.apply_style(.reset);
+                        }
                     }
                 },
             }
@@ -1552,21 +1544,22 @@ pub const FileShowSlate = struct {
         y: i32 = 0,
         len: i32 = 0,
         content: ?[]const u8 = null,
+
+        diff_len: i32 = 0,
+        diff: ?[]const u8 = null,
     };
     const FileCache = utils_mod.DllLruCache(Key, CachedFile, .{ .ptr = .follow });
 
     fn deinit(self: *@This()) void {
         while (self.filecache.pop()) |e| {
             self.alloc.free(e.key.path);
-            if (e.val.content) |content| {
-                self.alloc.free(content);
-            }
+            if (e.val.content) |content| self.alloc.free(content);
+            if (e.val.diff) |diff| self.alloc.free(diff);
         }
         self.filecache.deinit();
     }
 
     fn render(self: *@This(), surface: *Surface, app: *App, focused_change: jj_mod.Change, focused_file: ?[]const u8) !void {
-        _ = app;
         if (focused_file == null) {
             try surface.draw_buf(" no file selected ");
             return;
@@ -1575,29 +1568,36 @@ pub const FileShowSlate = struct {
 
         defer while (self.filecache.retaining_pop(100)) |e| {
             self.alloc.free(e.key.path);
-            if (e.val.content) |buf| {
-                self.alloc.free(buf);
-            }
+            if (e.val.content) |buf| self.alloc.free(buf);
+            if (e.val.diff) |buf| self.alloc.free(buf);
         };
 
-        if (self.filecache.get(key, .touch)) |cfile| if (cfile.content) |content| {
+        if (self.filecache.get(key, .touch)) |cfile| {
+            const is_diff_view = switch (app.state) {
+                .file_tree => |m| m == .diff,
+                else => false,
+            };
+
+            const content = if (is_diff_view and cfile.diff != null) cfile.diff.? else cfile.content orelse {
+                try surface.draw_buf(" loading... ");
+                return;
+            };
+            const len = if (is_diff_view and cfile.diff != null) cfile.diff_len else cfile.len;
+
             cfile.y = @max(0, cfile.y);
-            cfile.y = @min(cfile.y, cfile.len - surface.region.size.y + 2);
+            cfile.y = @min(cfile.y, len - surface.region.size.y + 2);
 
-            var skip_y = cfile.y;
             var it = utils_mod.LineIterator.init(content);
+            var i: i32 = 0;
             while (it.next()) |line| {
-                if (surface.y < skip_y) {
-                    skip_y -= 1;
-                    continue;
-                }
+                defer i += 1;
+                if (i < cfile.y) continue;
                 try surface.draw_bufln(line);
-
                 if (surface.is_full()) break;
             }
         } else {
-            try surface.draw_buf(" loading ... ");
-        };
+            try surface.draw_buf(" loading... ");
+        }
     }
 };
 

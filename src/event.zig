@@ -2356,13 +2356,9 @@ pub const App = struct {
                 const change = self.renderer.log.focused_change;
                 const tree = self.renderer.file_tree.cache.get(change, .touch) orelse return;
                 if (tree.get_focused_file()) |focused| {
-                    const key_lookup = components_mod.FileShowSlate.Key{ .change_hash = change.hash, .path = focused };
-                    if (self.renderer.file_show.filecache.get(key_lookup, .touch) == null) {
-                        // debounce
-                        try self.sleeper.delay_event(20, .{ .file_show_update = .{ .change = change, .path = focused } });
-                    } else {
-                        try self._send_event(.rerender);
-                    }
+                    // debounce
+                    try self.sleeper.delay_event(20, .{ .file_show_update = .{ .change = change, .path = focused } });
+                    try self._send_event(.rerender);
                 }
             },
             .file_show_update => |v| {
@@ -2373,31 +2369,40 @@ pub const App = struct {
                     if (!std.mem.eql(u8, focused_file, v.path)) return;
 
                     const key_lookup = components_mod.FileShowSlate.Key{ .change_hash = v.change.hash, .path = v.path };
-                    if (self.renderer.file_show.filecache.get(key_lookup, .touch) == null) {
+                    const is_diff_mode = switch (self.state) {
+                        .file_tree => |m| m == .diff,
+                        else => false,
+                    };
+
+                    var cfile: *components_mod.FileShowSlate.CachedFile = undefined;
+                    var path_to_use: []const u8 = undefined;
+                    if (self.renderer.file_show.filecache.get(key_lookup, .touch)) |found| {
+                        cfile = found;
+                        path_to_use = key_lookup.path;
+                    } else {
                         const path = try self.alloc.dupe(u8, v.path);
-                        const file = try self.renderer.file_show.filecache.getOrPut(.{
+                        const entry = try self.renderer.file_show.filecache.getOrPut(.{
                             .change_hash = v.change.hash,
                             .path = path,
                         });
-                        if (!file.found_existing) {
-                            file.val.* = .{};
-                            const is_diff_mode = switch (self.state) {
-                                .file_tree => |m| m == .diff,
-                                else => false,
-                            };
-                            if (is_diff_mode and tree.focused_node.?.status != null) {
-                                try app.jj_request(.{ .file_diff_show = .{
-                                    .change = v.change,
-                                    .path = path,
-                                } });
-                            } else {
-                                try app.jj_request(.{ .file_show = .{
-                                    .change = v.change,
-                                    .path = path,
-                                } });
-                            }
-                        } else {
-                            self.alloc.free(path);
+                        entry.val.* = .{};
+                        cfile = entry.val;
+                        path_to_use = entry.key.path;
+                    }
+
+                    if (is_diff_mode and tree.focused_node.?.status != null) {
+                        if (cfile.diff == null) {
+                            try app.jj_request(.{ .file_diff_show = .{
+                                .change = v.change,
+                                .path = path_to_use,
+                            } });
+                        }
+                    } else {
+                        if (cfile.content == null) {
+                            try app.jj_request(.{ .file_show = .{
+                                .change = v.change,
+                                .path = path_to_use,
+                            } });
                         }
                     }
                 }
@@ -2852,32 +2857,12 @@ pub const App = struct {
                 },
                 .switch_state_to_file_tree => {
                     self.state = .{ .file_tree = .list };
-                    const change = self.renderer.log.focused_change;
-                    if (self.renderer.file_tree.cache.get(change, .touch)) |list| {
-                        if (list.get_focused_file()) |focused_file| {
-                            const path = try self.alloc.dupe(u8, focused_file);
-                            const res = try self.renderer.file_show.filecache.getOrPut(.{ .change_hash = change.hash, .path = path });
-                            res.val.* = .{};
-                            if (res.found_existing) self.alloc.free(path);
-                        }
-                        try self.jj_request(.{ .file_list = change });
-                    } else {
-                        try self.jj_request(.{ .file_list = change });
-                    }
+                    try self.jj_request(.{ .file_diff_list = self.renderer.log.focused_change });
                     try self._send_event(.rerender);
                 },
                 .switch_state_to_file_diff => {
                     self.state = .{ .file_tree = .diff };
-                    const change = self.renderer.log.focused_change;
-                    if (self.renderer.file_tree.cache.get(change, .touch)) |list| {
-                        if (list.get_focused_file()) |focused_file| {
-                            const path = try self.alloc.dupe(u8, focused_file);
-                            const res = try self.renderer.file_show.filecache.getOrPut(.{ .change_hash = change.hash, .path = path });
-                            res.val.* = .{};
-                            if (res.found_existing) self.alloc.free(path);
-                        }
-                    }
-                    try self.jj_request(.{ .file_diff_list = change });
+                    try self.jj_request(.{ .file_diff_list = self.renderer.log.focused_change });
                     try self._send_event(.rerender);
                 },
                 .toggle_help => {
@@ -3364,19 +3349,8 @@ pub const App = struct {
                 .file_list => |req| {
                     switch (res.res) {
                         .with_status => |buf| {
-                            const list = try self.renderer.file_tree.add_list(req, buf.status, buf.buf);
-                            const focused_file = list.get_focused_file() orelse return;
-
-                            const path = try self.alloc.dupe(u8, focused_file);
-                            const res_put = try self.renderer.file_show.filecache.getOrPut(.{ .change_hash = req.hash, .path = path });
-                            res_put.val.* = .{};
-                            if (res_put.found_existing) {
-                                self.alloc.free(path);
-                            }
-                            try self.jj_request(.{ .file_show = .{
-                                .change = req,
-                                .path = res_put.key.path,
-                            } });
+                            _ = try self.renderer.file_tree.update_list(req, buf.status, buf.buf, null);
+                            try self._send_event(.file_show_scroll_update);
                         },
                         .err => |buf| try self._toast(.{ .err = error.JJFileListFailed }, buf.buf),
                         else => unreachable,
@@ -3386,26 +3360,8 @@ pub const App = struct {
                 .file_diff_list => |req| {
                     switch (res.res) {
                         .with_diffs => |buf| {
-                            const list = try self.renderer.file_tree.add_diff_list(req, buf.status, buf.buf, buf.diffs);
-                            const focused_file = list.get_focused_file() orelse return;
-
-                            const path = try self.alloc.dupe(u8, focused_file);
-                            const res_put = try self.renderer.file_show.filecache.getOrPut(.{ .change_hash = req.hash, .path = path });
-                            res_put.val.* = .{};
-                            if (res_put.found_existing) {
-                                self.alloc.free(path);
-                            }
-                            if (list.focused_node.?.status != null) {
-                                try self.jj_request(.{ .file_diff_show = .{
-                                    .change = req,
-                                    .path = res_put.key.path,
-                                } });
-                            } else {
-                                try self.jj_request(.{ .file_show = .{
-                                    .change = req,
-                                    .path = res_put.key.path,
-                                } });
-                            }
+                            _ = try self.renderer.file_tree.update_list(req, buf.status, buf.buf, buf.diffs);
+                            try self._send_event(.file_show_scroll_update);
                         },
                         .err => |buf| try self._toast(.{ .err = error.JJFileDiffListFailed }, buf.buf),
                         else => unreachable,
@@ -3418,7 +3374,8 @@ pub const App = struct {
                             const key_lookup = components_mod.FileShowSlate.Key{ .change_hash = req.change.hash, .path = req.path };
                             const file = self.renderer.file_show.filecache.get(key_lookup, .touch);
                             if (file) |f| {
-                                f.* = .{ .content = buf.buf, .len = @intCast(buf.height) };
+                                f.content = buf.buf;
+                                f.len = @intCast(buf.height);
                             } else {
                                 self.alloc.free(buf.buf);
                             }
@@ -3434,7 +3391,8 @@ pub const App = struct {
                             const key_lookup = components_mod.FileShowSlate.Key{ .change_hash = req.change.hash, .path = req.path };
                             const file = self.renderer.file_show.filecache.get(key_lookup, .touch);
                             if (file) |f| {
-                                f.* = .{ .content = buf.buf, .len = @intCast(buf.height) };
+                                f.diff = buf.buf;
+                                f.diff_len = @intCast(buf.height);
                             } else {
                                 self.alloc.free(buf.buf);
                             }

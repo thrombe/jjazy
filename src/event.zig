@@ -683,7 +683,6 @@ pub const JujutsuServer = struct {
                     };
                     try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(res) } } });
                 },
-
                 .file_tree => |change| {
                     const stat = self.jjcall(temp, &[_][]const u8{
                         "jj",
@@ -1124,6 +1123,7 @@ pub const App = struct {
                 utils_mod.dump_error(e);
                 return e;
             };
+            defer jj.alloc.free(root);
             const trimmed = std.mem.trim(u8, root, &std.ascii.whitespace);
             try std.process.changeCurDir(trimmed);
         }
@@ -3328,7 +3328,6 @@ pub const App = struct {
                         else => unreachable,
                     }
                 },
-
                 .file_tree => |req| {
                     switch (res.res) {
                         .file_tree => |buf| {
@@ -3348,10 +3347,12 @@ pub const App = struct {
                             if (file) |f| {
                                 switch (req.mode) {
                                     .plain => {
+                                        if (f.content) |old| self.alloc.free(old);
                                         f.content = buf.buf;
                                         f.len = @intCast(buf.height);
                                     },
                                     .diff => {
+                                        if (f.diff) |old| self.alloc.free(old);
                                         f.diff = buf.buf;
                                         f.diff_len = @intCast(buf.height);
                                     },

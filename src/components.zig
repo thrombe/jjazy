@@ -1274,6 +1274,7 @@ pub const FileTreeSlate = struct {
         focused_node: ?*FileTree.Node = null,
         change_status: jj_mod.Formatted = .{},
         files: jj_mod.Formatted = .{},
+        diffs: ?jj_mod.Formatted = .{},
         tree: FileTree,
         it: ?FileTree.Iterator = null,
 
@@ -1307,6 +1308,7 @@ pub const FileTreeSlate = struct {
         fn deinit(self: *@This(), alloc: std.mem.Allocator) void {
             alloc.free(self.change_status.buf);
             alloc.free(self.files.buf);
+            if (self.diffs) |diff| alloc.free(diff.buf);
             self.tree.deinit();
             if (self.it) |*it| it.deinit();
         }
@@ -1382,6 +1384,7 @@ pub const FileTreeSlate = struct {
 
         if (diffs) |d| {
             // Parse diffs and update nodes with status
+            res.val.diffs = diffs;
             self.diff_it.reset(d.buf);
             while (try self.diff_it.next()) |parsed| {
                 const diff_entry = parsed.parsed;

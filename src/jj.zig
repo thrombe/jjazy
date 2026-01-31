@@ -62,6 +62,17 @@ pub const Schema = struct {
             tree,
             conflict,
             @"git-submodule",
+            none,
+
+            pub fn jsonParse(allocator: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !@This() {
+                _ = allocator;
+                _ = options;
+                const token = try source.next();
+                return switch (token) {
+                    .string, .allocated_string => |s| if (s.len == 0) .none else std.meta.stringToEnum(@This(), s) orelse error.InvalidEnumTag,
+                    else => error.UnexpectedToken,
+                };
+            }
         },
     };
     pub const FileTreeDiffEntry = struct {

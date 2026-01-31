@@ -1213,34 +1213,33 @@ pub const FileTree = struct {
         }
 
         pub fn next(self: *@This()) ?IterNode {
-            // If stack empty → finished
-            var frame = if (self.indices.items.len > 0) &self.indices.items[self.indices.items.len - 1] else return null;
+            while (true) {
+                // If stack empty → finished
+                var frame = if (self.indices.items.len > 0) &self.indices.items[self.indices.items.len - 1] else return null;
 
-            // Otherwise try to descend into children
-            if (frame.node.children.items.len > frame.index and !frame.node.collapsed) {
-                // Push next child
-                const child = &frame.node.children.items[frame.index];
-                defer frame.index += 1;
+                // Otherwise try to descend into children
+                if (frame.node.children.items.len > frame.index and !frame.node.collapsed) {
+                    // Push next child
+                    const child = &frame.node.children.items[frame.index];
+                    frame.index += 1;
 
-                if (self.skip_removed and child.status == .removed) {
-                    return self.next();
+                    if (self.skip_removed and child.status == .removed) {
+                        continue;
+                    }
+
+                    self.index += 1;
+                    const node = self.indices.addOneAssumeCapacity();
+                    node.* = .{
+                        .node = child,
+                        .index = 0,
+                        .iter_index = self.index,
+                    };
+                    return node.*;
                 }
 
-                defer self.index += 1;
-                const node = self.indices.addOneAssumeCapacity();
-                node.* = .{
-                    .node = child,
-                    .index = 0,
-                    .iter_index = self.index,
-                };
-                return node.*;
+                // Finished this node → pop and continue upward
+                _ = self.indices.pop();
             }
-
-            // Finished this node → pop and continue upward
-            _ = self.indices.pop();
-
-            // Continue from parent frame via tail recursion
-            return self.next();
         }
 
         pub fn parent(self: *@This()) ?IterNode {

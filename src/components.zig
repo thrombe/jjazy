@@ -1070,6 +1070,7 @@ pub const FileTree = struct {
         typ: enum { dir, file },
         depth: u32,
         status: ?jj_mod.Schema.FileTreeDiffEntry.Status = null,
+        aggregate_statuses: std.EnumSet(jj_mod.Schema.FileTreeDiffEntry.Status) = .initEmpty(),
 
         collapsed: bool = true,
         children_names: std.StringHashMapUnmanaged(u32) = .empty,
@@ -1103,6 +1104,7 @@ pub const FileTree = struct {
         const Clearer = struct {
             fn clear(node: *Node) void {
                 node.status = null;
+                node.aggregate_statuses = .initEmpty();
                 for (node.children.items) |*child| {
                     clear(child);
                 }
@@ -1138,19 +1140,35 @@ pub const FileTree = struct {
         }
     }
 
+    pub fn set_node_status(self: *@This(), path: []const u8, status: jj_mod.Schema.FileTreeDiffEntry.Status) !void {
+        var it = try std.fs.path.componentIterator(path);
+        var node = &self.root;
+        while (it.next()) |comp| {
+            const child_index = node.children_names.get(comp.name) orelse return;
+            const child = &node.children.items[child_index];
+            child.aggregate_statuses.insert(status);
+            if (it.peekNext() == null) {
+                child.status = status;
+            }
+            node = child;
+        }
+    }
+
     pub fn sort_dirs_first(self: *@This()) void {
         const Sorter = struct {
             const Ctx = struct {
                 fn lessThan(_: @This(), lhs: Node, rhs: Node) bool {
-                    if (lhs.typ == .dir and rhs.typ == .file) return true;
-                    if (lhs.typ == .file and rhs.typ == .dir) return false;
-                    return std.mem.eql(u8, lhs.name, rhs.name);
+                    if (lhs.typ != rhs.typ) return lhs.typ == .dir;
+                    return std.mem.order(u8, lhs.name, rhs.name) == .lt;
                 }
             };
             fn sort(node: *Node) void {
                 std.sort.block(Node, node.children.items, Ctx{}, Ctx.lessThan);
-                for (node.children.items) |*child| {
-                    @This().sort(child);
+                // Rebuild children_names map because indices changed
+                node.children_names.clearRetainingCapacity();
+                for (node.children.items, 0..) |*child, i| {
+                    node.children_names.putAssumeCapacity(child.name, @intCast(i));
+                    sort(child);
                 }
             }
         };
@@ -1356,10 +1374,7 @@ pub const FileTreeSlate = struct {
                 const diff_entry = parsed.parsed;
                 // Ensure node exists (needed for removed files)
                 try list.tree.consume_file_path(diff_entry.path, false);
-                // Find the node for this path and update its status
-                if (list.tree.find_node(diff_entry.path)) |node| {
-                    node.status = diff_entry.status;
-                }
+                try list.tree.set_node_status(diff_entry.path, diff_entry.status);
             }
         }
 
@@ -1452,7 +1467,8 @@ pub const FileTreeSlate = struct {
                     try surface.apply_style(.reset);
 
                     if (is_diff_view) {
-                        if (node.status) |s| {
+                        var sit = node.aggregate_statuses.iterator();
+                        while (sit.next()) |s| {
                             const char: u8 = switch (s) {
                                 .modified => 'M',
                                 .added => 'A',
@@ -1482,7 +1498,8 @@ pub const FileTreeSlate = struct {
                     try surface.apply_style(.reset);
 
                     if (is_diff_view) {
-                        if (node.status) |s| {
+                        var sit = node.aggregate_statuses.iterator();
+                        while (sit.next()) |s| {
                             const char: u8 = switch (s) {
                                 .modified => 'M',
                                 .added => 'A',

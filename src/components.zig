@@ -817,6 +817,11 @@ const LogSlate = struct {
     // arrayhashmap to preserve insertion order
     selected_changes: std.AutoArrayHashMap(jj_mod.Change, void),
 
+    pub fn calc_limit(self: *const @This()) u32 {
+        const val = @max(self.y, self.skip_y);
+        return (@as(u32, @intCast(@max(0, val))) / 200 + 1) * 200;
+    }
+
     fn deinit(self: *@This()) void {
         self.alloc.free(self.status.buf);
         self.changes.deinit();

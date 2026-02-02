@@ -481,8 +481,8 @@ pub const JujutsuServer = struct {
     events: utils_mod.Channel(Event),
 
     pub const Request = union(enum) {
-        log: struct { n: u32 },
-        oplog,
+        log: struct { n: u32, reset_pos: bool = false },
+        oplog: struct { reset_pos: bool = false },
         bookmark,
         diff: struct { change: Change, context: u32 },
         opshow: Operation,
@@ -495,7 +495,13 @@ pub const JujutsuServer = struct {
         },
         git_fetch: struct { branch: ?[]const u8, remote: ?[]const u8 },
         git_push: struct { branch: ?[]const u8, remote: ?[]const u8, allow_new: bool },
-        command: utils_mod.Command,
+        command: struct {
+            cmd: utils_mod.Command,
+            refresh_log: bool = false,
+            reset_log_pos: bool = false,
+            refresh_oplog: bool = false,
+            reset_oplog_pos: bool = false,
+        },
     };
 
     pub const FileContentMode = enum { plain, diff };
@@ -588,7 +594,8 @@ pub const JujutsuServer = struct {
                     };
                     try self.events.send(.{ .jj = .{ .req = request.req, .res = .{ .ok = .from(res) } } });
                 },
-                .oplog => {
+                .oplog => |v| {
+                    _ = v;
                     var cmd = utils_mod.Command.init(temp);
                     defer cmd.deinit();
                     _ = try cmd.add_args(&[_][]const u8{
@@ -830,9 +837,9 @@ pub const JujutsuServer = struct {
                     };
                     try self.events.send(.{ .jj = .{ .req = request.req, .res = .{ .ok = .from(res) } } });
                 },
-                .command => |*cmd| {
-                    defer cmd.deinit();
-                    const res = cmd.exec_status(self.alloc) catch |e| {
+                .command => |*payload| {
+                    defer payload.cmd.deinit();
+                    const res = payload.cmd.exec_status(self.alloc) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
                     };
@@ -1276,7 +1283,7 @@ pub const App = struct {
         // terminal might resize when a command is active
         try self.renderer.screen.update_size();
         try self._send_event(.rerender);
-        const limit = self.renderer.log.calc_limit();
+        const limit = self.renderer.log.calc_limit(.{});
         self.renderer.log.limit = limit;
         try self.jj_request(.{ .log = .{ .n = limit } });
     }
@@ -2629,11 +2636,11 @@ pub const App = struct {
                 },
                 .refresh_master_content => {
                     switch (self.state) {
-                        .oplog => try self.jj_request(.oplog),
+                        .oplog => try self.jj_request(.{ .oplog = .{} }),
                         .evolog => try self.jj_request(.{ .evolog = self.renderer.log.focused_change }),
                         else => {},
                     }
-                    self.renderer.log.limit = self.renderer.log.calc_limit();
+                    self.renderer.log.limit = self.renderer.log.calc_limit(.{});
                     try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },
                 .scroll => |target| switch (target.target) {
@@ -2816,7 +2823,7 @@ pub const App = struct {
                     var cmd = utils_mod.Command.init(self.alloc);
                     errdefer cmd.deinit();
                     _ = try cmd.add_args(&[_][]const u8{ "jj", "edit", self.renderer.log.focused_change.id[0..] });
-                    try self.jj_request(.{ .command = cmd });
+                    try self.jj_request(.{ .command = .{ .cmd = cmd, .refresh_log = true } });
                 },
                 .switch_state_to_git => {
                     self.state = .{ .git = .none };
@@ -2836,9 +2843,7 @@ pub const App = struct {
                 },
                 .switch_state_to_oplog => {
                     self.state = .oplog;
-                    self.renderer.oplog.y = 0;
-                    self.renderer.oplog.focused_op = .{};
-                    try self.jj_request(.oplog);
+                    try self.jj_request(.{ .oplog = .{ .reset_pos = true } });
                 },
                 .switch_state_to_duplicate => {
                     self.state = .{ .duplicate = .onto };
@@ -2931,7 +2936,7 @@ pub const App = struct {
                         _ = try cmd.arg("--ignore-immutable");
                     }
 
-                    try self.jj_request(.{ .command = cmd });
+                    try self.jj_request(.{ .command = .{ .cmd = cmd, .refresh_log = true } });
                 },
                 .apply_jj_abandon => |v| {
                     defer {
@@ -2952,7 +2957,7 @@ pub const App = struct {
                         _ = try cmd.arg("--ignore-immutable");
                     }
 
-                    try self.jj_request(.{ .command = cmd });
+                    try self.jj_request(.{ .command = .{ .cmd = cmd, .refresh_log = true } });
                 },
                 .apply_jj_squash => |v| {
                     defer {
@@ -2981,7 +2986,7 @@ pub const App = struct {
                         _ = try cmd.arg("--ignore-immutable");
                     }
 
-                    try self.jj_request(.{ .command = cmd });
+                    try self.jj_request(.{ .command = .{ .cmd = cmd, .refresh_log = true } });
                 },
                 .apply_jj_new => {
                     defer {
@@ -2998,10 +3003,11 @@ pub const App = struct {
                         _ = try cmd.arg(e.key_ptr.id[0..]);
                     }
 
-                    try self.jj_request(.{ .command = cmd });
-
-                    self.renderer.log.y = 0;
-                    self.renderer.log.limit = self.renderer.log.calc_limit();
+                    try self.jj_request(.{ .command = .{
+                        .cmd = cmd,
+                        .refresh_log = true,
+                        .reset_log_pos = true,
+                    } });
                 },
                 .execute_command_in_input_buffer => |e| {
                     defer {
@@ -3030,7 +3036,7 @@ pub const App = struct {
                         var cmd = utils_mod.Command.init(self.alloc);
                         errdefer cmd.deinit();
                         _ = try cmd.add_args(args.items);
-                        try self.jj_request(.{ .command = cmd });
+                        try self.jj_request(.{ .command = .{ .cmd = cmd, .refresh_log = true } });
                     }
                 },
                 .apply_jj_op_restore => {
@@ -3042,11 +3048,12 @@ pub const App = struct {
                         "restore",
                         self.renderer.oplog.focused_op.hash[0..],
                     });
-                    try self.jj_request(.{ .command = cmd });
-
-                    self.renderer.oplog.y = 0;
-                    try self.jj_request(.oplog);
-                    self.renderer.log.limit = self.renderer.log.calc_limit();
+                    try self.jj_request(.{ .command = .{
+                        .cmd = cmd,
+                        .refresh_log = true,
+                        .reset_oplog_pos = true,
+                        .refresh_oplog = true,
+                    } });
                 },
                 .apply_jj_duplicate => {
                     defer {
@@ -3076,7 +3083,7 @@ pub const App = struct {
 
                     _ = try cmd.arg(self.renderer.log.focused_change.id[0..]);
 
-                    try self.jj_request(.{ .command = cmd });
+                    try self.jj_request(.{ .command = .{ .cmd = cmd, .refresh_log = true } });
                 },
                 .switch_state_to_bookmark_create => {
                     self.state = .{ .bookmark = .create };
@@ -3110,7 +3117,11 @@ pub const App = struct {
                     var cmd = utils_mod.Command.init(self.alloc);
                     errdefer cmd.deinit();
                     _ = try cmd.add_args(&[_][]const u8{ "jj", "new", "-r", target });
-                    try self.jj_request(.{ .command = cmd });
+                    try self.jj_request(.{ .command = .{
+                        .cmd = cmd,
+                        .refresh_log = true,
+                        .reset_log_pos = true,
+                    } });
                 },
                 .move_bookmark_to_selected => |v| {
                     defer self.state = .log;
@@ -3130,7 +3141,7 @@ pub const App = struct {
                         _ = try cmd.arg("--allow-backwards");
                     }
 
-                    try self.jj_request(.{ .command = cmd });
+                    try self.jj_request(.{ .command = .{ .cmd = cmd, .refresh_log = true } });
                 },
                 .apply_jj_bookmark_delete => {
                     defer self.state = .log;
@@ -3138,7 +3149,7 @@ pub const App = struct {
                     var cmd = utils_mod.Command.init(self.alloc);
                     errdefer cmd.deinit();
                     _ = try cmd.add_args(&[_][]const u8{ "jj", "bookmark", "delete", bookmark.parsed.name });
-                    try self.jj_request(.{ .command = cmd });
+                    try self.jj_request(.{ .command = .{ .cmd = cmd, .refresh_log = true } });
                 },
                 .apply_jj_bookmark_forget => |v| {
                     defer self.state = .log;
@@ -3151,7 +3162,7 @@ pub const App = struct {
                         _ = try cmd.arg("--include-remotes");
                     }
 
-                    try self.jj_request(.{ .command = cmd });
+                    try self.jj_request(.{ .command = .{ .cmd = cmd, .refresh_log = true } });
                 },
                 .apply_jj_bookmark_create_from_input_buffer_on_selected_change => {
                     defer {
@@ -3169,7 +3180,7 @@ pub const App = struct {
                         self.renderer.log.focused_change.id[0..],
                         self.renderer.text_input.text.items,
                     });
-                    try self.jj_request(.{ .command = cmd });
+                    try self.jj_request(.{ .command = .{ .cmd = cmd, .refresh_log = true } });
                 },
                 .apply_jj_git_fetch_new => {
                     defer {
@@ -3372,6 +3383,10 @@ pub const App = struct {
                 .log => {
                     switch (res.res) {
                         .ok => |log| {
+                            if (res.req.log.reset_pos) {
+                                self.renderer.log.y = 0;
+                                self.renderer.log.focused_change = .{};
+                            }
                             try self.renderer.log.update(log);
                             try self._send_event(.scroll_update);
                         },
@@ -3419,13 +3434,16 @@ pub const App = struct {
                 .oplog => {
                     switch (res.res) {
                         .ok => |buf| {
+                            if (res.req.oplog.reset_pos) {
+                                self.renderer.oplog.y = 0;
+                                self.renderer.oplog.focused_op = .{};
+                            }
                             try self.renderer.oplog.update(buf.buf);
                             try self._send_event(.op_update);
                         },
                         .err => |buf| try self._toast(.{ .err = error.JJOpLogFailed }, buf.buf),
                         else => unreachable,
                     }
-
                     try self._send_event(.rerender);
                 },
                 .opshow => |req| {
@@ -3537,9 +3555,17 @@ pub const App = struct {
                                         try self._toast(.success, c_res.out);
                                     }
                                 }
-                            }
 
-                            try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
+                                if (res.req.command.refresh_log) {
+                                    if (res.req.command.reset_log_pos) {
+                                        self.renderer.log.limit = self.renderer.log.calc_limit(.{ .y = 0 });
+                                    }
+                                    try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit, .reset_pos = res.req.command.reset_log_pos } });
+                                }
+                                if (res.req.command.refresh_oplog) {
+                                    try self.jj_request(.{ .oplog = .{ .reset_pos = res.req.command.reset_oplog_pos } });
+                                }
+                            }
                         },
                         else => unreachable,
                     }

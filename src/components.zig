@@ -1232,13 +1232,13 @@ pub const FileTree = struct {
                         continue;
                     }
 
-                    self.index += 1;
                     const node = self.indices.addOneAssumeCapacity();
                     node.* = .{
                         .node = child,
                         .index = 0,
                         .iter_index = self.index,
                     };
+                    self.index += 1;
                     return node.*;
                 }
 

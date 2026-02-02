@@ -1494,31 +1494,6 @@ pub const FileTreeSlate = struct {
                     }
                     try surface.draw_buf(node.name);
                     try surface.apply_style(.reset);
-
-                    if (is_diff_view) {
-                        var sit = node.aggregate_statuses.iterator();
-                        while (sit.next()) |s| {
-                            const char: u8 = switch (s) {
-                                .modified => 'M',
-                                .added => 'A',
-                                .removed => 'D',
-                                .copied => 'C',
-                                .renamed => 'R',
-                            };
-                            const color = switch (s) {
-                                .modified => term_mod.TermStyledGraphemeIterator.Color.from_theme(.warnings),
-                                .added => term_mod.TermStyledGraphemeIterator.Color.from_theme(.success),
-                                .removed => term_mod.TermStyledGraphemeIterator.Color.from_theme(.errors),
-                                .copied => term_mod.TermStyledGraphemeIterator.Color.from_theme(.info),
-                                .renamed => term_mod.TermStyledGraphemeIterator.Color.from_theme(.status),
-                            };
-
-                            try surface.draw_buf(" ");
-                            try surface.apply_style(.{ .foreground_color = color });
-                            try surface.draw_buf(&[_]u8{char});
-                            try surface.apply_style(.reset);
-                        }
-                    }
                 },
                 .file => {
                     try surface.apply_style(.bold);
@@ -1529,32 +1504,32 @@ pub const FileTreeSlate = struct {
                     }
                     try surface.draw_buf(node.name);
                     try surface.apply_style(.reset);
-
-                    if (is_diff_view) {
-                        var sit = node.aggregate_statuses.iterator();
-                        while (sit.next()) |s| {
-                            const char: u8 = switch (s) {
-                                .modified => 'M',
-                                .added => 'A',
-                                .removed => 'D',
-                                .copied => 'C',
-                                .renamed => 'R',
-                            };
-                            const color = switch (s) {
-                                .modified => term_mod.TermStyledGraphemeIterator.Color.from_theme(.warnings),
-                                .added => term_mod.TermStyledGraphemeIterator.Color.from_theme(.success),
-                                .removed => term_mod.TermStyledGraphemeIterator.Color.from_theme(.errors),
-                                .copied => term_mod.TermStyledGraphemeIterator.Color.from_theme(.info),
-                                .renamed => term_mod.TermStyledGraphemeIterator.Color.from_theme(.status),
-                            };
-
-                            try surface.draw_buf(" ");
-                            try surface.apply_style(.{ .foreground_color = color });
-                            try surface.draw_buf(&[_]u8{char});
-                            try surface.apply_style(.reset);
-                        }
-                    }
                 },
+            }
+
+            if (is_diff_view) {
+                var sit = node.aggregate_statuses.iterator();
+                while (sit.next()) |s| {
+                    const char: u8 = switch (s) {
+                        .modified => 'M',
+                        .added => 'A',
+                        .removed => 'D',
+                        .copied => 'C',
+                        .renamed => 'R',
+                    };
+                    const color = switch (s) {
+                        .modified => term_mod.TermStyledGraphemeIterator.Color.from_theme(.warnings),
+                        .added => term_mod.TermStyledGraphemeIterator.Color.from_theme(.success),
+                        .removed => term_mod.TermStyledGraphemeIterator.Color.from_theme(.errors),
+                        .copied => term_mod.TermStyledGraphemeIterator.Color.from_theme(.info),
+                        .renamed => term_mod.TermStyledGraphemeIterator.Color.from_theme(.status),
+                    };
+
+                    try surface.draw_buf(" ");
+                    try surface.apply_style(.{ .foreground_color = color });
+                    try surface.draw_buf(&[_]u8{char});
+                    try surface.apply_style(.reset);
+                }
             }
 
             if (node.has_conflict_somewhere_inside) {

@@ -889,6 +889,7 @@ const LogSlate = struct {
 
             const change = jj_mod.Change.from_parsed(&parsed);
             const is_selected = self.selected_changes.contains(change);
+            const is_range_from = app.file_tree_from != null and std.meta.eql(app.file_tree_from.?, change);
             if (i == self.y) {
                 if (tropes.colored_gutter_cursor) {
                     try gutter.apply_style(.{ .background_color = .from_theme(.dim_text) });
@@ -943,6 +944,8 @@ const LogSlate = struct {
                     else => {
                         if (is_selected) {
                             try gutter.draw_bufln("#>");
+                        } else if (is_range_from) {
+                            try gutter.draw_bufln("L>");
                         } else {
                             try gutter.draw_bufln("->");
                         }
@@ -959,6 +962,8 @@ const LogSlate = struct {
             } else {
                 if (is_selected) {
                     try gutter.draw_buf("#");
+                } else if (is_range_from) {
+                    try gutter.draw_buf("L");
                 }
                 for (0..parsed.formatted.height) |_| {
                     try gutter.draw_bufln("  ");
@@ -1362,7 +1367,11 @@ pub const FileTreeSlate = struct {
             return self.focused_node.?.path;
         }
     };
-    pub const FileListCache = utils_mod.DllLruCache(jj_mod.Change, FileList, .{ .ptr = .follow });
+    pub const RangeContext = struct {
+        to: jj_mod.Change,
+        from: ?jj_mod.Change = null,
+    };
+    pub const FileListCache = utils_mod.DllLruCache(RangeContext, FileList, .{ .ptr = .follow });
 
     fn deinit(self: *@This()) void {
         while (self.cache.pop()) |e| {
@@ -1374,8 +1383,8 @@ pub const FileTreeSlate = struct {
         self.diff_it.deinit();
     }
 
-    pub fn update_list(self: *@This(), change: jj_mod.Change, change_status: jj_mod.Formatted, files: jj_mod.Formatted, diffs: ?jj_mod.Formatted) !*FileList {
-        const res = try self.cache.getOrPut(change);
+    pub fn update_list(self: *@This(), ctx: RangeContext, change_status: jj_mod.Formatted, files: jj_mod.Formatted, diffs: ?jj_mod.Formatted) !*FileList {
+        const res = try self.cache.getOrPut(ctx);
         var list: *FileList = undefined;
         if (res.found_existing) {
             self.alloc.free(res.val.change_status.buf);
@@ -1416,12 +1425,12 @@ pub const FileTreeSlate = struct {
         };
 
         const is_diff_view = switch (app.state) {
-            .file_tree => |m| m == .diff,
+            .file_tree => |m| m == .diff or m == .range_diff,
             else => false,
         };
 
         const change = renderer.log.focused_change;
-        const tree = self.cache.get(change, .touch) orelse return;
+        const tree = self.cache.get(.{ .to = change, .from = app.file_tree_from }, .touch) orelse return;
         tree.y = @max(0, tree.y);
 
         if (tree.it == null) {
@@ -1561,7 +1570,8 @@ pub const FileShowSlate = struct {
     filecache: FileCache,
 
     pub const Key = struct {
-        change_hash: jj_mod.Change.Hash,
+        to: jj_mod.Change.Hash,
+        from: ?jj_mod.Change.Hash = null,
         path: []const u8,
     };
 
@@ -1584,12 +1594,16 @@ pub const FileShowSlate = struct {
         self.filecache.deinit();
     }
 
-    fn render(self: *@This(), surface: *Surface, app: *App, focused_change: jj_mod.Change, focused_file: ?[]const u8) !void {
+    fn render(self: *@This(), surface: *Surface, app: *App, to: jj_mod.Change, from: ?jj_mod.Change, focused_file: ?[]const u8) !void {
         if (focused_file == null) {
             try surface.draw_buf(" no file selected ");
             return;
         }
-        const key = Key{ .change_hash = focused_change.hash, .path = focused_file.? };
+        const key = Key{
+            .to = to.hash,
+            .from = if (from) |f| f.hash else null,
+            .path = focused_file.?,
+        };
 
         defer while (self.filecache.retaining_pop(100)) |e| {
             self.alloc.free(e.key.path);
@@ -1599,7 +1613,7 @@ pub const FileShowSlate = struct {
 
         if (self.filecache.get(key, .touch)) |cfile| {
             const is_diff_view = switch (app.state) {
-                .file_tree => |m| m == .diff,
+                .file_tree => |m| m == .diff or m == .range_diff,
                 else => false,
             };
 
@@ -1852,9 +1866,19 @@ pub const Renderer = struct {
                 },
                 .file_tree => {
                     try self.file_tree.render(&status, self, app);
-                    if (self.file_tree.cache.get(self.log.focused_change, .touch)) |tree| {
+                    if (self.file_tree.cache.get(.{ .to = self.log.focused_change, .from = app.file_tree_from }, .touch)) |tree| {
+                        const m = app.state.file_tree;
+                        const is_diff_view = m == .diff or m == .range_diff;
                         const focused_file = tree.get_focused_file();
-                        try self.file_show.render(&diffs, app, self.log.focused_change, focused_file);
+                        var from: ?jj_mod.Change = null;
+                        if (is_diff_view) {
+                            if (tree.focused_node) |node| {
+                                if (node.status != null) {
+                                    from = app.file_tree_from;
+                                }
+                            }
+                        }
+                        try self.file_show.render(&diffs, app, self.log.focused_change, from, focused_file);
                     }
                 },
                 .evolog => {

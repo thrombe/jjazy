@@ -167,6 +167,14 @@ pub const action_help = [_]struct {
         .help = "View file diff tree for change",
     },
     .{
+        .action = .start_range_diff,
+        .help = "Start Range Diff Selection",
+    },
+    .{
+        .action = .apply_range_diff,
+        .help = "Apply Range Diff",
+    },
+    .{
         .action = .toggle_help,
         .help = "Toggle help menu",
     },
@@ -343,6 +351,7 @@ pub const State = union(enum(u8)) {
     file_tree: enum {
         list,
         diff,
+        range_diff,
     },
     bookmark: enum {
         view,
@@ -351,6 +360,7 @@ pub const State = union(enum(u8)) {
         view_goto,
         search_goto,
     },
+    log_range_diff,
     git: enum {
         none,
         fetch,
@@ -402,7 +412,7 @@ pub const Event = union(enum) {
     rerender,
     scroll_update,
     file_show_scroll_update,
-    file_show_update: struct { change: jj_mod.Change, path: []const u8 },
+    file_show_update: struct { to: jj_mod.Change, from: ?jj_mod.Change = null, path: []const u8 },
     diff_update: struct { change: jj_mod.Change, context: u32 },
     opshow_update: jj_mod.Operation,
     op_update,
@@ -468,6 +478,8 @@ pub const Action = union(enum) {
     end_search: struct { reset: bool },
     open_temp_file,
     open_source_file,
+    start_range_diff,
+    apply_range_diff,
 };
 
 pub const JujutsuServer = struct {
@@ -487,9 +499,10 @@ pub const JujutsuServer = struct {
         diff: struct { change: Change, context: u32 },
         opshow: Operation,
         evolog: Change,
-        file_tree: Change,
+        file_tree: struct { to: Change, from: ?Change = null },
         file_content: struct {
-            change: Change,
+            to: Change,
+            from: ?Change = null,
             path: []const u8,
             mode: FileContentMode,
         },
@@ -723,18 +736,32 @@ pub const JujutsuServer = struct {
                     };
                     try self.events.send(.{ .jj = .{ .req = request.req, .res = .{ .ok = .from(res) } } });
                 },
-                .file_tree => |change| {
+                .file_tree => |payload| {
                     var stat_cmd = utils_mod.Command.init(temp);
                     defer stat_cmd.deinit();
-                    _ = try stat_cmd.add_args(&[_][]const u8{
-                        "jj",
-                        "--color",
-                        "always",
-                        "show",
-                        "--stat",
-                        "-r",
-                        change.hash[0..],
-                    });
+                    if (payload.from) |from| {
+                        _ = try stat_cmd.add_args(&[_][]const u8{
+                            "jj",
+                            "--color",
+                            "always",
+                            "diff",
+                            "--stat",
+                            "--from",
+                            from.hash[0..],
+                            "--to",
+                            payload.to.hash[0..],
+                        });
+                    } else {
+                        _ = try stat_cmd.add_args(&[_][]const u8{
+                            "jj",
+                            "--color",
+                            "always",
+                            "show",
+                            "--stat",
+                            "-r",
+                            payload.to.hash[0..],
+                        });
+                    }
                     const stat = stat_cmd.exec_capture(self.alloc, temp) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
@@ -748,7 +775,7 @@ pub const JujutsuServer = struct {
                         "file",
                         "list",
                         "-r",
-                        change.id[0..],
+                        payload.to.id[0..],
                         "--template",
                         FileTreeEntry.Parsed.template,
                     });
@@ -760,14 +787,27 @@ pub const JujutsuServer = struct {
 
                     var diffs_cmd = utils_mod.Command.init(temp);
                     defer diffs_cmd.deinit();
-                    _ = try diffs_cmd.add_args(&[_][]const u8{
-                        "jj",
-                        "diff",
-                        "-r",
-                        change.id[0..],
-                        "--template",
-                        jj_mod.FileTreeDiffEntry.Parsed.template,
-                    });
+                    if (payload.from) |from| {
+                        _ = try diffs_cmd.add_args(&[_][]const u8{
+                            "jj",
+                            "diff",
+                            "--from",
+                            from.hash[0..],
+                            "--to",
+                            payload.to.hash[0..],
+                            "--template",
+                            jj_mod.FileTreeDiffEntry.Parsed.template,
+                        });
+                    } else {
+                        _ = try diffs_cmd.add_args(&[_][]const u8{
+                            "jj",
+                            "diff",
+                            "-r",
+                            payload.to.id[0..],
+                            "--template",
+                            jj_mod.FileTreeDiffEntry.Parsed.template,
+                        });
+                    }
                     const diffs = diffs_cmd.exec_capture(self.alloc, temp) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
@@ -784,15 +824,22 @@ pub const JujutsuServer = struct {
                     const cmd_str = switch (payload.mode) {
                         // NOTE: file path needs to be relative to current path instead of from repo root, but we fix this by just changing the cwd to the workspace root
                         .plain => try std.fmt.allocPrint(temp, "jj file show -r {s} {s} | bat --color=always --style numbers,plain --file-name {s}", .{
-                            payload.change.id[0..],
+                            payload.to.id[0..],
                             payload.path,
                             payload.path,
                         }),
                         // jj diff -r lqo --tool delta --config merge-tools.delta.diff-args='["--diff-args=\"-U50\"", "$left", "$right"]'
-                        .diff => try std.fmt.allocPrint(temp, "jj diff -r {s} {s} --tool delta --config merge-tools.delta.diff-args='[\"--diff-args=-U99999\", \"$left\", \"$right\"]'", .{
-                            payload.change.id[0..],
-                            payload.path,
-                        }),
+                        .diff => if (payload.from) |from|
+                            try std.fmt.allocPrint(temp, "jj diff --from {s} --to {s} {s} --tool delta --config merge-tools.delta.diff-args='[\"--diff-args=-U99999\", \"$left\", \"$right\"]'", .{
+                                from.hash[0..],
+                                payload.to.hash[0..],
+                                payload.path,
+                            })
+                        else
+                            try std.fmt.allocPrint(temp, "jj diff -r {s} {s} --tool delta --config merge-tools.delta.diff-args='[\"--diff-args=-U99999\", \"$left\", \"$right\"]'", .{
+                                payload.to.id[0..],
+                                payload.path,
+                            }),
                     };
                     var cmd = utils_mod.Command.init(temp);
                     defer cmd.deinit();
@@ -1062,6 +1109,7 @@ pub const App = struct {
     jj: *JujutsuServer,
 
     state: State = .log,
+    file_tree_from: ?Change = null,
 
     const CommandResult = struct {
         errored: bool,
@@ -1301,6 +1349,7 @@ pub const App = struct {
                 .evolog,
                 .{ .file_tree = .list },
                 .{ .file_tree = .diff },
+                .{ .file_tree = .range_diff },
                 .command,
                 .{ .bookmark = .view },
                 .{ .bookmark = .view_goto },
@@ -1317,6 +1366,7 @@ pub const App = struct {
                 .new,
                 .squash,
                 .abandon,
+                .log_range_diff,
             });
             if (options.env == .debug) try map.add_one(
                 .{ .functional = .{ .key = .escape, .mod = .{ .ctrl = true } } },
@@ -1342,6 +1392,7 @@ pub const App = struct {
                 .evolog,
                 .{ .file_tree = .list },
                 .{ .file_tree = .diff },
+                .{ .file_tree = .range_diff },
                 .{ .bookmark = .view },
                 .{ .bookmark = .view_goto },
                 .{ .bookmark = .search },
@@ -1360,6 +1411,7 @@ pub const App = struct {
                 .new,
                 .squash,
                 .abandon,
+                .log_range_diff,
             });
             if (options.env == .debug) try map.add_one(
                 .{ .key = .{ .key = '1' } },
@@ -1388,6 +1440,7 @@ pub const App = struct {
                 .evolog,
                 .{ .file_tree = .list },
                 .{ .file_tree = .diff },
+                .{ .file_tree = .range_diff },
                 .{ .rebase = .onto },
                 .{ .rebase = .after },
                 .{ .rebase = .before },
@@ -1397,6 +1450,7 @@ pub const App = struct {
                 .new,
                 .squash,
                 .abandon,
+                .log_range_diff,
             });
             try map.add_many(
                 &[_]Key{
@@ -1478,6 +1532,7 @@ pub const App = struct {
                 .evolog,
                 .{ .file_tree = .list },
                 .{ .file_tree = .diff },
+                .{ .file_tree = .range_diff },
                 .{ .rebase = .onto },
                 .{ .rebase = .after },
                 .{ .rebase = .before },
@@ -1487,6 +1542,7 @@ pub const App = struct {
                 .new,
                 .squash,
                 .abandon,
+                .log_range_diff,
             });
 
             try map.add_many(
@@ -1589,6 +1645,7 @@ pub const App = struct {
                 .new,
                 .squash,
                 .abandon,
+                .log_range_diff,
             });
 
             try map.add_many(
@@ -1824,17 +1881,50 @@ pub const App = struct {
             .switch_state_to_evolog,
         );
         try map.add_one_for_state(
-            .{ .file_tree = .list },
-            .{ .key = .{ .key = 'h' } },
+            .log,
+            .{ .key = .{ .key = 'L' } },
             null,
-            .{ .file_tree_collapse = .{ .collapse = true } },
+            .start_range_diff,
         );
         try map.add_one_for_state(
-            .{ .file_tree = .list },
-            .{ .key = .{ .key = 'l' } },
+            .log,
+            .{ .key = .{ .key = 'L', .mod = .{ .shift = true } } },
             null,
-            .{ .file_tree_collapse = .{ .collapse = false } },
+            .start_range_diff,
         );
+        {
+            defer map.reset();
+            try map.for_states(&[_]State{
+                .{ .file_tree = .list },
+                .{ .file_tree = .diff },
+                .{ .file_tree = .range_diff },
+            });
+            try map.add_one(
+                .{ .key = .{ .key = 'h' } },
+                null,
+                .{ .file_tree_collapse = .{ .collapse = true } },
+            );
+            try map.add_one(
+                .{ .key = .{ .key = 'l' } },
+                null,
+                .{ .file_tree_collapse = .{ .collapse = false } },
+            );
+            try map.add_one(
+                .{ .key = .{ .key = 'o' } },
+                null,
+                .open_temp_file,
+            );
+            try map.add_one(
+                .{ .key = .{ .key = 'O' } },
+                null,
+                .open_source_file,
+            );
+            try map.add_one(
+                .{ .key = .{ .key = 'O', .mod = .{ .shift = true } } },
+                null,
+                .open_source_file,
+            );
+        }
         try map.add_one_for_state(
             .{ .file_tree = .list },
             .{ .key = .{ .key = 'd' } },
@@ -1842,58 +1932,10 @@ pub const App = struct {
             .switch_state_to_file_diff,
         );
         try map.add_one_for_state(
-            .{ .file_tree = .list },
-            .{ .key = .{ .key = 'o' } },
-            null,
-            .open_temp_file,
-        );
-        try map.add_one_for_state(
-            .{ .file_tree = .list },
-            .{ .key = .{ .key = 'O' } },
-            null,
-            .open_source_file,
-        );
-        try map.add_one_for_state(
-            .{ .file_tree = .list },
-            .{ .key = .{ .key = 'O', .mod = .{ .shift = true } } },
-            null,
-            .open_source_file,
-        );
-        try map.add_one_for_state(
-            .{ .file_tree = .diff },
-            .{ .key = .{ .key = 'h' } },
-            null,
-            .{ .file_tree_collapse = .{ .collapse = true } },
-        );
-        try map.add_one_for_state(
-            .{ .file_tree = .diff },
-            .{ .key = .{ .key = 'l' } },
-            null,
-            .{ .file_tree_collapse = .{ .collapse = false } },
-        );
-        try map.add_one_for_state(
             .{ .file_tree = .diff },
             .{ .key = .{ .key = 'd' } },
             null,
             .switch_state_to_file_tree,
-        );
-        try map.add_one_for_state(
-            .{ .file_tree = .diff },
-            .{ .key = .{ .key = 'o' } },
-            null,
-            .open_temp_file,
-        );
-        try map.add_one_for_state(
-            .{ .file_tree = .diff },
-            .{ .key = .{ .key = 'O' } },
-            null,
-            .open_source_file,
-        );
-        try map.add_one_for_state(
-            .{ .file_tree = .diff },
-            .{ .key = .{ .key = 'O', .mod = .{ .shift = true } } },
-            null,
-            .open_source_file,
         );
         try map.add_one_for_state(
             .log,
@@ -2186,6 +2228,18 @@ pub const App = struct {
             null,
             .{ .end_search = .{ .reset = true } },
         );
+        try map.add_one_for_state(
+            .log_range_diff,
+            .{ .functional = .{ .key = .enter } },
+            null,
+            .apply_range_diff,
+        );
+        try map.add_one_for_state(
+            .log_range_diff,
+            .{ .functional = .{ .key = .escape } },
+            null,
+            .switch_state_to_log,
+        );
 
         return map.build();
     }
@@ -2290,7 +2344,10 @@ pub const App = struct {
             },
             .oplog, .evolog, .log => .{},
             .file_tree => |state| switch (state) {
-                .list, .diff => .{},
+                .list, .diff, .range_diff => .{},
+            },
+            .log_range_diff => .{
+                .colored_gutter_cursor = true,
             },
         };
 
@@ -2357,23 +2414,31 @@ pub const App = struct {
             },
             .file_show_scroll_update => {
                 const change = self.renderer.log.focused_change;
-                const tree = self.renderer.file_tree.cache.get(change, .touch) orelse return;
+                const tree = self.renderer.file_tree.cache.get(.{ .to = change, .from = self.file_tree_from }, .touch) orelse return;
                 if (tree.get_focused_file()) |focused| {
                     // debounce
-                    try self.sleeper.delay_event(20, .{ .file_show_update = .{ .change = change, .path = focused } });
+                    try self.sleeper.delay_event(20, .{ .file_show_update = .{
+                        .to = change,
+                        .from = self.file_tree_from,
+                        .path = focused,
+                    } });
                     try self._send_event(.rerender);
                 }
             },
             .file_show_update => |v| {
-                if (!std.mem.eql(u8, v.change.hash[0..], self.renderer.log.focused_change.hash[0..])) return;
-                const tree = self.renderer.file_tree.cache.get(v.change, .touch) orelse return;
+                if (!std.mem.eql(u8, v.to.hash[0..], self.renderer.log.focused_change.hash[0..])) return;
+                const tree = self.renderer.file_tree.cache.get(.{ .to = v.to, .from = v.from }, .touch) orelse return;
 
                 if (tree.get_focused_file()) |focused_file| {
                     if (!std.mem.eql(u8, focused_file, v.path)) return;
 
-                    const key_lookup = components_mod.FileShowSlate.Key{ .change_hash = v.change.hash, .path = v.path };
+                    const key_lookup = components_mod.FileShowSlate.Key{
+                        .to = v.to.hash,
+                        .from = if (v.from != null and tree.focused_node.?.status != null) v.from.?.hash else null,
+                        .path = v.path,
+                    };
                     const is_diff_mode = switch (self.state) {
-                        .file_tree => |m| m == .diff,
+                        .file_tree => |m| m == .diff or m == .range_diff,
                         else => false,
                     };
 
@@ -2385,7 +2450,8 @@ pub const App = struct {
                     } else {
                         const path = try self.alloc.dupe(u8, v.path);
                         const entry = try self.renderer.file_show.filecache.getOrPut(.{
-                            .change_hash = v.change.hash,
+                            .to = v.to.hash,
+                            .from = if (v.from != null and tree.focused_node.?.status != null) v.from.?.hash else null,
                             .path = path,
                         });
                         entry.val.* = .{};
@@ -2396,18 +2462,22 @@ pub const App = struct {
                     if (is_diff_mode and tree.focused_node.?.status != null) {
                         if (cfile.diff == null) {
                             try app.jj_request(.{ .file_content = .{
-                                .change = v.change,
+                                .to = v.to,
+                                .from = v.from,
                                 .path = path_to_use,
                                 .mode = .diff,
                             } });
                         }
                     } else {
                         if (cfile.content == null) {
-                            try app.jj_request(.{ .file_content = .{
-                                .change = v.change,
-                                .path = path_to_use,
-                                .mode = .plain,
-                            } });
+                            try app.jj_request(.{
+                                .file_content = .{
+                                    .to = v.to,
+                                    .from = null, // Plain show is always from one commit
+                                    .path = path_to_use,
+                                    .mode = .plain,
+                                },
+                            });
                         }
                     }
                 }
@@ -2660,7 +2730,7 @@ pub const App = struct {
                                     }
                                 },
                                 .file_tree => |_| {
-                                    const tree = self.renderer.file_tree.cache.get(self.renderer.log.focused_change, .touch).?;
+                                    const tree = self.renderer.file_tree.cache.get(.{ .to = self.renderer.log.focused_change, .from = self.file_tree_from }, .touch).?;
                                     switch (target.dir) {
                                         .up => tree.skip_y = @max(0, tree.skip_y - 1),
                                         .down => tree.skip_y += 1,
@@ -2690,13 +2760,13 @@ pub const App = struct {
                                     try self._send_event(.scroll_update);
                                 },
                                 .file_tree => |_| {
-                                    const tree = self.renderer.file_tree.cache.get(self.renderer.log.focused_change, .touch).?;
+                                    const tree = self.renderer.file_tree.cache.get(.{ .to = self.renderer.log.focused_change, .from = self.file_tree_from }, .touch).?;
                                     switch (target.dir) {
                                         .up => tree.y -= 1,
                                         .down => tree.y += 1,
                                     }
                                     const is_diff_view = switch (self.state) {
-                                        .file_tree => |m| m == .diff,
+                                        .file_tree => |m| m == .diff or m == .range_diff,
                                         else => false,
                                     };
                                     try tree.update_focused_node(!is_diff_view);
@@ -2723,9 +2793,10 @@ pub const App = struct {
                                 }
                             },
                             .file_tree => |_| {
-                                if (self.renderer.file_tree.cache.get(self.renderer.log.focused_change, .touch).?.get_focused_file()) |focused_file| {
+                                if (self.renderer.file_tree.cache.get(.{ .to = self.renderer.log.focused_change, .from = self.file_tree_from }, .touch).?.get_focused_file()) |focused_file| {
                                     const key_lookup = components_mod.FileShowSlate.Key{
-                                        .change_hash = self.renderer.log.focused_change.hash,
+                                        .to = self.renderer.log.focused_change.hash,
+                                        .from = if (self.file_tree_from) |f| f.hash else null,
                                         .path = focused_file,
                                     };
                                     if (self.renderer.file_show.filecache.get(key_lookup, .touch)) |cfile| {
@@ -2798,6 +2869,7 @@ pub const App = struct {
                     self.renderer.text_input.reset();
                     self.state = .log;
                     self.renderer.show_help = false;
+                    self.file_tree_from = null;
                 },
                 .select_focused_change => {
                     if (self.renderer.log.selected_changes.fetchOrderedRemove(self.renderer.log.focused_change) == null) {
@@ -2861,19 +2933,17 @@ pub const App = struct {
                     try self.jj_request(.{ .evolog = self.renderer.log.focused_change });
                 },
                 .switch_state_to_file_tree => {
-                    self.state = .{ .file_tree = .list };
                     const change = self.renderer.log.focused_change;
-                    if (self.renderer.file_tree.cache.get(change, .peek) == null) {
-                        try self.jj_request(.{ .file_tree = change });
-                    }
+                    self.state = .{ .file_tree = .list };
+                    self.file_tree_from = null;
+                    try self.jj_request(.{ .file_tree = .{ .to = change } });
                     try self._send_event(.rerender);
                 },
                 .switch_state_to_file_diff => {
-                    self.state = .{ .file_tree = .diff };
                     const change = self.renderer.log.focused_change;
-                    if (self.renderer.file_tree.cache.get(change, .peek) == null) {
-                        try self.jj_request(.{ .file_tree = change });
-                    }
+                    self.state = .{ .file_tree = .diff };
+                    self.file_tree_from = null;
+                    try self.jj_request(.{ .file_tree = .{ .to = change } });
                     try self._send_event(.rerender);
                 },
                 .toggle_help => {
@@ -2937,6 +3007,17 @@ pub const App = struct {
                     }
 
                     try self.jj_request(.{ .command = .{ .cmd = cmd, .refresh_log = true } });
+                },
+                .start_range_diff => {
+                    self.file_tree_from = self.renderer.log.focused_change;
+                    self.state = .log_range_diff;
+                },
+                .apply_range_diff => {
+                    self.state = .{ .file_tree = .range_diff };
+                    try self.jj_request(.{ .file_tree = .{
+                        .to = self.renderer.log.focused_change,
+                        .from = self.file_tree_from,
+                    } });
                 },
                 .apply_jj_abandon => |v| {
                     defer {
@@ -3247,7 +3328,7 @@ pub const App = struct {
                 .open_temp_file => {
                     if (self.state != .file_tree) return;
                     const change = self.renderer.log.focused_change;
-                    const list = self.renderer.file_tree.cache.get(change, .touch) orelse return;
+                    const list = self.renderer.file_tree.cache.get(.{ .to = change, .from = self.file_tree_from }, .touch) orelse return;
                     const node = list.focused_node orelse return;
                     if (node.typ != .file) return;
 
@@ -3328,7 +3409,7 @@ pub const App = struct {
                 .open_source_file => {
                     if (self.state != .file_tree) return;
                     const change = self.renderer.log.focused_change;
-                    const list = self.renderer.file_tree.cache.get(change, .touch) orelse return;
+                    const list = self.renderer.file_tree.cache.get(.{ .to = change, .from = self.file_tree_from }, .touch) orelse return;
                     const node = list.focused_node orelse return;
                     if (node.typ != .file) return;
 
@@ -3339,13 +3420,13 @@ pub const App = struct {
                     });
                 },
                 .file_tree_collapse => |v| {
-                    const list = self.renderer.file_tree.cache.get(self.renderer.log.focused_change, .touch).?;
+                    const list = self.renderer.file_tree.cache.get(.{ .to = self.renderer.log.focused_change, .from = self.file_tree_from }, .touch).?;
                     const node = list.focused_node orelse return;
                     switch (node.typ) {
                         .file => {
                             if (v.collapse) {
                                 const is_diff_view = switch (self.state) {
-                                    .file_tree => |m| m == .diff,
+                                    .file_tree => |m| m == .diff or m == .range_diff,
                                     else => false,
                                 };
                                 const parent = try list.focus_parent(!is_diff_view);
@@ -3363,7 +3444,7 @@ pub const App = struct {
                                 }
 
                                 const is_diff_view = switch (self.state) {
-                                    .file_tree => |m| m == .diff,
+                                    .file_tree => |m| m == .diff or m == .range_diff,
                                     else => false,
                                 };
                                 const parent = try list.focus_parent(!is_diff_view);
@@ -3469,7 +3550,7 @@ pub const App = struct {
                 .file_tree => |req| {
                     switch (res.res) {
                         .file_tree => |buf| {
-                            _ = try self.renderer.file_tree.update_list(req, buf.status, buf.buf, buf.diffs);
+                            _ = try self.renderer.file_tree.update_list(.{ .to = req.to, .from = req.from }, buf.status, buf.buf, buf.diffs);
                             try self._send_event(.file_show_scroll_update);
                         },
                         .err => |buf| try self._toast(.{ .err = error.JJFileTreeFailed }, buf.buf),
@@ -3480,7 +3561,11 @@ pub const App = struct {
                 .file_content => |req| {
                     switch (res.res) {
                         .ok => |buf| {
-                            const key_lookup = components_mod.FileShowSlate.Key{ .change_hash = req.change.hash, .path = req.path };
+                            const key_lookup = components_mod.FileShowSlate.Key{
+                                .to = req.to.hash,
+                                .from = if (req.from) |f| f.hash else null,
+                                .path = req.path,
+                            };
                             const file = self.renderer.file_show.filecache.get(key_lookup, .touch);
                             if (file) |f| {
                                 switch (req.mode) {
@@ -3590,7 +3675,7 @@ pub const App = struct {
                 hasher.update(&std.mem.toBytes(self.renderer.x_split));
 
                 switch (self.state) {
-                    .log, .evolog, .bookmark, .command, .rebase, .duplicate, .new, .squash, .abandon, .git => {
+                    .log, .evolog, .bookmark, .command, .rebase, .duplicate, .new, .squash, .abandon, .git, .log_range_diff => {
                         const log = switch (self.state) {
                             .evolog => &self.renderer.evolog,
                             else => &self.renderer.log,
@@ -3614,7 +3699,7 @@ pub const App = struct {
                         }
                     },
                     .file_tree => {
-                        const _tree = self.renderer.file_tree.cache.get(self.renderer.log.focused_change, .peek);
+                        const _tree = self.renderer.file_tree.cache.get(.{ .to = self.renderer.log.focused_change, .from = self.file_tree_from }, .peek);
                         if (_tree) |tree| {
                             hasher.update(&std.mem.toBytes(tree.y));
                             hasher.update(&std.mem.toBytes(tree.skip_y));
@@ -3623,7 +3708,8 @@ pub const App = struct {
                                 hasher.update(&std.mem.toBytes(node.collapsed));
                                 const file = self.renderer.file_show.filecache.get(.{
                                     .path = node.path,
-                                    .change_hash = self.renderer.log.focused_change.hash,
+                                    .to = self.renderer.log.focused_change.hash,
+                                    .from = if (self.file_tree_from) |f| f.hash else null,
                                 }, .peek);
                                 if (file) |f| hasher.update(&std.mem.toBytes(f.y));
                             }

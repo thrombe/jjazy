@@ -3134,8 +3134,9 @@ pub const App = struct {
                     }
 
                     const bookmark = self.renderer.bookmarks.selected_bookmark orelse return;
+                    const target = bookmark.parsed.target[0] orelse return;
 
-                    try self.renderer.log.focus_commit(bookmark.parsed.target[0]);
+                    try self.renderer.log.focus_commit(target);
                 },
                 .new_commit_from_bookmark => {
                     defer {
@@ -3146,16 +3147,17 @@ pub const App = struct {
                     const bookmark = self.renderer.bookmarks.selected_bookmark orelse return;
 
                     // TODO: why multiple targets?
-                    if (bookmark.parsed.target.len != 1) {
+                    if (bookmark.parsed.target.len != 1 and bookmark.parsed.target[0] != null) {
                         try self._toast(.{ .err = error.MultipleTargetsFound }, try self.alloc.dupe(u8, "Error executing command"));
                         return;
                     }
+                    const target = bookmark.parsed.target[0].?;
 
                     try self.execute_non_interactive_command(&[_][]const u8{
                         "jj",
                         "new",
                         "-r",
-                        bookmark.parsed.target[0][0..8],
+                        target,
                     });
                     try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },

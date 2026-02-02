@@ -766,7 +766,7 @@ const BookmarkSlate = struct {
                 try surface.draw_buf(bookmark.parsed.name);
                 try surface.apply_style(.reset);
 
-                if (show.targets) for (bookmark.parsed.target) |target| {
+                if (show.targets) for (bookmark.parsed.target) |t| if (t) |target| {
                     try surface.draw_buf(" ");
                     try surface.apply_style(.{ .foreground_color = .from_theme(.default_foreground) });
                     try surface.draw_buf(target[0..8]);

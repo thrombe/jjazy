@@ -45,11 +45,12 @@ pub const Schema = struct {
         tags: Tags,
     };
 
+    // TODO: make sure `[]?[]const u8` is intentional from jj's side or no.
     pub const Bookmark = struct {
         name: []const u8,
-        target: []const []const u8,
+        target: []const ?[]const u8,
         remote: ?[]const u8 = null,
-        tracking_target: ?[]const []const u8 = null,
+        tracking_target: ?[]const ?[]const u8 = null,
     };
 
     // - [Templating language - Jujutsu docs](https://jj-vcs.github.io/jj/latest/templates/#treeentry-type)

@@ -678,7 +678,12 @@ pub const TermStyledGraphemeIterator = struct {
                         else => return error.CannotHandleThisByte,
                     }
                 },
-                else => return error.CannotHandleThisByte,
+                else => |b| {
+                    // if a text file or whatever has malformed bytes, cat/bat will also print that content. we can't just error out in those cases.
+                    std.log.debug("got byte 0x{x} after ESC", .{b});
+                    // return error.CannotHandleThisByte;
+                    return null;
+                },
             },
             else => return null,
         }

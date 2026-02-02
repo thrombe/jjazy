@@ -1043,6 +1043,10 @@ pub const Fuse = struct {
 };
 
 pub const Command = struct {
+    alloc: std.mem.Allocator,
+    arena: std.heap.ArenaAllocator,
+    args: std.ArrayList([]const u8),
+
     pub const Result = struct {
         errored: bool,
         err: []u8,
@@ -1054,8 +1058,34 @@ pub const Command = struct {
         }
     };
 
-    pub fn exec_status(alloc: std.mem.Allocator, args: []const []const u8) !Result {
-        var child = std.process.Child.init(args, alloc);
+    pub fn init(alloc: std.mem.Allocator) Command {
+        return .{
+            .alloc = alloc,
+            .arena = std.heap.ArenaAllocator.init(alloc),
+            .args = std.ArrayList([]const u8).init(alloc),
+        };
+    }
+
+    pub fn deinit(self: *@This()) void {
+        self.args.deinit();
+        self.arena.deinit();
+    }
+
+    pub fn arg(self: *@This(), val: []const u8) !*@This() {
+        const dupe = try self.arena.allocator().dupe(u8, val);
+        try self.args.append(dupe);
+        return self;
+    }
+
+    pub fn add_args(self: *@This(), args: []const []const u8) !*@This() {
+        for (args) |a| {
+            _ = try self.arg(a);
+        }
+        return self;
+    }
+
+    pub fn exec_status(self: *@This(), alloc: std.mem.Allocator) !Result {
+        var child = std.process.Child.init(self.args.items, self.alloc);
         child.stdin_behavior = .Pipe;
         child.stdout_behavior = .Pipe;
         child.stderr_behavior = .Pipe;
@@ -1074,7 +1104,7 @@ pub const Command = struct {
 
         // similar to child.collectOutput
         const max_output_bytes = 1000 * 1000;
-        var poller = std.io.poll(alloc, enum { stdout, stderr }, .{
+        var poller = std.io.poll(self.alloc, enum { stdout, stderr }, .{
             .stdout = stdout,
             .stderr = stderr,
         });
@@ -1135,8 +1165,8 @@ pub const Command = struct {
         };
     }
 
-    pub fn exec_capture(alloc: std.mem.Allocator, temp: std.mem.Allocator, args: []const []const u8) ![]u8 {
-        var child = std.process.Child.init(args, temp);
+    pub fn exec_capture(self: *@This(), alloc: std.mem.Allocator, temp: std.mem.Allocator) ![]u8 {
+        var child = std.process.Child.init(self.args.items, temp);
         child.stdin_behavior = .Pipe;
         child.stdout_behavior = .Pipe;
         child.stderr_behavior = .Pipe;

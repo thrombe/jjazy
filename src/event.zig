@@ -495,7 +495,7 @@ pub const JujutsuServer = struct {
         },
         git_fetch: struct { branch: ?[]const u8, remote: ?[]const u8 },
         git_push: struct { branch: ?[]const u8, remote: ?[]const u8, allow_new: bool },
-        command: []const []const u8,
+        command: utils_mod.Command,
     };
 
     pub const FileContentMode = enum { plain, diff };
@@ -561,19 +561,18 @@ pub const JujutsuServer = struct {
         // - [Templating language - Jujutsu docs](https://jj-vcs.github.io/jj/latest/templates/)
         //   - [default templates](https://github.com/jj-vcs/jj/blob/main/cli/src/config/templates.toml)
 
-        while (self.requests.wait_recv()) |request| {
+        const temp = self.arena.allocator();
+        while (self.requests.wait_recv()) |const_request| {
             if (self.quit.check()) return;
-
-            const temp = self.arena.allocator();
+            var request = const_request;
             defer _ = self.arena.reset(.retain_capacity);
-
             defer if (request.id) |id| self.events.send(.{ .pop_toast = id }) catch {};
 
-            const req = request.req;
-
-            switch (req) {
+            switch (request.req) {
                 .log => |v| {
-                    const res = utils_mod.Command.exec_capture(self.alloc, temp, &[_][]const u8{
+                    var cmd = utils_mod.Command.init(temp);
+                    defer cmd.deinit();
+                    _ = try cmd.add_args(&[_][]const u8{
                         "jj",
                         "--color",
                         "always",
@@ -582,14 +581,17 @@ pub const JujutsuServer = struct {
                         Change.Parsed.template,
                         "--limit",
                         try std.fmt.allocPrint(temp, "{d}", .{v.n}),
-                    }) catch |e| {
+                    });
+                    const res = cmd.exec_capture(self.alloc, temp) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
                     };
-                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(res) } } });
+                    try self.events.send(.{ .jj = .{ .req = request.req, .res = .{ .ok = .from(res) } } });
                 },
                 .oplog => {
-                    const res = utils_mod.Command.exec_capture(self.alloc, temp, &[_][]const u8{
+                    var cmd = utils_mod.Command.init(temp);
+                    defer cmd.deinit();
+                    _ = try cmd.add_args(&[_][]const u8{
                         "jj",
                         "--color",
                         "always",
@@ -597,14 +599,17 @@ pub const JujutsuServer = struct {
                         "log",
                         "--template",
                         Operation.Parsed.template,
-                    }) catch |e| {
+                    });
+                    const res = cmd.exec_capture(self.alloc, temp) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
                     };
-                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(res) } } });
+                    try self.events.send(.{ .jj = .{ .req = request.req, .res = .{ .ok = .from(res) } } });
                 },
                 .evolog => |change| {
-                    const res = utils_mod.Command.exec_capture(self.alloc, temp, &[_][]const u8{
+                    var cmd = utils_mod.Command.init(temp);
+                    defer cmd.deinit();
+                    _ = try cmd.add_args(&[_][]const u8{
                         "jj",
                         "--color",
                         "always",
@@ -614,16 +619,19 @@ pub const JujutsuServer = struct {
                         "-r",
                         change.id[0..],
                         "--stat",
-                    }) catch |e| {
+                    });
+                    const res = cmd.exec_capture(self.alloc, temp) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
                     };
-                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(res) } } });
+                    try self.events.send(.{ .jj = .{ .req = request.req, .res = .{ .ok = .from(res) } } });
                 },
                 .diff => |v| {
                     // TODO: these diffs can get pretty large, maybe add some kinda paging support to this?
                     //  - something like: caller passes some line range info (start, end)
-                    const stat = utils_mod.Command.exec_capture(self.alloc, temp, &[_][]const u8{
+                    var stat_cmd = utils_mod.Command.init(temp);
+                    defer stat_cmd.deinit();
+                    _ = try stat_cmd.add_args(&[_][]const u8{
                         "jj",
                         "--color",
                         "always",
@@ -631,14 +639,17 @@ pub const JujutsuServer = struct {
                         "--stat",
                         "-r",
                         v.change.hash[0..],
-                    }) catch |e| {
+                    });
+                    const stat = stat_cmd.exec_capture(self.alloc, temp) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
                     };
                     errdefer self.alloc.free(stat);
 
                     // jj diff -r lqo --tool delta --config merge-tools.delta.diff-args='["--diff-args=\"-U50\"", "$left", "$right"]'
-                    const diff = utils_mod.Command.exec_capture(self.alloc, temp, &[_][]const u8{
+                    var diff_cmd = utils_mod.Command.init(temp);
+                    defer diff_cmd.deinit();
+                    _ = try diff_cmd.add_args(&[_][]const u8{
                         "jj",
                         "--color",
                         "always",
@@ -651,14 +662,15 @@ pub const JujutsuServer = struct {
                         , .{v.context}),
                         "-r",
                         v.change.hash[0..],
-                    }) catch |e| {
+                    });
+                    const diff = diff_cmd.exec_capture(self.alloc, temp) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
                     };
                     errdefer self.alloc.free(diff);
 
                     try self.events.send(.{ .jj = .{
-                        .req = req,
+                        .req = request.req,
                         .res = .{
                             .with_status = .{
                                 .status = .from(stat),
@@ -668,7 +680,9 @@ pub const JujutsuServer = struct {
                     } });
                 },
                 .opshow => |op| {
-                    const stat = utils_mod.Command.exec_capture(self.alloc, temp, &[_][]const u8{
+                    var cmd = utils_mod.Command.init(temp);
+                    defer cmd.deinit();
+                    _ = try cmd.add_args(&[_][]const u8{
                         "jj",
                         "--color",
                         "always",
@@ -678,29 +692,34 @@ pub const JujutsuServer = struct {
                         "--tool",
                         "delta",
                         op.hash[0..],
-                    }) catch |e| {
+                    });
+                    const stat = cmd.exec_capture(self.alloc, temp) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
                     };
-
-                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(stat) } } });
+                    try self.events.send(.{ .jj = .{ .req = request.req, .res = .{ .ok = .from(stat) } } });
                 },
                 .bookmark => {
-                    const res = utils_mod.Command.exec_capture(self.alloc, temp, &[_][]const u8{
+                    var cmd = utils_mod.Command.init(temp);
+                    defer cmd.deinit();
+                    _ = try cmd.add_args(&[_][]const u8{
                         "jj",
                         "bookmark",
                         "list",
                         "-a",
                         "--template",
                         Bookmark.Parsed.template,
-                    }) catch |e| {
+                    });
+                    const res = cmd.exec_capture(self.alloc, temp) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
                     };
-                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(res) } } });
+                    try self.events.send(.{ .jj = .{ .req = request.req, .res = .{ .ok = .from(res) } } });
                 },
                 .file_tree => |change| {
-                    const stat = utils_mod.Command.exec_capture(self.alloc, temp, &[_][]const u8{
+                    var stat_cmd = utils_mod.Command.init(temp);
+                    defer stat_cmd.deinit();
+                    _ = try stat_cmd.add_args(&[_][]const u8{
                         "jj",
                         "--color",
                         "always",
@@ -708,13 +727,16 @@ pub const JujutsuServer = struct {
                         "--stat",
                         "-r",
                         change.hash[0..],
-                    }) catch |e| {
+                    });
+                    const stat = stat_cmd.exec_capture(self.alloc, temp) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
                     };
                     errdefer self.alloc.free(stat);
 
-                    const res = utils_mod.Command.exec_capture(self.alloc, temp, &[_][]const u8{
+                    var res_cmd = utils_mod.Command.init(temp);
+                    defer res_cmd.deinit();
+                    _ = try res_cmd.add_args(&[_][]const u8{
                         "jj",
                         "file",
                         "list",
@@ -722,106 +744,99 @@ pub const JujutsuServer = struct {
                         change.id[0..],
                         "--template",
                         FileTreeEntry.Parsed.template,
-                    }) catch |e| {
+                    });
+                    const res = res_cmd.exec_capture(self.alloc, temp) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
                     };
                     errdefer self.alloc.free(res);
 
-                    const diffs = utils_mod.Command.exec_capture(self.alloc, temp, &[_][]const u8{
+                    var diffs_cmd = utils_mod.Command.init(temp);
+                    defer diffs_cmd.deinit();
+                    _ = try diffs_cmd.add_args(&[_][]const u8{
                         "jj",
                         "diff",
                         "-r",
                         change.id[0..],
                         "--template",
                         jj_mod.FileTreeDiffEntry.Parsed.template,
-                    }) catch |e| {
+                    });
+                    const diffs = diffs_cmd.exec_capture(self.alloc, temp) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
                     };
                     errdefer self.alloc.free(diffs);
 
-                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .file_tree = .{
+                    try self.events.send(.{ .jj = .{ .req = request.req, .res = .{ .file_tree = .{
                         .status = .from(stat),
                         .buf = .from(res),
                         .diffs = .from(diffs),
                     } } } });
                 },
                 .file_content => |payload| {
-                    const cmd = switch (payload.mode) {
+                    const cmd_str = switch (payload.mode) {
                         // NOTE: file path needs to be relative to current path instead of from repo root, but we fix this by just changing the cwd to the workspace root
-                        .plain => try std.fmt.allocPrint(self.alloc, "jj file show -r {s} {s} | bat --color=always --style numbers,plain --file-name {s}", .{
+                        .plain => try std.fmt.allocPrint(temp, "jj file show -r {s} {s} | bat --color=always --style numbers,plain --file-name {s}", .{
                             payload.change.id[0..],
                             payload.path,
                             payload.path,
                         }),
                         // jj diff -r lqo --tool delta --config merge-tools.delta.diff-args='["--diff-args=\"-U50\"", "$left", "$right"]'
-                        .diff => try std.fmt.allocPrint(self.alloc, "jj diff -r {s} {s} --tool delta --config merge-tools.delta.diff-args='[\"--diff-args=-U99999\", \"$left\", \"$right\"]'", .{
+                        .diff => try std.fmt.allocPrint(temp, "jj diff -r {s} {s} --tool delta --config merge-tools.delta.diff-args='[\"--diff-args=-U99999\", \"$left\", \"$right\"]'", .{
                             payload.change.id[0..],
                             payload.path,
                         }),
                     };
-                    defer self.alloc.free(cmd);
-                    const res = utils_mod.Command.exec_capture(self.alloc, temp, &[_][]const u8{
-                        "sh",
-                        "-c",
-                        cmd,
-                    }) catch |e| {
+                    var cmd = utils_mod.Command.init(temp);
+                    defer cmd.deinit();
+                    _ = try cmd.add_args(&[_][]const u8{ "sh", "-c", cmd_str });
+                    const res = cmd.exec_capture(self.alloc, temp) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
                     };
-                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(res) } } });
+                    try self.events.send(.{ .jj = .{ .req = request.req, .res = .{ .ok = .from(res) } } });
                 },
                 .git_fetch => |v| {
-                    var args = std.ArrayList([]const u8).init(temp);
-                    try args.append("jj");
-                    try args.append("git");
-                    try args.append("fetch");
-
+                    var cmd = utils_mod.Command.init(temp);
+                    defer cmd.deinit();
+                    _ = try cmd.add_args(&[_][]const u8{ "jj", "git", "fetch" });
                     if (v.branch) |branch| {
-                        try args.append("--branch");
-                        try args.append(branch);
-                        if (v.remote) |remote| {
-                            try args.append("--remote");
-                            try args.append(remote);
-                        }
+                        _ = try cmd.add_args(&[_][]const u8{ "--bookmark", branch });
                     }
-
-                    const res = utils_mod.Command.exec_capture(self.alloc, temp, args.items) catch |e| {
+                    if (v.remote) |remote| {
+                        _ = try cmd.add_args(&[_][]const u8{ "--remote", remote });
+                    }
+                    const res = cmd.exec_capture(self.alloc, temp) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
                     };
-                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(res) } } });
+                    try self.events.send(.{ .jj = .{ .req = request.req, .res = .{ .ok = .from(res) } } });
                 },
                 .git_push => |v| {
-                    var args = std.ArrayList([]const u8).init(temp);
-                    try args.append("jj");
-                    try args.append("git");
-                    try args.append("push");
-
+                    var cmd = utils_mod.Command.init(temp);
+                    defer cmd.deinit();
+                    _ = try cmd.add_args(&[_][]const u8{ "jj", "git", "push" });
                     if (v.branch) |branch| {
-                        try args.append("--bookmark");
-                        try args.append(branch);
+                        _ = try cmd.add_args(&[_][]const u8{ "--bookmark", branch });
                     }
                     if (v.allow_new) {
-                        try args.append("--allow-new");
+                        _ = try cmd.arg("--allow-new");
                     } else if (v.remote) |remote| {
-                        try args.append("--remote");
-                        try args.append(remote);
+                        _ = try cmd.add_args(&[_][]const u8{ "--remote", remote });
                     }
-
-                    const res = utils_mod.Command.exec_capture(self.alloc, temp, args.items) catch |e| {
+                    const res = cmd.exec_capture(self.alloc, temp) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
                     };
-                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .ok = .from(res) } } });
+                    try self.events.send(.{ .jj = .{ .req = request.req, .res = .{ .ok = .from(res) } } });
                 },
-                .command => |args| {
-                    const res = utils_mod.Command.exec_status(self.alloc, args) catch |e| {
+                .command => |*cmd| {
+                    defer cmd.deinit();
+                    const res = cmd.exec_status(self.alloc) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
                     };
-                    try self.events.send(.{ .jj = .{ .req = req, .res = .{ .command_result = res } } });
+                    try self.events.send(.{ .jj = .{ .req = request.req, .res = .{ .command_result = res } } });
                 },
             }
         }
@@ -1076,11 +1091,12 @@ pub const App = struct {
 
         // set working directory to workspace root
         {
-            const root = utils_mod.Command.exec_capture(arena.allocator(), arena.allocator(), &[_][]const u8{ "jj", "workspace", "root" }) catch |e| {
+            var cmd = utils_mod.Command.init(arena.allocator());
+            _ = try cmd.add_args(&[_][]const u8{ "jj", "workspace", "root" });
+            const root = cmd.exec_capture(arena.allocator(), arena.allocator()) catch |e| {
                 utils_mod.dump_error(e);
                 return e;
             };
-            defer jj.alloc.free(root);
             const trimmed = std.mem.trim(u8, root, &std.ascii.whitespace);
             try std.process.changeCurDir(trimmed);
         }
@@ -2797,11 +2813,10 @@ pub const App = struct {
                     try self.renderer.log.selected_changes.put(self.renderer.log.focused_change, {});
                 },
                 .jj_edit => {
-                    try self.execute_non_interactive_command(&[_][]const u8{
-                        "jj",
-                        "edit",
-                        self.renderer.log.focused_change.id[0..],
-                    });
+                    var cmd = utils_mod.Command.init(self.alloc);
+                    errdefer cmd.deinit();
+                    _ = try cmd.add_args(&[_][]const u8{ "jj", "edit", self.renderer.log.focused_change.id[0..] });
+                    try self.jj_request(.{ .command = cmd });
                 },
                 .switch_state_to_git => {
                     self.state = .{ .git = .none };
@@ -2889,34 +2904,34 @@ pub const App = struct {
                         self.state = .log;
                     }
 
-                    var args = std.ArrayList([]const u8).init(temp);
-                    try args.append("jj");
-                    try args.append("rebase");
+                    var cmd = utils_mod.Command.init(self.alloc);
+                    errdefer cmd.deinit();
+                    _ = try cmd.add_args(&[_][]const u8{ "jj", "rebase" });
 
                     var it = self.renderer.log.selected_changes.iterator();
                     while (it.next()) |e| {
-                        try args.append("-r");
-                        try args.append(e.key_ptr.id[0..]);
+                        _ = try cmd.add_args(&[_][]const u8{ "-r", e.key_ptr.id[0..] });
 
                         if (std.meta.eql(e.key_ptr.*, self.renderer.log.focused_change)) {
                             try self._toast(.{ .err = error.RebaseOnSelected }, try self.alloc.dupe(u8, "Cannot rebase on selected change"));
+                            cmd.deinit();
                             return;
                         }
                     }
 
                     switch (self.state.rebase) {
-                        .onto => try args.append("-d"),
-                        .after => try args.append("-A"),
-                        .before => try args.append("-B"),
+                        .onto => _ = try cmd.arg("-d"),
+                        .after => _ = try cmd.arg("-A"),
+                        .before => _ = try cmd.arg("-B"),
                     }
 
-                    try args.append(self.renderer.log.focused_change.id[0..]);
+                    _ = try cmd.arg(self.renderer.log.focused_change.id[0..]);
 
                     if (v.ignore_immutable) {
-                        try args.append("--ignore-immutable");
+                        _ = try cmd.arg("--ignore-immutable");
                     }
 
-                    try self.execute_non_interactive_command(args.items);
+                    try self.jj_request(.{ .command = cmd });
                 },
                 .apply_jj_abandon => |v| {
                     defer {
@@ -2924,21 +2939,20 @@ pub const App = struct {
                         self.state = .log;
                     }
 
-                    var args = std.ArrayList([]const u8).init(temp);
-                    try args.append("jj");
-                    try args.append("abandon");
-                    try args.append("--retain-bookmarks");
+                    var cmd = utils_mod.Command.init(self.alloc);
+                    errdefer cmd.deinit();
+                    _ = try cmd.add_args(&[_][]const u8{ "jj", "abandon", "--retain-bookmarks" });
 
                     var it = self.renderer.log.selected_changes.iterator();
                     while (it.next()) |e| {
-                        try args.append(e.key_ptr.id[0..]);
+                        _ = try cmd.arg(e.key_ptr.id[0..]);
                     }
 
                     if (v.ignore_immutable) {
-                        try args.append("--ignore-immutable");
+                        _ = try cmd.arg("--ignore-immutable");
                     }
 
-                    try self.execute_non_interactive_command(args.items);
+                    try self.jj_request(.{ .command = cmd });
                 },
                 .apply_jj_squash => |v| {
                     defer {
@@ -2946,29 +2960,28 @@ pub const App = struct {
                         self.state = .log;
                     }
 
-                    var args = std.ArrayList([]const u8).init(temp);
-                    try args.append("jj");
-                    try args.append("squash");
+                    var cmd = utils_mod.Command.init(self.alloc);
+                    errdefer cmd.deinit();
+                    _ = try cmd.add_args(&[_][]const u8{ "jj", "squash" });
 
                     var it = self.renderer.log.selected_changes.iterator();
                     while (it.next()) |e| {
-                        try args.append("--from");
-                        try args.append(e.key_ptr.id[0..]);
-
                         if (std.meta.eql(e.key_ptr.*, self.renderer.log.focused_change)) {
                             try self._toast(.{ .err = error.SquashOnSelected }, try self.alloc.dupe(u8, "Cannot squash on selected change"));
+                            cmd.deinit();
                             return;
                         }
+                        _ = try cmd.add_args(&[_][]const u8{ "--from", e.key_ptr.id[0..] });
                     }
 
-                    try args.append("--into");
-                    try args.append(self.renderer.log.focused_change.id[0..]);
+                    _ = try cmd.arg("--into");
+                    _ = try cmd.arg(self.renderer.log.focused_change.id[0..]);
 
                     if (v.ignore_immutable) {
-                        try args.append("--ignore-immutable");
+                        _ = try cmd.arg("--ignore-immutable");
                     }
 
-                    try self.execute_non_interactive_command(args.items);
+                    try self.jj_request(.{ .command = cmd });
                 },
                 .apply_jj_new => {
                     defer {
@@ -2976,16 +2989,16 @@ pub const App = struct {
                         self.state = .log;
                     }
 
-                    var args = std.ArrayList([]const u8).init(temp);
-                    try args.append("jj");
-                    try args.append("new");
+                    var cmd = utils_mod.Command.init(self.alloc);
+                    errdefer cmd.deinit();
+                    _ = try cmd.add_args(&[_][]const u8{ "jj", "new" });
 
                     var it = self.renderer.log.selected_changes.iterator();
                     while (it.next()) |e| {
-                        try args.append(e.key_ptr.id[0..]);
+                        _ = try cmd.arg(e.key_ptr.id[0..]);
                     }
 
-                    try self.execute_non_interactive_command(args.items);
+                    try self.jj_request(.{ .command = cmd });
 
                     self.renderer.log.y = 0;
                     self.renderer.log.limit = self.renderer.log.calc_limit();
@@ -3014,16 +3027,23 @@ pub const App = struct {
                     if (e.interactive) {
                         try self.execute_interactive_command(args.items);
                     } else {
-                        try self.execute_non_interactive_command(args.items);
+                        var cmd = utils_mod.Command.init(self.alloc);
+                        errdefer cmd.deinit();
+                        _ = try cmd.add_args(args.items);
+                        try self.jj_request(.{ .command = cmd });
                     }
                 },
                 .apply_jj_op_restore => {
-                    try self.execute_non_interactive_command(&[_][]const u8{
+                    var cmd = utils_mod.Command.init(self.alloc);
+                    errdefer cmd.deinit();
+                    _ = try cmd.add_args(&[_][]const u8{
                         "jj",
                         "op",
                         "restore",
                         self.renderer.oplog.focused_op.hash[0..],
                     });
+                    try self.jj_request(.{ .command = cmd });
+
                     self.renderer.oplog.y = 0;
                     try self.jj_request(.oplog);
                     self.renderer.log.limit = self.renderer.log.calc_limit();
@@ -3034,29 +3054,29 @@ pub const App = struct {
                         self.state = .log;
                     }
 
-                    var args = std.ArrayList([]const u8).init(temp);
-                    try args.append("jj");
-                    try args.append("duplicate");
+                    var cmd = utils_mod.Command.init(self.alloc);
+                    errdefer cmd.deinit();
+                    _ = try cmd.add_args(&[_][]const u8{ "jj", "duplicate" });
 
                     var it = self.renderer.log.selected_changes.iterator();
                     while (it.next()) |e| {
-                        try args.append(e.key_ptr.id[0..]);
-
                         if (std.meta.eql(e.key_ptr.*, self.renderer.log.focused_change)) {
                             try self._toast(.{ .err = error.DuplicateOnSelected }, try self.alloc.dupe(u8, "Cannot duplicate on selected change"));
+                            cmd.deinit();
                             return;
                         }
+                        _ = try cmd.arg(e.key_ptr.id[0..]);
                     }
 
                     switch (self.state.duplicate) {
-                        .onto => try args.append("-d"),
-                        .after => try args.append("-A"),
-                        .before => try args.append("-B"),
+                        .onto => _ = try cmd.arg("-d"),
+                        .after => _ = try cmd.arg("-A"),
+                        .before => _ = try cmd.arg("-B"),
                     }
 
-                    try args.append(self.renderer.log.focused_change.id[0..]);
+                    _ = try cmd.arg(self.renderer.log.focused_change.id[0..]);
 
-                    try self.execute_non_interactive_command(args.items);
+                    try self.jj_request(.{ .command = cmd });
                 },
                 .switch_state_to_bookmark_create => {
                     self.state = .{ .bookmark = .create };
@@ -3087,54 +3107,51 @@ pub const App = struct {
                     }
                     const target = bookmark.parsed.target[0].?;
 
-                    try self.execute_non_interactive_command(&[_][]const u8{
-                        "jj",
-                        "new",
-                        "-r",
-                        target,
-                    });
+                    var cmd = utils_mod.Command.init(self.alloc);
+                    errdefer cmd.deinit();
+                    _ = try cmd.add_args(&[_][]const u8{ "jj", "new", "-r", target });
+                    try self.jj_request(.{ .command = cmd });
                 },
                 .move_bookmark_to_selected => |v| {
                     defer self.state = .log;
                     const bookmark = self.renderer.bookmarks.selected_bookmark orelse return;
 
-                    var args = std.ArrayList([]const u8).init(temp);
-                    try args.append("jj");
-                    try args.append("bookmark");
-                    try args.append("move");
-                    try args.append(bookmark.parsed.name);
-                    try args.append("--to");
-                    try args.append(self.renderer.log.focused_change.id[0..]);
+                    var cmd = utils_mod.Command.init(self.alloc);
+                    errdefer cmd.deinit();
+                    _ = try cmd.add_args(&[_][]const u8{
+                        "jj",
+                        "bookmark",
+                        "move",
+                        bookmark.parsed.name,
+                        "--to",
+                        self.renderer.log.focused_change.id[0..],
+                    });
                     if (v.allow_backwards) {
-                        try args.append("--allow-backwards");
+                        _ = try cmd.arg("--allow-backwards");
                     }
 
-                    try self.execute_non_interactive_command(args.items);
+                    try self.jj_request(.{ .command = cmd });
                 },
                 .apply_jj_bookmark_delete => {
                     defer self.state = .log;
                     const bookmark = self.renderer.bookmarks.selected_bookmark orelse return;
-                    try self.execute_non_interactive_command(&[_][]const u8{
-                        "jj",
-                        "bookmark",
-                        "delete",
-                        bookmark.parsed.name,
-                    });
+                    var cmd = utils_mod.Command.init(self.alloc);
+                    errdefer cmd.deinit();
+                    _ = try cmd.add_args(&[_][]const u8{ "jj", "bookmark", "delete", bookmark.parsed.name });
+                    try self.jj_request(.{ .command = cmd });
                 },
                 .apply_jj_bookmark_forget => |v| {
                     defer self.state = .log;
                     const bookmark = self.renderer.bookmarks.selected_bookmark orelse return;
 
-                    var args = std.ArrayList([]const u8).init(temp);
-                    try args.append("jj");
-                    try args.append("bookmark");
-                    try args.append("forget");
-                    try args.append(bookmark.parsed.name);
+                    var cmd = utils_mod.Command.init(self.alloc);
+                    errdefer cmd.deinit();
+                    _ = try cmd.add_args(&[_][]const u8{ "jj", "bookmark", "forget", bookmark.parsed.name });
                     if (v.include_remotes) {
-                        try args.append("--include-remotes");
+                        _ = try cmd.arg("--include-remotes");
                     }
 
-                    try self.execute_non_interactive_command(args.items);
+                    try self.jj_request(.{ .command = cmd });
                 },
                 .apply_jj_bookmark_create_from_input_buffer_on_selected_change => {
                     defer {
@@ -3142,7 +3159,9 @@ pub const App = struct {
                         self.state = .log;
                     }
 
-                    try self.execute_non_interactive_command(&[_][]const u8{
+                    var cmd = utils_mod.Command.init(self.alloc);
+                    errdefer cmd.deinit();
+                    _ = try cmd.add_args(&[_][]const u8{
                         "jj",
                         "bookmark",
                         "create",
@@ -3150,6 +3169,7 @@ pub const App = struct {
                         self.renderer.log.focused_change.id[0..],
                         self.renderer.text_input.text.items,
                     });
+                    try self.jj_request(.{ .command = cmd });
                 },
                 .apply_jj_git_fetch_new => {
                     defer {
@@ -3220,15 +3240,17 @@ pub const App = struct {
                     const node = list.focused_node orelse return;
                     if (node.typ != .file) return;
 
-                    // TODO: .jjcall() is actully generic. maybe don't put it in jj server so that anything else can use it
-                    const content = utils_mod.Command.exec_capture(self.alloc, temp, &[_][]const u8{
+                    var cmd = utils_mod.Command.init(temp);
+                    defer cmd.deinit();
+                    _ = try cmd.add_args(&[_][]const u8{
                         "jj",
                         "file",
                         "show",
                         "-r",
                         change.hash[0..],
                         node.path,
-                    }) catch |e| {
+                    });
+                    const content = cmd.exec_capture(temp, temp) catch |e| {
                         try self._toast(.{ .err = e }, try self.alloc.dupe(u8, "Could not read contents of file"));
                         return;
                     };
@@ -3601,10 +3623,6 @@ pub const App = struct {
                 else => return e,
             };
         }
-    }
-
-    fn execute_non_interactive_command(self: *@This(), args: []const []const u8) !void {
-        try self.jj_request(.{ .command = args });
     }
 
     fn execute_interactive_command(self: *@This(), args: []const []const u8) !void {

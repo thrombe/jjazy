@@ -1424,10 +1424,7 @@ pub const FileTreeSlate = struct {
             val.deinit(self.alloc);
         };
 
-        const is_diff_view = switch (app.state) {
-            .file_tree => |m| m == .diff or m == .range_diff,
-            else => false,
-        };
+        const is_diff_view = app.state.is_file_tree_diff();
 
         const change = renderer.log.focused_change;
         const tree = self.cache.get(.{ .to = change, .from = app.file_tree_from }, .touch) orelse return;
@@ -1614,10 +1611,7 @@ pub const FileShowSlate = struct {
         };
 
         if (self.filecache.get(key, .touch)) |cfile| {
-            const is_diff_view = switch (app.state) {
-                .file_tree => |m| m == .diff or m == .range_diff,
-                else => false,
-            };
+            const is_diff_view = app.state.is_file_tree_diff();
 
             const content = if (is_diff_view and cfile.diff != null) cfile.diff.? else cfile.content orelse {
                 try surface.draw_buf(" loading... ");
@@ -1869,22 +1863,8 @@ pub const Renderer = struct {
                 .file_tree => {
                     try self.file_tree.render(&status, self, app);
                     if (self.file_tree.cache.get(.{ .to = self.log.focused_change, .from = app.file_tree_from }, .touch)) |tree| {
-                        const m = app.state.file_tree;
-                        const is_diff_view = m == .diff or m == .range_diff;
-                        const focused_file = tree.get_focused_file();
-                        var from: ?jj_mod.Change = null;
-                        if (is_diff_view) {
-                            if (tree.focused_node) |node| {
-                                if (node.status != null) {
-                                    from = app.file_tree_from;
-                                }
-                            }
-                        }
-                        var context: u32 = 0;
-                        if (tree.focused_node) |node| {
-                            context = if (node.status == null or !is_diff_view) 0 else (if (app.file_tree_full_context) 9999 else app.file_tree_diff_context);
-                        }
-                        try self.file_show.render(&diffs, app, self.log.focused_change, from, focused_file, context);
+                        const res = app.get_file_tree_show_context(app.file_tree_from, if (tree.focused_node) |node| node.status else null);
+                        try self.file_show.render(&diffs, app, self.log.focused_change, res.from, tree.get_focused_file(), res.context);
                     }
                 },
                 .evolog => {

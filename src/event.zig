@@ -342,6 +342,10 @@ pub const action_help = [_]struct {
         .action = .open_source_file,
         .help = "Open file from current commit",
     },
+    .{
+        .action = .toggle_file_tree_full_context,
+        .help = "Toggle full context in file tree diff",
+    },
 };
 
 pub const State = union(enum(u8)) {
@@ -412,7 +416,7 @@ pub const Event = union(enum) {
     rerender,
     scroll_update,
     file_show_scroll_update,
-    file_show_update: struct { to: jj_mod.Change, from: ?jj_mod.Change = null, path: []const u8 },
+    file_show_update: struct { to: jj_mod.Change, from: ?jj_mod.Change = null, path: []const u8, context: u32 },
     diff_update: struct { change: jj_mod.Change, context: u32 },
     opshow_update: jj_mod.Operation,
     op_update,
@@ -480,6 +484,7 @@ pub const Action = union(enum) {
     open_source_file,
     start_range_diff,
     apply_range_diff,
+    toggle_file_tree_full_context,
 };
 
 pub const JujutsuServer = struct {
@@ -505,6 +510,7 @@ pub const JujutsuServer = struct {
             from: ?Change = null,
             path: []const u8,
             mode: FileContentMode,
+            context: u32,
         },
         git_fetch: struct { branch: ?[]const u8, remote: ?[]const u8 },
         git_push: struct { branch: ?[]const u8, remote: ?[]const u8, allow_new: bool },
@@ -830,15 +836,17 @@ pub const JujutsuServer = struct {
                         }),
                         // jj diff -r lqo --tool delta --config merge-tools.delta.diff-args='["--diff-args=\"-U50\"", "$left", "$right"]'
                         .diff => if (payload.from) |from|
-                            try std.fmt.allocPrint(temp, "jj diff --from {s} --to {s} {s} --tool delta --config merge-tools.delta.diff-args='[\"--diff-args=-U99999\", \"$left\", \"$right\"]'", .{
+                            try std.fmt.allocPrint(temp, "jj diff --from {s} --to {s} {s} --tool delta --config merge-tools.delta.diff-args='[\"--diff-args=-U{d}\", \"$left\", \"$right\"]'", .{
                                 from.hash[0..],
                                 payload.to.hash[0..],
                                 payload.path,
+                                payload.context,
                             })
                         else
-                            try std.fmt.allocPrint(temp, "jj diff -r {s} {s} --tool delta --config merge-tools.delta.diff-args='[\"--diff-args=-U99999\", \"$left\", \"$right\"]'", .{
+                            try std.fmt.allocPrint(temp, "jj diff -r {s} {s} --tool delta --config merge-tools.delta.diff-args='[\"--diff-args=-U{d}\", \"$left\", \"$right\"]'", .{
                                 payload.to.id[0..],
                                 payload.path,
+                                payload.context,
                             }),
                     };
                     var cmd = utils_mod.Command.init(temp);
@@ -1110,6 +1118,8 @@ pub const App = struct {
 
     state: State = .log,
     file_tree_from: ?Change = null,
+    file_tree_diff_context: u32 = 30,
+    file_tree_full_context: bool = false,
 
     const CommandResult = struct {
         errored: bool,
@@ -1646,6 +1656,8 @@ pub const App = struct {
                 .squash,
                 .abandon,
                 .log_range_diff,
+                .{ .file_tree = .diff },
+                .{ .file_tree = .range_diff },
             });
 
             try map.add_many(
@@ -1936,6 +1948,18 @@ pub const App = struct {
             .{ .key = .{ .key = 'd' } },
             null,
             .switch_state_to_file_tree,
+        );
+        try map.add_one_for_state(
+            .{ .file_tree = .diff },
+            .{ .key = .{ .key = 'f' } },
+            null,
+            .toggle_file_tree_full_context,
+        );
+        try map.add_one_for_state(
+            .{ .file_tree = .range_diff },
+            .{ .key = .{ .key = 'f' } },
+            null,
+            .toggle_file_tree_full_context,
         );
         try map.add_one_for_state(
             .log,
@@ -2421,25 +2445,31 @@ pub const App = struct {
                         .to = change,
                         .from = self.file_tree_from,
                         .path = focused,
+                        .context = if (self.file_tree_full_context) 9999 else self.file_tree_diff_context,
                     } });
                     try self._send_event(.rerender);
                 }
             },
             .file_show_update => |v| {
                 if (!std.mem.eql(u8, v.to.hash[0..], self.renderer.log.focused_change.hash[0..])) return;
+                if (v.context != (if (self.file_tree_full_context) 9999 else self.file_tree_diff_context)) return;
                 const tree = self.renderer.file_tree.cache.get(.{ .to = v.to, .from = v.from }, .touch) orelse return;
 
                 if (tree.get_focused_file()) |focused_file| {
                     if (!std.mem.eql(u8, focused_file, v.path)) return;
-
-                    const key_lookup = components_mod.FileShowSlate.Key{
-                        .to = v.to.hash,
-                        .from = if (v.from != null and tree.focused_node.?.status != null) v.from.?.hash else null,
-                        .path = v.path,
-                    };
+                    const node = tree.focused_node.?;
                     const is_diff_mode = switch (self.state) {
                         .file_tree => |m| m == .diff or m == .range_diff,
                         else => false,
+                    };
+                    const from = if (v.from != null and node.status != null and is_diff_mode) v.from.? else null;
+                    const context = if (node.status == null or !is_diff_mode) 0 else (if (self.file_tree_full_context) 9999 else self.file_tree_diff_context);
+
+                    const key_lookup = components_mod.FileShowSlate.Key{
+                        .to = v.to.hash,
+                        .from = if (from) |f| f.hash else null,
+                        .path = v.path,
+                        .context = context,
                     };
 
                     var cfile: *components_mod.FileShowSlate.CachedFile = undefined;
@@ -2451,8 +2481,9 @@ pub const App = struct {
                         const path = try self.alloc.dupe(u8, v.path);
                         const entry = try self.renderer.file_show.filecache.getOrPut(.{
                             .to = v.to.hash,
-                            .from = if (v.from != null and tree.focused_node.?.status != null) v.from.?.hash else null,
+                            .from = if (from) |f| f.hash else null,
                             .path = path,
+                            .context = context,
                         });
                         entry.val.* = .{};
                         cfile = entry.val;
@@ -2463,9 +2494,10 @@ pub const App = struct {
                         if (cfile.diff == null) {
                             try app.jj_request(.{ .file_content = .{
                                 .to = v.to,
-                                .from = v.from,
+                                .from = from,
                                 .path = path_to_use,
                                 .mode = .diff,
+                                .context = context,
                             } });
                         }
                     } else {
@@ -2476,6 +2508,7 @@ pub const App = struct {
                                     .from = null, // Plain show is always from one commit
                                     .path = path_to_use,
                                     .mode = .plain,
+                                    .context = 0,
                                 },
                             });
                         }
@@ -2713,6 +2746,10 @@ pub const App = struct {
                     self.renderer.log.limit = self.renderer.log.calc_limit(.{});
                     try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },
+                .toggle_file_tree_full_context => {
+                    self.file_tree_full_context = !self.file_tree_full_context;
+                    try self._send_event(.file_show_scroll_update);
+                },
                 .scroll => |target| switch (target.target) {
                     .log => {
                         if (target.pan) {
@@ -2793,11 +2830,21 @@ pub const App = struct {
                                 }
                             },
                             .file_tree => |_| {
-                                if (self.renderer.file_tree.cache.get(.{ .to = self.renderer.log.focused_change, .from = self.file_tree_from }, .touch).?.get_focused_file()) |focused_file| {
+                                const tree = self.renderer.file_tree.cache.get(.{ .to = self.renderer.log.focused_change, .from = self.file_tree_from }, .touch).?;
+                                if (tree.get_focused_file()) |focused_file| {
+                                    const node = tree.focused_node.?;
+                                    const is_diff_mode = switch (self.state) {
+                                        .file_tree => |m| m == .diff or m == .range_diff,
+                                        else => false,
+                                    };
+                                    const from = if (self.file_tree_from != null and node.status != null and is_diff_mode) self.file_tree_from.?.hash else null;
+                                    const context = if (node.status == null or !is_diff_mode) 0 else (if (self.file_tree_full_context) 9999 else self.file_tree_diff_context);
+
                                     const key_lookup = components_mod.FileShowSlate.Key{
                                         .to = self.renderer.log.focused_change.hash,
-                                        .from = if (self.file_tree_from) |f| f.hash else null,
+                                        .from = from,
                                         .path = focused_file,
+                                        .context = context,
                                     };
                                     if (self.renderer.file_show.filecache.get(key_lookup, .touch)) |cfile| {
                                         switch (target.dir) {
@@ -2842,26 +2889,29 @@ pub const App = struct {
                         else => &self.renderer.log,
                     };
 
-                    switch (v.off) {
-                        .reset => {
-                            self.renderer.diff.context = 3;
-                        },
-                        .increase => {
-                            self.renderer.diff.context += 10;
-                        },
-                        .decrease => {
-                            self.renderer.diff.context -|= 10;
-                        },
-                    }
+                    if (self.state == .file_tree) {
+                        switch (v.off) {
+                            .reset => self.file_tree_diff_context = 30,
+                            .increase => self.file_tree_diff_context += 10,
+                            .decrease => self.file_tree_diff_context -|= 10,
+                        }
 
-                    const diff = self.renderer.diff.get(log.focused_change.hash, .touch);
+                        // already debounced
+                        try self._send_event(.file_show_scroll_update);
+                    } else {
+                        switch (v.off) {
+                            .reset => self.renderer.diff.context = 3,
+                            .increase => self.renderer.diff.context += 10,
+                            .decrease => self.renderer.diff.context -|= 10,
+                        }
 
-                    if (diff == null) {
-                        // debounce
-                        try self.sleeper.delay_event(20, .{ .diff_update = .{
-                            .change = log.focused_change,
-                            .context = self.renderer.diff.context,
-                        } });
+                        const diff = self.renderer.diff.get(log.focused_change.hash, .touch);
+                        if (diff == null) {
+                            try self.sleeper.delay_event(20, .{ .diff_update = .{
+                                .change = log.focused_change,
+                                .context = self.renderer.diff.context,
+                            } });
+                        }
                     }
                 },
                 .switch_state_to_log => {
@@ -3565,6 +3615,7 @@ pub const App = struct {
                                 .to = req.to.hash,
                                 .from = if (req.from) |f| f.hash else null,
                                 .path = req.path,
+                                .context = req.context,
                             };
                             const file = self.renderer.file_show.filecache.get(key_lookup, .touch);
                             if (file) |f| {
@@ -3706,10 +3757,15 @@ pub const App = struct {
                             if (tree.focused_node) |node| {
                                 hasher.update(node.path);
                                 hasher.update(&std.mem.toBytes(node.collapsed));
+                                const is_diff_mode = switch (self.state) {
+                                    .file_tree => |m| m == .diff or m == .range_diff,
+                                    else => false,
+                                };
                                 const file = self.renderer.file_show.filecache.get(.{
                                     .path = node.path,
                                     .to = self.renderer.log.focused_change.hash,
-                                    .from = if (self.file_tree_from) |f| f.hash else null,
+                                    .from = if (node.status != null and self.file_tree_from != null and is_diff_mode) self.file_tree_from.?.hash else null,
+                                    .context = if (node.status == null or !is_diff_mode) 0 else (if (self.file_tree_full_context) 9999 else self.file_tree_diff_context),
                                 }, .peek);
                                 if (file) |f| hasher.update(&std.mem.toBytes(f.y));
                             }

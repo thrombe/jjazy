@@ -1573,6 +1573,7 @@ pub const FileShowSlate = struct {
         to: jj_mod.Change.Hash,
         from: ?jj_mod.Change.Hash = null,
         path: []const u8,
+        context: u32,
     };
 
     pub const CachedFile = struct {
@@ -1594,7 +1595,7 @@ pub const FileShowSlate = struct {
         self.filecache.deinit();
     }
 
-    fn render(self: *@This(), surface: *Surface, app: *App, to: jj_mod.Change, from: ?jj_mod.Change, focused_file: ?[]const u8) !void {
+    fn render(self: *@This(), surface: *Surface, app: *App, to: jj_mod.Change, from: ?jj_mod.Change, focused_file: ?[]const u8, context: u32) !void {
         if (focused_file == null) {
             try surface.draw_buf(" no file selected ");
             return;
@@ -1603,6 +1604,7 @@ pub const FileShowSlate = struct {
             .to = to.hash,
             .from = if (from) |f| f.hash else null,
             .path = focused_file.?,
+            .context = context,
         };
 
         defer while (self.filecache.retaining_pop(100)) |e| {
@@ -1878,7 +1880,11 @@ pub const Renderer = struct {
                                 }
                             }
                         }
-                        try self.file_show.render(&diffs, app, self.log.focused_change, from, focused_file);
+                        var context: u32 = 0;
+                        if (tree.focused_node) |node| {
+                            context = if (node.status == null or !is_diff_view) 0 else (if (app.file_tree_full_context) 9999 else app.file_tree_diff_context);
+                        }
+                        try self.file_show.render(&diffs, app, self.log.focused_change, from, focused_file, context);
                     }
                 },
                 .evolog => {

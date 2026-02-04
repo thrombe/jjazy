@@ -523,6 +523,7 @@ pub const JujutsuServer = struct {
         git_push: struct { branch: ?[]const u8, remote: ?[]const u8, allow_new: bool },
         command: struct {
             cmd: utils_mod.Command,
+            toast_success: bool = false,
             refresh_log: bool = false,
             reset_log_pos: bool = false,
             refresh_oplog: bool = false,
@@ -900,7 +901,6 @@ pub const JujutsuServer = struct {
                     try self.events.send(.{ .jj = .{ .req = request.req, .res = .{ .ok = .from(res) } } });
                 },
                 .command => |*payload| {
-                    defer payload.cmd.deinit();
                     const res = payload.cmd.exec_status(self.alloc) catch |e| {
                         utils_mod.dump_error(e);
                         continue;
@@ -3175,7 +3175,11 @@ pub const App = struct {
                         var cmd = utils_mod.Command.init(self.alloc);
                         errdefer cmd.deinit();
                         _ = try cmd.add_args(args.items);
-                        try self.jj_request(.{ .command = .{ .cmd = cmd, .refresh_log = true } });
+                        try self.jj_toasted_request(.{ .command = .{
+                            .cmd = cmd,
+                            .toast_success = true,
+                            .refresh_log = true,
+                        } }, "Executing command...");
                     }
                 },
                 .apply_jj_op_restore => {
@@ -3669,6 +3673,9 @@ pub const App = struct {
                     try self._send_event(.rerender);
                 },
                 .command => {
+                    var cmd = res.req.command;
+                    defer cmd.cmd.deinit();
+
                     switch (res.res) {
                         .command_result => |c_res| {
                             if (c_res.errored) {
@@ -3690,16 +3697,21 @@ pub const App = struct {
                                     } else {
                                         try self._toast(.success, c_res.out);
                                     }
+                                } else if (cmd.toast_success) {
+                                    try self._toast_timed(.success, try self.alloc.dupe(u8, "Command execution successful"), std.time.ms_per_s);
                                 }
 
-                                if (res.req.command.refresh_log) {
-                                    if (res.req.command.reset_log_pos) {
+                                if (cmd.refresh_log) {
+                                    if (cmd.reset_log_pos) {
                                         self.renderer.log.limit = self.renderer.log.calc_limit(.{ .y = 0 });
                                     }
-                                    try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit, .reset_pos = res.req.command.reset_log_pos } });
+                                    try self.jj_request(.{ .log = .{
+                                        .n = self.renderer.log.limit,
+                                        .reset_pos = cmd.reset_log_pos,
+                                    } });
                                 }
-                                if (res.req.command.refresh_oplog) {
-                                    try self.jj_request(.{ .oplog = .{ .reset_pos = res.req.command.reset_oplog_pos } });
+                                if (cmd.refresh_oplog) {
+                                    try self.jj_request(.{ .oplog = .{ .reset_pos = cmd.reset_oplog_pos } });
                                 }
                             }
                         },

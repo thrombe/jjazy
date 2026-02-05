@@ -1192,7 +1192,7 @@ pub const FileTree = struct {
         Sorter.sort(&self.root);
     }
 
-    pub fn iterator(self: *@This(), skip_removed: bool) !Iterator {
+    pub fn iterator(self: *@This(), skip_removed: bool, only_changed: bool) !Iterator {
         var indices = try std.ArrayListUnmanaged(Iterator.IterNode).initCapacity(self.alloc, self.height + 1);
         indices.appendAssumeCapacity(.{ .node = &self.root, .index = 0, .iter_index = 0 });
         return .{
@@ -1200,6 +1200,7 @@ pub const FileTree = struct {
             .root = &self.root,
             .indices = indices,
             .skip_removed = skip_removed,
+            .only_changed = only_changed,
         };
     }
 
@@ -1213,6 +1214,7 @@ pub const FileTree = struct {
         alloc: std.mem.Allocator,
         indices: std.ArrayListUnmanaged(IterNode),
         skip_removed: bool,
+        only_changed: bool,
 
         const IterNode = struct {
             node: *Node,
@@ -1237,6 +1239,11 @@ pub const FileTree = struct {
 
                     if (self.skip_removed and child.status == .removed) {
                         continue;
+                    }
+
+                    if (self.only_changed) {
+                        if (child.typ == .file and child.status == null) continue;
+                        if (child.typ == .dir and child.aggregate_statuses.eql(.initEmpty())) continue;
                     }
 
                     const node = self.indices.addOneAssumeCapacity();
@@ -1325,12 +1332,13 @@ pub const FileTreeSlate = struct {
             if (self.it) |*it| it.deinit();
         }
 
-        pub fn update_focused_node(self: *@This(), skip_removed: bool) !void {
+        pub fn update_focused_node(self: *@This(), skip_removed: bool, only_changed: bool) !void {
             if (self.it == null) {
-                self.it = try self.tree.iterator(skip_removed);
+                self.it = try self.tree.iterator(skip_removed, only_changed);
             }
             var it = &self.it.?;
             it.skip_removed = skip_removed;
+            it.only_changed = only_changed;
             it.reset();
             var i: i32 = 0;
             while (it.next()) |e| {
@@ -1342,12 +1350,13 @@ pub const FileTreeSlate = struct {
             }
         }
 
-        pub fn focus_parent(self: *@This(), skip_removed: bool) !?*const FileTree.Node {
+        pub fn focus_parent(self: *@This(), skip_removed: bool, only_changed: bool) !?*const FileTree.Node {
             if (self.it == null) {
-                self.it = try self.tree.iterator(skip_removed);
+                self.it = try self.tree.iterator(skip_removed, only_changed);
             }
             var it = &self.it.?;
             it.skip_removed = skip_removed;
+            it.only_changed = only_changed;
             it.reset();
             while (it.next()) |e| {
                 if (e.iter_index == self.y) {
@@ -1431,10 +1440,11 @@ pub const FileTreeSlate = struct {
         tree.y = @max(0, tree.y);
 
         if (tree.it == null) {
-            tree.it = try tree.tree.iterator(!is_diff_view);
+            tree.it = try tree.tree.iterator(!is_diff_view, app.file_tree_only_changed and is_diff_view);
         }
         var it = &tree.it.?;
         it.skip_removed = !is_diff_view;
+        it.only_changed = app.file_tree_only_changed and is_diff_view;
         it.reset();
         if (tree.skip_y > tree.y) {
             tree.skip_y = tree.y;

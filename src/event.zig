@@ -492,6 +492,7 @@ pub const Action = union(enum) {
     start_range_diff,
     apply_range_diff,
     toggle_file_tree_full_context,
+    toggle_file_tree_only_changed,
 };
 
 pub const JujutsuServer = struct {
@@ -1127,6 +1128,7 @@ pub const App = struct {
     file_tree_from: ?Change = null,
     file_tree_diff_context: u32 = 30,
     file_tree_full_context: bool = false,
+    file_tree_only_changed: bool = false,
 
     const CommandResult = struct {
         errored: bool,
@@ -1969,6 +1971,18 @@ pub const App = struct {
             .toggle_file_tree_full_context,
         );
         try map.add_one_for_state(
+            .{ .file_tree = .diff },
+            .{ .key = .{ .key = 'D', .mod = .{ .shift = true } } },
+            null,
+            .toggle_file_tree_only_changed,
+        );
+        try map.add_one_for_state(
+            .{ .file_tree = .range_diff },
+            .{ .key = .{ .key = 'D', .mod = .{ .shift = true } } },
+            null,
+            .toggle_file_tree_only_changed,
+        );
+        try map.add_one_for_state(
             .log,
             .{ .key = .{ .key = 's' } },
             null,
@@ -2594,7 +2608,6 @@ pub const App = struct {
                 try self._send_event(.rerender);
             },
             .input => |input| {
-
                 // std.log.debug("{any}", .{input});
                 if (tropes.global) switch (input) {
                     .key => |key| {
@@ -2765,6 +2778,10 @@ pub const App = struct {
                     self.file_tree_full_context = !self.file_tree_full_context;
                     try self._send_event(.file_show_scroll_update);
                 },
+                .toggle_file_tree_only_changed => {
+                    self.file_tree_only_changed = !self.file_tree_only_changed;
+                    try self._send_event(.rerender);
+                },
                 .scroll => |target| switch (target.target) {
                     .log => {
                         if (target.pan) {
@@ -2817,7 +2834,8 @@ pub const App = struct {
                                         .up => tree.y -= 1,
                                         .down => tree.y += 1,
                                     }
-                                    try tree.update_focused_node(!self.state.is_file_tree_diff());
+                                    const is_diff = self.state.is_file_tree_diff();
+                                    try tree.update_focused_node(!is_diff, self.file_tree_only_changed and is_diff);
                                     try self._send_event(.file_show_scroll_update);
                                 },
                                 else => {
@@ -3487,7 +3505,8 @@ pub const App = struct {
                     switch (node.typ) {
                         .file => {
                             if (v.collapse) {
-                                const parent = try list.focus_parent(!self.state.is_file_tree_diff());
+                                const is_diff = self.state.is_file_tree_diff();
+                                const parent = try list.focus_parent(!is_diff, self.file_tree_only_changed and is_diff);
                                 if (parent == null) {
                                     try self._handle_event(.{ .action = .switch_state_to_log });
                                     return;
@@ -3501,7 +3520,8 @@ pub const App = struct {
                                     return;
                                 }
 
-                                const parent = try list.focus_parent(!self.state.is_file_tree_diff());
+                                const is_diff = self.state.is_file_tree_diff();
+                                const parent = try list.focus_parent(!is_diff, self.file_tree_only_changed and is_diff);
                                 if (parent) |_| {
                                     return;
                                 }

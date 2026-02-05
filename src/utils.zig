@@ -30,10 +30,268 @@ pub inline fn cast(typ: type, val: anytype) typ {
     @compileError("can't cast from '" ++ @typeName(@TypeOf(val)) ++ "' to '" ++ @typeName(typ) ++ "'");
 }
 
+pub fn CliParser(comptime T: type) type {
+    return struct {
+        pub const Error = error{
+            MissingArgument,
+            UnknownArgument,
+            InvalidArgument,
+            MissingSubcommand,
+            UnknownSubcommand,
+            UnexpectedArgument,
+        } || std.fmt.ParseIntError || std.fmt.ParseFloatError || std.mem.Allocator.Error;
+
+        pub const Parsed = struct {
+            arena: *std.heap.ArenaAllocator,
+            value: T,
+
+            pub fn deinit(self: @This()) void {
+                const allocator = self.arena.child_allocator;
+                self.arena.deinit();
+                allocator.destroy(self.arena);
+            }
+        };
+
+        pub fn parse(allocator: std.mem.Allocator) !Parsed {
+            var arena = try allocator.create(std.heap.ArenaAllocator);
+            arena.* = std.heap.ArenaAllocator.init(allocator);
+            errdefer {
+                arena.deinit();
+                allocator.destroy(arena);
+            }
+
+            const args = try std.process.argsAlloc(arena.allocator());
+            var it = ArgsIterator{ .args = args[1..] };
+
+            const value = try parseStruct(T, arena.allocator(), &it);
+
+            if (it.peek()) |_| return Error.UnexpectedArgument;
+
+            return .{
+                .arena = arena,
+                .value = value,
+            };
+        }
+
+        const ArgsIterator = struct {
+            args: []const []const u8,
+            index: usize = 0,
+
+            fn next(self: *@This()) ?[]const u8 {
+                if (self.index >= self.args.len) return null;
+                const arg = self.args[self.index];
+                self.index += 1;
+                return arg;
+            }
+
+            fn peek(self: @This()) ?[]const u8 {
+                if (self.index >= self.args.len) return null;
+                return self.args[self.index];
+            }
+        };
+
+        fn parseStruct(comptime S: type, allocator: std.mem.Allocator, it: *ArgsIterator) Error!S {
+            var result: S = undefined;
+            const fields = std.meta.fields(S);
+
+            // Init defaults
+            inline for (fields) |field| {
+                if (field.default_value_ptr) |ptr| {
+                    const default = @as(*const field.type, @ptrCast(@alignCast(ptr))).*;
+                    @field(result, field.name) = default;
+                } else {
+                    const info = @typeInfo(field.type);
+                    if (info == .optional) {
+                        @field(result, field.name) = null;
+                    } else if (info == .@"union") {
+                        // Subcommand placeholder, will be filled later
+                    } else if (info == .bool) {
+                        @field(result, field.name) = false;
+                    } else {
+                        // Required field, but we'll check later
+                    }
+                }
+            }
+
+            var seen_fields = [_]bool{false} ** fields.len;
+            while (it.peek()) |arg| {
+                if (std.mem.startsWith(u8, arg, "--")) {
+                    _ = it.next();
+                    const full_name = arg[2..];
+                    if (std.mem.eql(u8, full_name, "help")) {
+                        // TODO: help
+                        continue;
+                    }
+
+                    var name = full_name;
+                    var val_str: ?[]const u8 = null;
+                    if (std.mem.indexOfScalar(u8, full_name, '=')) |eq_idx| {
+                        name = full_name[0..eq_idx];
+                        val_str = full_name[eq_idx + 1 ..];
+                    }
+
+                    var matched = false;
+                    inline for (fields, 0..) |field, i| {
+                        if (comptime @typeInfo(field.type) == .@"union") continue;
+                        if (std.mem.eql(u8, field.name, name)) {
+                            matched = true;
+                            seen_fields[i] = true;
+                            try parseField(field.type, allocator, it, &@field(result, field.name), val_str);
+                            break;
+                        }
+                    }
+                    if (!matched) return Error.UnknownArgument;
+                } else if (std.mem.startsWith(u8, arg, "-") and arg.len > 1) {
+                    _ = it.next();
+                    const shorts = arg[1..];
+
+                    // Check if this contains '=' for standalone value flags
+                    const has_equals = std.mem.indexOfScalar(u8, shorts, '=');
+                    if (has_equals) |eq_idx| if (eq_idx != 1) return Error.InvalidArgument;
+
+                    var i_sh: usize = 0;
+                    while (i_sh < shorts.len) : (i_sh += 1) {
+                        const sh = shorts[i_sh];
+                        var matched = false;
+                        inline for (fields, 0..) |field, i| {
+                            // options not supported on unions yet.
+                            if (comptime @typeInfo(field.type) == .@"union") continue;
+                            if (comptime !@hasDecl(S, "options")) continue;
+                            if (comptime !@hasField(@TypeOf(S.options), field.name)) continue;
+                            const opt = @field(S.options, field.name);
+                            if (comptime !@hasField(@TypeOf(opt), "sh")) continue;
+
+                            if (opt.sh == sh) {
+                                matched = true;
+                                seen_fields[i] = true;
+
+                                if (@typeInfo(field.type) == .bool) {
+                                    @field(result, field.name) = true;
+                                } else {
+                                    // Non-boolean flag: must be standalone
+                                    if (i_sh != 0) return Error.InvalidArgument;
+
+                                    const p = &@field(result, field.name);
+                                    if (has_equals) |_| {
+                                        try parseField(field.type, allocator, it, p, shorts[2..]);
+                                        i_sh = shorts.len; // done
+                                    } else {
+                                        if (shorts.len != 1) return Error.InvalidArgument;
+                                        try parseField(field.type, allocator, it, p, null);
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                        if (!matched) return Error.UnknownArgument;
+                    }
+                } else {
+                    // Try to match subcommand
+                    var found_subcommand = false;
+                    inline for (fields, 0..) |field, i| {
+                        const info = @typeInfo(field.type);
+                        if (!(info == .@"union" and info.@"union".tag_type != null)) continue;
+                        const Tag = info.@"union".tag_type.?;
+                        inline for (std.meta.fields(Tag)) |tag_field| {
+                            if (std.mem.eql(u8, tag_field.name, arg)) {
+                                _ = it.next();
+                                found_subcommand = true;
+                                seen_fields[i] = true;
+                                const InnterT = std.meta.TagPayload(field.type, @field(Tag, tag_field.name));
+                                const sub_val = try parseStruct(InnterT, allocator, it);
+                                @field(result, field.name) = @unionInit(field.type, tag_field.name, sub_val);
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!found_subcommand) {
+                        // Positional?
+                        var found_positional = false;
+                        inline for (fields, 0..) |field, i| {
+                            // Skip fields that are explicitly configured as options/flags?
+                            // Actually, let's just take the next un-seen field that isn't a union (subcommand)
+                            const info = @typeInfo(field.type);
+                            if (comptime info == .@"union") continue;
+
+                            if (!found_positional and !seen_fields[i]) {
+                                _ = it.next();
+                                found_positional = true;
+                                seen_fields[i] = true;
+                                try parseField(field.type, allocator, it, &@field(result, field.name), arg);
+                                break;
+                            }
+                        }
+
+                        if (!found_positional) {
+                            return Error.UnknownSubcommand;
+                        }
+                    }
+                }
+            }
+
+            // check required
+            inline for (fields, 0..) |field, i| {
+                if (field.default_value_ptr != null) continue;
+                const info = @typeInfo(field.type);
+                if (!(info != .optional and info != .bool and info != .@"union")) continue;
+
+                if (!seen_fields[i]) {
+                    return Error.MissingArgument;
+                }
+            }
+
+            return result;
+        }
+
+        fn parseField(comptime FieldType: type, allocator: std.mem.Allocator, it: *ArgsIterator, ptr: *FieldType, val_str: ?[]const u8) Error!void {
+            const info = @typeInfo(FieldType);
+            switch (info) {
+                .bool => {
+                    if (val_str) |s| {
+                        if (std.mem.eql(u8, s, "true")) {
+                            ptr.* = true;
+                        } else if (std.mem.eql(u8, s, "false")) {
+                            ptr.* = false;
+                        } else {
+                            return Error.InvalidArgument;
+                        }
+                    } else {
+                        ptr.* = true;
+                    }
+                },
+                .int => {
+                    const arg = val_str orelse it.next() orelse return Error.MissingArgument;
+                    ptr.* = try std.fmt.parseInt(FieldType, arg, 0);
+                },
+                .float => {
+                    const arg = val_str orelse it.next() orelse return Error.MissingArgument;
+                    ptr.* = try std.fmt.parseFloat(FieldType, arg);
+                },
+                .pointer => |ptr_info| {
+                    if (ptr_info.size == .slice and ptr_info.child == u8) {
+                        const arg = val_str orelse it.next() orelse return Error.MissingArgument;
+                        ptr.* = try allocator.dupe(u8, arg);
+                    } else {
+                        @compileError("Unsupported pointer type: " ++ @typeName(FieldType));
+                    }
+                },
+                .optional => |opt_info| {
+                    var val: opt_info.child = undefined;
+                    try parseField(opt_info.child, allocator, it, &val, val_str);
+                    ptr.* = val;
+                },
+                else => @compileError("Unsupported type: " ++ @typeName(FieldType)),
+            }
+        }
+    };
+}
+
 const PtrFollow = enum { disabled, ptr_as_usize, follow };
 const AutoHashArgs = struct {
     pointer_hashing: PtrFollow = .disabled,
 };
+
 // TODO: maybe this function is not required. std has something similar std.hash.autoHashStrat(&hasher, k, .DeepRecursive)
 pub fn hash_update(hasher: anytype, val: anytype, comptime v: AutoHashArgs) void {
     if (comptime std.meta.activeTag(@typeInfo(@TypeOf(hasher))) != .pointer) @compileError("you prob want to pass a pointer to a hasher in hash_update() :/");
@@ -1556,4 +1814,213 @@ test "pointer equality variant works" {
     _ = cache.get(&a, .touch);
     try std.testing.expectEqual(@as(?*u32, &b), cache.first);
     try std.testing.expectEqual(@as(?*u32, &a), cache.last);
+}
+
+test "Clap basic flag and option" {
+    const Cli = struct {
+        verbose: bool = false,
+        port: u16 = 8080,
+        name: []const u8 = "default",
+
+        pub const options = .{
+            .verbose = .{ .sh = 'v' },
+            .port = .{ .sh = 'p' },
+        };
+    };
+
+    const alloc = std.testing.allocator;
+
+    {
+        var it = CliParser(Cli).ArgsIterator{ .args = &[_][]const u8{ "--verbose", "--port", "9090", "--name", "foo" } };
+        const res = try CliParser(Cli).parseStruct(Cli, alloc, &it);
+        defer alloc.free(res.name);
+        try std.testing.expect(res.verbose);
+        try std.testing.expectEqual(@as(u16, 9090), res.port);
+        try std.testing.expectEqualStrings("foo", res.name);
+    }
+
+    {
+        var it = CliParser(Cli).ArgsIterator{ .args = &[_][]const u8{ "-v", "-p", "7070" } };
+        const res = try CliParser(Cli).parseStruct(Cli, alloc, &it);
+        try std.testing.expect(res.verbose);
+        try std.testing.expectEqual(@as(u16, 7070), res.port);
+        try std.testing.expectEqualStrings("default", res.name);
+    }
+
+    {
+        var it = CliParser(Cli).ArgsIterator{ .args = &[_][]const u8{ "-vp", "7070" } };
+        try std.testing.expectError(CliParser(Cli).Error.InvalidArgument, CliParser(Cli).parseStruct(Cli, alloc, &it));
+    }
+
+    {
+        var it = CliParser(Cli).ArgsIterator{ .args = &[_][]const u8{"-p=7070"} };
+        const res = try CliParser(Cli).parseStruct(Cli, alloc, &it);
+        try std.testing.expectEqual(@as(u16, 7070), res.port);
+    }
+
+    {
+        var it = CliParser(Cli).ArgsIterator{ .args = &[_][]const u8{"-p7070"} };
+        try std.testing.expectError(CliParser(Cli).Error.InvalidArgument, CliParser(Cli).parseStruct(Cli, alloc, &it));
+    }
+}
+
+test "Clap subcommands" {
+    const Cli = struct {
+        verbose: bool = false,
+        command: union(enum) {
+            init: struct {
+                force: bool = false,
+                pub const options = .{ .force = .{ .sh = 'f' } };
+            },
+            run: struct {
+                port: u16 = 8080,
+            },
+        },
+
+        pub const options = .{
+            .verbose = .{ .sh = 'v' },
+        };
+    };
+
+    const alloc = std.testing.allocator;
+
+    {
+        var it = CliParser(Cli).ArgsIterator{ .args = &[_][]const u8{ "-v", "init", "-f" } };
+        const res = try CliParser(Cli).parseStruct(Cli, alloc, &it);
+        try std.testing.expect(res.verbose);
+        switch (res.command) {
+            .init => |s| try std.testing.expect(s.force),
+            else => return error.TestFailed,
+        }
+    }
+
+    {
+        var it = CliParser(Cli).ArgsIterator{ .args = &[_][]const u8{ "run", "--port", "1234" } };
+        const res = try CliParser(Cli).parseStruct(Cli, alloc, &it);
+        try std.testing.expect(!res.verbose);
+        switch (res.command) {
+            .run => |s| try std.testing.expectEqual(@as(u16, 1234), s.port),
+            else => return error.TestFailed,
+        }
+    }
+}
+
+test "Clap user Cli struct" {
+    const Cli = struct {
+        verbose: bool = false,
+        extra_verbose: bool = false,
+        config: ?[]const u8 = null,
+        command: union(enum) {
+            init: struct {
+                force: bool = false,
+                pub const options = .{ .force = .{ .sh = 'f' } };
+            },
+            run: struct {
+                port: u16 = 8080,
+            },
+        },
+
+        pub const description = "App description";
+        pub const options = .{
+            .verbose = .{ .sh = 'v', .desc = "Verbose mode" },
+            .extra_verbose = .{ .sh = 'e', .desc = "extra verbose mode" },
+            .config = .{ .sh = 'c', .desc = "Config path" },
+        };
+    };
+
+    const alloc = std.testing.allocator;
+
+    {
+        var it = CliParser(Cli).ArgsIterator{ .args = &[_][]const u8{ "-ve", "init" } };
+        const res = try CliParser(Cli).parseStruct(Cli, alloc, &it);
+        try std.testing.expect(res.verbose);
+        try std.testing.expect(res.extra_verbose);
+        try std.testing.expect(res.config == null);
+        switch (res.command) {
+            .init => |s| try std.testing.expect(!s.force),
+            else => return error.TestFailed,
+        }
+    }
+    {
+        var it = CliParser(Cli).ArgsIterator{ .args = &[_][]const u8{ "-v", "init", "-f" } };
+        const res = try CliParser(Cli).parseStruct(Cli, alloc, &it);
+        try std.testing.expect(res.verbose);
+        try std.testing.expect(res.config == null);
+        switch (res.command) {
+            .init => |s| try std.testing.expect(s.force),
+            else => return error.TestFailed,
+        }
+    }
+
+    {
+        var it = CliParser(Cli).ArgsIterator{ .args = &[_][]const u8{ "--config=test.json", "run", "--port", "9000" } };
+        const res = try CliParser(Cli).parseStruct(Cli, alloc, &it);
+        defer if (res.config) |c| alloc.free(c);
+        try std.testing.expect(!res.verbose);
+        try std.testing.expectEqualStrings("test.json", res.config.?);
+        switch (res.command) {
+            .run => |s| try std.testing.expectEqual(@as(u16, 9000), s.port),
+            else => return error.TestFailed,
+        }
+    }
+
+    {
+        var it = CliParser(Cli).ArgsIterator{ .args = &[_][]const u8{ "-vc=config.json", "init" } };
+        try std.testing.expectError(CliParser(Cli).Error.InvalidArgument, CliParser(Cli).parseStruct(Cli, alloc, &it));
+    }
+
+    {
+        var it = CliParser(Cli).ArgsIterator{ .args = &[_][]const u8{ "-vcconfig.json", "init" } };
+        try std.testing.expectError(CliParser(Cli).Error.InvalidArgument, CliParser(Cli).parseStruct(Cli, alloc, &it));
+    }
+
+    {
+        var it = CliParser(Cli).ArgsIterator{ .args = &[_][]const u8{ "-v", "-cconfig.json" } };
+        try std.testing.expectError(CliParser(Cli).Error.InvalidArgument, CliParser(Cli).parseStruct(Cli, alloc, &it));
+    }
+
+    {
+        var it = CliParser(Cli).ArgsIterator{ .args = &[_][]const u8{ "-v", "-c=config.json", "init" } };
+        const res = try CliParser(Cli).parseStruct(Cli, alloc, &it);
+        defer if (res.config) |c| alloc.free(c);
+        try std.testing.expect(res.verbose);
+        try std.testing.expectEqualStrings("config.json", res.config.?);
+        switch (res.command) {
+            .init => |s| try std.testing.expect(!s.force),
+            else => return error.TestFailed,
+        }
+    }
+
+    {
+        var it = CliParser(Cli).ArgsIterator{ .args = &[_][]const u8{ "-v", "-c", "config.json", "init" } };
+        const res = try CliParser(Cli).parseStruct(Cli, alloc, &it);
+        defer if (res.config) |c| alloc.free(c);
+        try std.testing.expect(res.verbose);
+        try std.testing.expectEqualStrings("config.json", res.config.?);
+        switch (res.command) {
+            .init => |s| try std.testing.expect(!s.force),
+            else => return error.TestFailed,
+        }
+    }
+}
+
+test "Clap positional arguments" {
+    const Cli = struct {
+        input: []const u8,
+        output: []const u8,
+        verbose: bool = false,
+        pub const options = .{ .verbose = .{ .sh = 'v' } };
+    };
+
+    const alloc = std.testing.allocator;
+
+    {
+        var it = CliParser(Cli).ArgsIterator{ .args = &[_][]const u8{ "in.txt", "out.txt", "-v" } };
+        const res = try CliParser(Cli).parseStruct(Cli, alloc, &it);
+        defer alloc.free(res.input);
+        defer alloc.free(res.output);
+        try std.testing.expectEqualStrings("in.txt", res.input);
+        try std.testing.expectEqualStrings("out.txt", res.output);
+        try std.testing.expect(res.verbose);
+    }
 }

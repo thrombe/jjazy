@@ -1288,7 +1288,15 @@ pub const FileTreeSlate = struct {
     diff_it: jj_mod.FileTreeDiffEntry.Parsed.Iterator,
 
     pub const FileList = struct {
-        pub const Mode = enum { list, diff, range_diff };
+        pub const Mode = enum {
+            list,
+            diff,
+            range_diff,
+
+            pub fn is_diff(self: @This()) bool {
+                return self == .diff or self == .range_diff;
+            }
+        };
 
         y: i32 = 0,
         skip_y: i32 = 0,
@@ -1404,8 +1412,12 @@ pub const FileTreeSlate = struct {
         if (res.found_existing) {
             self.alloc.free(res.val.change_status.buf);
             self.alloc.free(res.val.files.buf);
+            if (res.val.diffs) |diff| self.alloc.free(diff.buf);
+
             res.val.change_status = change_status;
             res.val.files = files;
+            res.val.diffs = diffs;
+
             res.val.tree.clear_statuses();
             list = res.val;
         } else {
@@ -1878,7 +1890,7 @@ pub const Renderer = struct {
                 },
                 .file_tree => {
                     try self.file_tree.render(&status, self, app);
-                    if (self.file_tree.cache.get(.{ .to = self.log.focused_change, .from = app.file_tree_from }, .touch)) |tree| {
+                    if (self.file_tree.cache.get(app.get_change_range(), .touch)) |tree| {
                         const res = app.get_file_tree_show_context(app.file_tree_from, if (tree.focused_node) |node| node.status else null);
                         try self.file_show.render(&diffs, app, self.log.focused_change, res.from, tree.get_focused_file(), res.context);
                     }

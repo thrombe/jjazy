@@ -95,8 +95,8 @@ pub const action_help = [_]struct {
         .help = "Increase master area",
     },
     .{
-        .action = .switch_state_to_log,
-        .help = "Return to default mode",
+        .action = .go_back_a_mode,
+        .help = "Go back a mode",
     },
     .{
         .action = .select_focused_change,
@@ -163,16 +163,16 @@ pub const action_help = [_]struct {
         .help = "View file tree for change",
     },
     .{
-        .action = .switch_state_to_file_diff,
-        .help = "View file diff tree for change",
+        .action = .toggle_file_tree_diff,
+        .help = "Toggle file tree diff",
+    },
+    .{
+        .action = .toggle_file_tree_only_changed,
+        .help = "Toggle unchanged files",
     },
     .{
         .action = .start_range_diff,
         .help = "Start Range Diff Selection",
-    },
-    .{
-        .action = .apply_range_diff,
-        .help = "Apply Range Diff",
     },
     .{
         .action = .toggle_help,
@@ -378,7 +378,7 @@ pub const State = union(enum(u8)) {
 
     pub fn is_file_tree_diff(self: @This()) bool {
         return switch (self) {
-            .file_tree => |m| m == .diff or m == .range_diff,
+            .file_tree => |m| m.is_diff(),
             else => false,
         };
     }
@@ -439,7 +439,7 @@ pub const Action = union(enum) {
     scroll: struct { target: enum { log, diff, bookmarks }, dir: enum { up, down }, pan: bool = false },
     resize_master: enum { left, right },
     change_diff_context: struct { off: enum { reset, increase, decrease } },
-    switch_state_to_log,
+    go_back_a_mode,
     select_focused_change,
     set_where: Where,
     send_quit_event,
@@ -453,8 +453,8 @@ pub const Action = union(enum) {
     switch_state_to_evolog,
     switch_state_to_duplicate,
     switch_state_to_bookmarks_view,
-    switch_state_to_file_tree, // Defaults to list
-    switch_state_to_file_diff,
+    switch_state_to_file_tree,
+    toggle_file_tree_diff,
     toggle_help,
     jj_split,
     jj_describe,
@@ -486,7 +486,6 @@ pub const Action = union(enum) {
     open_temp_file,
     open_source_file,
     start_range_diff,
-    apply_range_diff,
     toggle_file_tree_full_context,
     toggle_file_tree_only_changed,
 };
@@ -508,7 +507,7 @@ pub const JujutsuServer = struct {
         diff: struct { change: Change, context: u32 },
         opshow: Operation,
         evolog: Change,
-        file_tree: struct { to: Change, from: ?Change = null },
+        file_tree: components_mod.FileTreeSlate.RangeContext,
         file_content: struct {
             to: Change,
             from: ?Change = null,
@@ -1394,7 +1393,7 @@ pub const App = struct {
             try map.add_one(
                 .{ .functional = .{ .key = .escape } },
                 null,
-                .switch_state_to_log,
+                .go_back_a_mode,
             );
         }
         {
@@ -1944,13 +1943,13 @@ pub const App = struct {
             .{ .file_tree = .list },
             .{ .key = .{ .key = 'd' } },
             null,
-            .switch_state_to_file_diff,
+            .toggle_file_tree_diff,
         );
         try map.add_one_for_state(
             .{ .file_tree = .diff },
             .{ .key = .{ .key = 'd' } },
             null,
-            .switch_state_to_file_tree,
+            .toggle_file_tree_diff,
         );
         try map.add_one_for_state(
             .{ .file_tree = .diff },
@@ -2269,23 +2268,26 @@ pub const App = struct {
         );
         try map.add_one_for_state(
             .log_range_diff,
-            .{ .functional = .{ .key = .enter } },
+            .{ .key = .{ .key = 'l' } },
             null,
-            .apply_range_diff,
+            .switch_state_to_file_tree,
         );
         try map.add_one_for_state(
             .log_range_diff,
             .{ .functional = .{ .key = .escape } },
             null,
-            .switch_state_to_log,
+            .go_back_a_mode,
         );
 
         return map.build();
     }
 
+    pub fn get_change_range(self: *@This()) components_mod.FileTreeSlate.RangeContext {
+        return .{ .to = self.renderer.log.focused_change, .from = self.file_tree_from };
+    }
+
     pub fn get_file_tree_context_len(self: *@This()) u32 {
-        const change = self.renderer.log.focused_change;
-        const full_context = if (self.renderer.file_tree.cache.get(.{ .to = change, .from = self.file_tree_from }, .touch)) |list| list.full_context else false;
+        const full_context = if (self.renderer.file_tree.cache.get(self.get_change_range(), .touch)) |list| list.full_context else false;
         return if (full_context) 9999 else self.file_tree_diff_context;
     }
 
@@ -2468,12 +2470,11 @@ pub const App = struct {
                 }
             },
             .file_show_scroll_update => {
-                const change = self.renderer.log.focused_change;
-                const tree = self.renderer.file_tree.cache.get(.{ .to = change, .from = self.file_tree_from }, .touch) orelse return;
+                const tree = self.renderer.file_tree.cache.get(self.get_change_range(), .touch) orelse return;
                 if (tree.get_focused_file()) |focused| {
                     // debounce
                     try self.sleeper.delay_event(20, .{ .file_show_update = .{
-                        .to = change,
+                        .to = self.renderer.log.focused_change,
                         .from = self.file_tree_from,
                         .path = focused,
                         .context = self.get_file_tree_context_len(),
@@ -2771,13 +2772,13 @@ pub const App = struct {
                     try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },
                 .toggle_file_tree_full_context => {
-                    if (self.renderer.file_tree.cache.get(.{ .to = self.renderer.log.focused_change, .from = self.file_tree_from }, .touch)) |list| {
+                    if (self.renderer.file_tree.cache.get(self.get_change_range(), .touch)) |list| {
                         list.full_context = !list.full_context;
                     }
                     try self._send_event(.file_show_scroll_update);
                 },
                 .toggle_file_tree_only_changed => {
-                    if (self.renderer.file_tree.cache.get(.{ .to = self.renderer.log.focused_change, .from = self.file_tree_from }, .touch)) |list| {
+                    if (self.renderer.file_tree.cache.get(self.get_change_range(), .touch)) |list| {
                         list.only_changed = !list.only_changed;
                     }
                     try self._send_event(.rerender);
@@ -2799,7 +2800,7 @@ pub const App = struct {
                                     }
                                 },
                                 .file_tree => |_| {
-                                    const tree = self.renderer.file_tree.cache.get(.{ .to = self.renderer.log.focused_change, .from = self.file_tree_from }, .touch).?;
+                                    const tree = self.renderer.file_tree.cache.get(self.get_change_range(), .touch).?;
                                     switch (target.dir) {
                                         .up => tree.skip_y = @max(0, tree.skip_y - 1),
                                         .down => tree.skip_y += 1,
@@ -2829,13 +2830,13 @@ pub const App = struct {
                                     try self._send_event(.scroll_update);
                                 },
                                 .file_tree => |_| {
-                                    const tree = self.renderer.file_tree.cache.get(.{ .to = self.renderer.log.focused_change, .from = self.file_tree_from }, .touch).?;
+                                    const tree = self.renderer.file_tree.cache.get(self.get_change_range(), .touch).?;
                                     switch (target.dir) {
                                         .up => tree.y -= 1,
                                         .down => tree.y += 1,
                                     }
                                     const is_diff = self.state.is_file_tree_diff();
-                                    const only_changed = if (self.renderer.file_tree.cache.get(.{ .to = self.renderer.log.focused_change, .from = self.file_tree_from }, .touch)) |list| list.only_changed else false;
+                                    const only_changed = if (self.renderer.file_tree.cache.get(self.get_change_range(), .touch)) |list| list.only_changed else false;
                                     try tree.update_focused_node(!is_diff, only_changed and is_diff);
                                     try self._send_event(.file_show_scroll_update);
                                 },
@@ -2860,7 +2861,7 @@ pub const App = struct {
                                 }
                             },
                             .file_tree => |_| {
-                                const tree = self.renderer.file_tree.cache.get(.{ .to = self.renderer.log.focused_change, .from = self.file_tree_from }, .touch).?;
+                                const tree = self.renderer.file_tree.cache.get(self.get_change_range(), .touch).?;
                                 if (tree.get_focused_file()) |focused_file| {
                                     const res = self.get_file_tree_show_context(self.file_tree_from, if (tree.focused_node) |node| node.status else null);
 
@@ -2914,8 +2915,7 @@ pub const App = struct {
                     };
 
                     if (self.state == .file_tree) {
-                        const change = self.renderer.log.focused_change;
-                        if (self.renderer.file_tree.cache.get(.{ .to = change, .from = self.file_tree_from }, .touch)) |list| {
+                        if (self.renderer.file_tree.cache.get(self.get_change_range(), .touch)) |list| {
                             list.full_context = false;
                         }
                         switch (v.off) {
@@ -2942,12 +2942,24 @@ pub const App = struct {
                         }
                     }
                 },
-                .switch_state_to_log => {
+                .go_back_a_mode => {
                     self.renderer.log.selected_changes.clearRetainingCapacity();
                     self.renderer.text_input.reset();
-                    self.state = .log;
                     self.renderer.show_help = false;
-                    self.file_tree_from = null;
+
+                    switch (self.state) {
+                        .file_tree => {
+                            if (self.file_tree_from != null) {
+                                self.state = .log_range_diff;
+                            } else {
+                                self.state = .log;
+                            }
+                        },
+                        else => {
+                            self.file_tree_from = null;
+                            self.state = .log;
+                        },
+                    }
                 },
                 .select_focused_change => {
                     if (self.renderer.log.selected_changes.fetchOrderedRemove(self.renderer.log.focused_change) == null) {
@@ -3011,32 +3023,36 @@ pub const App = struct {
                     try self.jj_request(.{ .evolog = self.renderer.log.focused_change });
                 },
                 .switch_state_to_file_tree => {
-                    const change = self.renderer.log.focused_change;
-                    var mode: components_mod.FileTreeSlate.FileList.Mode = .list;
-                    if (self.state != .file_tree) {
-                        if (self.renderer.file_tree.cache.get(.{ .to = change, .from = null }, .touch)) |list| {
-                            mode = list.mode;
-                        }
-                    } else if (self.state.file_tree == .diff) {
-                        mode = .list;
+                    switch (self.state) {
+                        .log => {
+                            if (self.renderer.file_tree.cache.get(self.get_change_range(), .touch)) |list| {
+                                self.state = .{ .file_tree = list.mode };
+                            } else {
+                                self.state = .{ .file_tree = .list };
+                            }
+                        },
+                        .log_range_diff => {
+                            self.state = .{ .file_tree = .range_diff };
+                        },
+                        else => unreachable,
                     }
 
-                    self.state = .{ .file_tree = mode };
-                    if (self.renderer.file_tree.cache.get(.{ .to = change, .from = null }, .touch)) |list| {
-                        list.mode = mode;
-                    }
-                    self.file_tree_from = null;
-                    try self.jj_request(.{ .file_tree = .{ .to = change } });
+                    try self.jj_request(.{ .file_tree = self.get_change_range() });
                     try self._send_event(.rerender);
                 },
-                .switch_state_to_file_diff => {
-                    const change = self.renderer.log.focused_change;
-                    self.state = .{ .file_tree = .diff };
-                    if (self.renderer.file_tree.cache.get(.{ .to = change, .from = null }, .touch)) |list| {
-                        list.mode = .diff;
+                .toggle_file_tree_diff => {
+                    std.debug.assert(self.state == .file_tree);
+
+                    if (self.state.file_tree == .list) {
+                        self.state = .{ .file_tree = .diff };
+                    } else {
+                        self.state = .{ .file_tree = .list };
                     }
-                    self.file_tree_from = null;
-                    try self.jj_request(.{ .file_tree = .{ .to = change } });
+
+                    if (self.renderer.file_tree.cache.get(self.get_change_range(), .touch)) |list| {
+                        list.mode = self.state.file_tree;
+                    }
+                    try self.jj_request(.{ .file_tree = self.get_change_range() });
                     try self._send_event(.rerender);
                 },
                 .toggle_help => {
@@ -3104,13 +3120,6 @@ pub const App = struct {
                 .start_range_diff => {
                     self.file_tree_from = self.renderer.log.focused_change;
                     self.state = .log_range_diff;
-                },
-                .apply_range_diff => {
-                    self.state = .{ .file_tree = .range_diff };
-                    try self.jj_request(.{ .file_tree = .{
-                        .to = self.renderer.log.focused_change,
-                        .from = self.file_tree_from,
-                    } });
                 },
                 .apply_jj_abandon => |v| {
                     defer {
@@ -3424,8 +3433,8 @@ pub const App = struct {
                 },
                 .open_temp_file => {
                     if (self.state != .file_tree) return;
-                    const change = self.renderer.log.focused_change;
-                    const list = self.renderer.file_tree.cache.get(.{ .to = change, .from = self.file_tree_from }, .touch) orelse return;
+                    const change = self.get_change_range();
+                    const list = self.renderer.file_tree.cache.get(change, .touch) orelse return;
                     const node = list.focused_node orelse return;
                     if (node.typ != .file) return;
 
@@ -3436,7 +3445,7 @@ pub const App = struct {
                         "file",
                         "show",
                         "-r",
-                        change.hash[0..],
+                        change.to.hash[0..],
                         node.path,
                     });
                     const content = cmd.exec_capture(temp, temp) catch |e| {
@@ -3453,7 +3462,7 @@ pub const App = struct {
                         temp,
                         "/tmp/jjazy/{s}-{s}",
                         .{
-                            change.hash,
+                            change.to.hash,
                             temp_file_name,
                         },
                     );
@@ -3505,8 +3514,7 @@ pub const App = struct {
                 },
                 .open_source_file => {
                     if (self.state != .file_tree) return;
-                    const change = self.renderer.log.focused_change;
-                    const list = self.renderer.file_tree.cache.get(.{ .to = change, .from = self.file_tree_from }, .touch) orelse return;
+                    const list = self.renderer.file_tree.cache.get(self.get_change_range(), .touch) orelse return;
                     const node = list.focused_node orelse return;
                     if (node.typ != .file) return;
 
@@ -3517,16 +3525,16 @@ pub const App = struct {
                     });
                 },
                 .file_tree_collapse => |v| {
-                    const list = self.renderer.file_tree.cache.get(.{ .to = self.renderer.log.focused_change, .from = self.file_tree_from }, .touch).?;
+                    const list = self.renderer.file_tree.cache.get(self.get_change_range(), .touch).?;
                     const node = list.focused_node orelse return;
                     switch (node.typ) {
                         .file => {
                             if (v.collapse) {
                                 const is_diff = self.state.is_file_tree_diff();
-                                const only_changed = if (list.mode == .diff or list.mode == .range_diff) list.only_changed else false;
+                                const only_changed = if (list.mode.is_diff()) list.only_changed else false;
                                 const parent = try list.focus_parent(!is_diff, only_changed);
                                 if (parent == null) {
-                                    try self._handle_event(.{ .action = .switch_state_to_log });
+                                    try self._handle_event(.{ .action = .go_back_a_mode });
                                     return;
                                 }
                             }
@@ -3539,13 +3547,13 @@ pub const App = struct {
                                 }
 
                                 const is_diff = self.state.is_file_tree_diff();
-                                const only_changed = if (list.mode == .diff or list.mode == .range_diff) list.only_changed else false;
+                                const only_changed = if (list.mode.is_diff()) list.only_changed else false;
                                 const parent = try list.focus_parent(!is_diff, only_changed);
                                 if (parent) |_| {
                                     return;
                                 }
 
-                                try self._handle_event(.{ .action = .switch_state_to_log });
+                                try self._handle_event(.{ .action = .go_back_a_mode });
                             } else {
                                 node.collapsed = false;
                             }
@@ -3643,7 +3651,7 @@ pub const App = struct {
                 .file_tree => |req| {
                     switch (res.res) {
                         .file_tree => |buf| {
-                            _ = try self.renderer.file_tree.update_list(.{ .to = req.to, .from = req.from }, buf.status, buf.buf, buf.diffs);
+                            _ = try self.renderer.file_tree.update_list(req, buf.status, buf.buf, buf.diffs);
                             try self._send_event(.file_show_scroll_update);
                         },
                         .err => |buf| try self._toast(.{ .err = error.JJFileTreeFailed }, buf.buf),
@@ -3801,7 +3809,7 @@ pub const App = struct {
                         }
                     },
                     .file_tree => {
-                        const _tree = self.renderer.file_tree.cache.get(.{ .to = self.renderer.log.focused_change, .from = self.file_tree_from }, .peek);
+                        const _tree = self.renderer.file_tree.cache.get(self.get_change_range(), .peek);
                         if (_tree) |tree| {
                             hasher.update(&std.mem.toBytes(tree.y));
                             hasher.update(&std.mem.toBytes(tree.skip_y));

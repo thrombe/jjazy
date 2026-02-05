@@ -1288,6 +1288,8 @@ pub const FileTreeSlate = struct {
     diff_it: jj_mod.FileTreeDiffEntry.Parsed.Iterator,
 
     pub const FileList = struct {
+        pub const Mode = enum { list, diff, range_diff };
+
         y: i32 = 0,
         skip_y: i32 = 0,
         focused_node: ?*FileTree.Node = null,
@@ -1296,6 +1298,10 @@ pub const FileTreeSlate = struct {
         diffs: ?jj_mod.Formatted = .{},
         tree: FileTree,
         it: ?FileTree.Iterator = null,
+
+        mode: Mode = .list,
+        only_changed: bool = false,
+        full_context: bool = false,
 
         pub fn init(
             alloc: std.mem.Allocator,
@@ -1440,11 +1446,11 @@ pub const FileTreeSlate = struct {
         tree.y = @max(0, tree.y);
 
         if (tree.it == null) {
-            tree.it = try tree.tree.iterator(!is_diff_view, app.file_tree_only_changed and is_diff_view);
+            tree.it = try tree.tree.iterator(!is_diff_view, tree.only_changed and is_diff_view);
         }
         var it = &tree.it.?;
         it.skip_removed = !is_diff_view;
-        it.only_changed = app.file_tree_only_changed and is_diff_view;
+        it.only_changed = tree.only_changed and is_diff_view;
         it.reset();
         if (tree.skip_y > tree.y) {
             tree.skip_y = tree.y;

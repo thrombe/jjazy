@@ -352,11 +352,7 @@ pub const State = union(enum(u8)) {
     log,
     oplog,
     evolog,
-    file_tree: enum {
-        list,
-        diff,
-        range_diff,
-    },
+    file_tree: components_mod.FileTreeSlate.FileList.Mode,
     bookmark: enum {
         view,
         create,
@@ -1127,8 +1123,6 @@ pub const App = struct {
     state: State = .log,
     file_tree_from: ?Change = null,
     file_tree_diff_context: u32 = 30,
-    file_tree_full_context: bool = false,
-    file_tree_only_changed: bool = false,
 
     const CommandResult = struct {
         errored: bool,
@@ -2290,7 +2284,9 @@ pub const App = struct {
     }
 
     pub fn get_file_tree_context_len(self: *@This()) u32 {
-        return if (self.file_tree_full_context) 9999 else self.file_tree_diff_context;
+        const change = self.renderer.log.focused_change;
+        const full_context = if (self.renderer.file_tree.cache.get(.{ .to = change, .from = self.file_tree_from }, .touch)) |list| list.full_context else false;
+        return if (full_context) 9999 else self.file_tree_diff_context;
     }
 
     pub fn get_file_tree_show_context(self: *@This(), from: ?Change, node_status: ?jj_mod.Schema.FileTreeDiffEntry.Status) struct { from: ?Change, from_hash: ?Change.Hash, context: u32, is_diff: bool } {
@@ -2775,11 +2771,15 @@ pub const App = struct {
                     try self.jj_request(.{ .log = .{ .n = self.renderer.log.limit } });
                 },
                 .toggle_file_tree_full_context => {
-                    self.file_tree_full_context = !self.file_tree_full_context;
+                    if (self.renderer.file_tree.cache.get(.{ .to = self.renderer.log.focused_change, .from = self.file_tree_from }, .touch)) |list| {
+                        list.full_context = !list.full_context;
+                    }
                     try self._send_event(.file_show_scroll_update);
                 },
                 .toggle_file_tree_only_changed => {
-                    self.file_tree_only_changed = !self.file_tree_only_changed;
+                    if (self.renderer.file_tree.cache.get(.{ .to = self.renderer.log.focused_change, .from = self.file_tree_from }, .touch)) |list| {
+                        list.only_changed = !list.only_changed;
+                    }
                     try self._send_event(.rerender);
                 },
                 .scroll => |target| switch (target.target) {
@@ -2835,7 +2835,8 @@ pub const App = struct {
                                         .down => tree.y += 1,
                                     }
                                     const is_diff = self.state.is_file_tree_diff();
-                                    try tree.update_focused_node(!is_diff, self.file_tree_only_changed and is_diff);
+                                    const only_changed = if (self.renderer.file_tree.cache.get(.{ .to = self.renderer.log.focused_change, .from = self.file_tree_from }, .touch)) |list| list.only_changed else false;
+                                    try tree.update_focused_node(!is_diff, only_changed and is_diff);
                                     try self._send_event(.file_show_scroll_update);
                                 },
                                 else => {
@@ -2913,8 +2914,9 @@ pub const App = struct {
                     };
 
                     if (self.state == .file_tree) {
-                        if (self.file_tree_full_context) {
-                            self.file_tree_full_context = false;
+                        const change = self.renderer.log.focused_change;
+                        if (self.renderer.file_tree.cache.get(.{ .to = change, .from = self.file_tree_from }, .touch)) |list| {
+                            list.full_context = false;
                         }
                         switch (v.off) {
                             .reset => self.file_tree_diff_context = 30,
@@ -3010,7 +3012,19 @@ pub const App = struct {
                 },
                 .switch_state_to_file_tree => {
                     const change = self.renderer.log.focused_change;
-                    self.state = .{ .file_tree = .list };
+                    var mode: components_mod.FileTreeSlate.FileList.Mode = .list;
+                    if (self.state != .file_tree) {
+                        if (self.renderer.file_tree.cache.get(.{ .to = change, .from = null }, .touch)) |list| {
+                            mode = list.mode;
+                        }
+                    } else if (self.state.file_tree == .diff) {
+                        mode = .list;
+                    }
+
+                    self.state = .{ .file_tree = mode };
+                    if (self.renderer.file_tree.cache.get(.{ .to = change, .from = null }, .touch)) |list| {
+                        list.mode = mode;
+                    }
                     self.file_tree_from = null;
                     try self.jj_request(.{ .file_tree = .{ .to = change } });
                     try self._send_event(.rerender);
@@ -3018,6 +3032,9 @@ pub const App = struct {
                 .switch_state_to_file_diff => {
                     const change = self.renderer.log.focused_change;
                     self.state = .{ .file_tree = .diff };
+                    if (self.renderer.file_tree.cache.get(.{ .to = change, .from = null }, .touch)) |list| {
+                        list.mode = .diff;
+                    }
                     self.file_tree_from = null;
                     try self.jj_request(.{ .file_tree = .{ .to = change } });
                     try self._send_event(.rerender);
@@ -3506,7 +3523,8 @@ pub const App = struct {
                         .file => {
                             if (v.collapse) {
                                 const is_diff = self.state.is_file_tree_diff();
-                                const parent = try list.focus_parent(!is_diff, self.file_tree_only_changed and is_diff);
+                                const only_changed = if (list.mode == .diff or list.mode == .range_diff) list.only_changed else false;
+                                const parent = try list.focus_parent(!is_diff, only_changed);
                                 if (parent == null) {
                                     try self._handle_event(.{ .action = .switch_state_to_log });
                                     return;
@@ -3521,7 +3539,8 @@ pub const App = struct {
                                 }
 
                                 const is_diff = self.state.is_file_tree_diff();
-                                const parent = try list.focus_parent(!is_diff, self.file_tree_only_changed and is_diff);
+                                const only_changed = if (list.mode == .diff or list.mode == .range_diff) list.only_changed else false;
+                                const parent = try list.focus_parent(!is_diff, only_changed);
                                 if (parent) |_| {
                                     return;
                                 }

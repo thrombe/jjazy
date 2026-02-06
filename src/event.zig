@@ -352,7 +352,34 @@ pub const State = union(enum(u8)) {
     log,
     oplog,
     evolog,
-    file_tree: components_mod.FileTreeSlate.FileList.Mode,
+    file_tree: enum {
+        list,
+        diff,
+        range_diff,
+        search_list,
+        search_diff,
+        search_range_diff,
+
+        pub fn from(mode: components_mod.FileTreeSlate.FileList.Mode) @This() {
+            return switch (mode) {
+                .list => .list,
+                .diff => .diff,
+                .range_diff => .range_diff,
+            };
+        }
+
+        pub fn is_diff(self: @This()) bool {
+            return self == .diff or self == .range_diff or self == .search_diff or self == .search_range_diff;
+        }
+
+        pub fn base_mode(self: @This()) components_mod.FileTreeSlate.FileList.Mode {
+            return switch (self) {
+                .list, .search_list => .list,
+                .diff, .search_diff => .diff,
+                .range_diff, .search_range_diff => .range_diff,
+            };
+        }
+    },
     bookmark: enum {
         view,
         create,
@@ -2075,6 +2102,9 @@ pub const App = struct {
                 .{ .bookmark = .search_goto },
                 .{ .git = .fetch_search },
                 .{ .git = .push_search },
+                .{ .file_tree = .search_list },
+                .{ .file_tree = .search_diff },
+                .{ .file_tree = .search_range_diff },
             });
             try map.add_one(
                 .{ .functional = .{ .key = .escape } },
@@ -2167,6 +2197,9 @@ pub const App = struct {
                 .{ .bookmark = .view_goto },
                 .{ .git = .fetch },
                 .{ .git = .push },
+                .{ .file_tree = .list },
+                .{ .file_tree = .diff },
+                .{ .file_tree = .range_diff },
             });
             try map.add_one(
                 .{ .key = .{ .key = '/', .mod = .{} } },
@@ -2341,6 +2374,7 @@ pub const App = struct {
             show_help: bool = false,
             bookmarks_enabled: bool = false,
             bookmark_search_enabled: bool = false,
+            file_tree_search_enabled: bool = false,
         } = switch (self.state) {
             .new, .squash, .abandon => .{
                 .colored_gutter_cursor = true,
@@ -2402,6 +2436,10 @@ pub const App = struct {
             .oplog, .evolog, .log => .{},
             .file_tree => |state| switch (state) {
                 .list, .diff, .range_diff => .{},
+                .search_list, .search_diff, .search_range_diff => .{
+                    .file_tree_search_enabled = true,
+                    .input_text = true,
+                },
             },
             .log_range_diff => .{
                 .colored_gutter_cursor = true,
@@ -2715,6 +2753,21 @@ pub const App = struct {
                             },
                             else => {},
                         },
+                        .file_tree => |s| switch (s) {
+                            .list => {
+                                self.state = .{ .file_tree = .search_list };
+                                return;
+                            },
+                            .diff => {
+                                self.state = .{ .file_tree = .search_diff };
+                                return;
+                            },
+                            .range_diff => {
+                                self.state = .{ .file_tree = .search_range_diff };
+                                return;
+                            },
+                            else => {},
+                        },
                         else => {},
                     }
 
@@ -2745,6 +2798,30 @@ pub const App = struct {
                             },
                             .fetch_new => {
                                 self.state = .{ .git = .fetch };
+                                return;
+                            },
+                            else => {},
+                        },
+                        .file_tree => |s| switch (s) {
+                            .search_list, .search_diff, .search_range_diff => {
+                                self.state = .{ .file_tree = .from(self.state.file_tree.base_mode()) };
+
+                                if (self.renderer.file_tree.cache.get(self.get_change_range(), .touch)) |list| {
+                                    if (v.reset) {
+                                        if (list.initial_y) |y| list.y = y;
+                                        for (list.search_expanded_nodes.items) |node| {
+                                            node.collapsed = true;
+                                        }
+                                    }
+                                    list.initial_y = null;
+                                    list.search_expanded_nodes.clearRetainingCapacity();
+
+                                    const is_diff = self.state.file_tree.is_diff();
+                                    const only_changed = if (list.mode.is_diff()) list.only_changed else false;
+                                    try list.update_focused_node(!is_diff, only_changed);
+                                }
+                                self.renderer.text_input.reset();
+                                try self._send_event(.file_show_scroll_update);
                                 return;
                             },
                             else => {},
@@ -3026,7 +3103,13 @@ pub const App = struct {
                     switch (self.state) {
                         .log => {
                             if (self.renderer.file_tree.cache.get(self.get_change_range(), .touch)) |list| {
-                                self.state = .{ .file_tree = list.mode };
+                                self.state = .{
+                                    .file_tree = switch (list.mode) {
+                                        .list => .list,
+                                        .diff => .diff,
+                                        .range_diff => .range_diff,
+                                    },
+                                };
                             } else {
                                 self.state = .{ .file_tree = .list };
                             }
@@ -3050,7 +3133,7 @@ pub const App = struct {
                     }
 
                     if (self.renderer.file_tree.cache.get(self.get_change_range(), .touch)) |list| {
-                        list.mode = self.state.file_tree;
+                        list.mode = self.state.file_tree.base_mode();
                     }
                     try self.jj_request(.{ .file_tree = self.get_change_range() });
                     try self._send_event(.rerender);

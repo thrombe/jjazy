@@ -1192,15 +1192,16 @@ pub const FileTree = struct {
         Sorter.sort(&self.root);
     }
 
-    pub fn iterator(self: *@This(), skip_removed: bool, only_changed: bool) !Iterator {
-        var indices = try std.ArrayListUnmanaged(Iterator.IterNode).initCapacity(self.alloc, self.height + 1);
+    pub fn iterator(self: *@This(), skip_removed: bool, only_changed: bool, ignore_collapsed: bool, alloc: std.mem.Allocator) !Iterator {
+        var indices = try std.ArrayListUnmanaged(Iterator.IterNode).initCapacity(alloc, self.height + 1);
         indices.appendAssumeCapacity(.{ .node = &self.root, .index = 0, .iter_index = 0 });
         return .{
-            .alloc = self.alloc,
+            .alloc = alloc,
             .root = &self.root,
             .indices = indices,
             .skip_removed = skip_removed,
             .only_changed = only_changed,
+            .ignore_collapsed = ignore_collapsed,
         };
     }
 
@@ -1215,6 +1216,7 @@ pub const FileTree = struct {
         indices: std.ArrayListUnmanaged(IterNode),
         skip_removed: bool,
         only_changed: bool,
+        ignore_collapsed: bool,
 
         const IterNode = struct {
             node: *Node,
@@ -1232,7 +1234,7 @@ pub const FileTree = struct {
                 var frame = if (self.indices.items.len > 0) &self.indices.items[self.indices.items.len - 1] else return null;
 
                 // Otherwise try to descend into children
-                if (frame.node.children.items.len > frame.index and !frame.node.collapsed) {
+                if (frame.node.children.items.len > frame.index and (!frame.node.collapsed or self.ignore_collapsed)) {
                     // Push next child
                     const child = &frame.node.children.items[frame.index];
                     frame.index += 1;
@@ -1287,6 +1289,10 @@ pub const FileTreeSlate = struct {
     it: jj_mod.FileTreeEntry.Parsed.Iterator,
     diff_it: jj_mod.FileTreeDiffEntry.Parsed.Iterator,
 
+    input_hash: u64 = 0,
+    searcher: search_mod.SublimeSearcher,
+    search_collector: search_mod.SearchCollector,
+
     pub const FileList = struct {
         pub const Mode = enum {
             list,
@@ -1308,6 +1314,8 @@ pub const FileTreeSlate = struct {
         it: ?FileTree.Iterator = null,
 
         mode: Mode = .list,
+        initial_y: ?i32 = null,
+        search_expanded_nodes: std.ArrayList(*FileTree.Node) = undefined,
         only_changed: bool = false,
         full_context: bool = false,
 
@@ -1335,6 +1343,7 @@ pub const FileTreeSlate = struct {
                 .change_status = change_status,
                 .files = files,
                 .tree = tree,
+                .search_expanded_nodes = std.ArrayList(*FileTree.Node).init(alloc),
             };
         }
 
@@ -1342,13 +1351,14 @@ pub const FileTreeSlate = struct {
             alloc.free(self.change_status.buf);
             alloc.free(self.files.buf);
             if (self.diffs) |diff| alloc.free(diff.buf);
+            self.search_expanded_nodes.deinit();
             self.tree.deinit();
             if (self.it) |*it| it.deinit();
         }
 
         pub fn update_focused_node(self: *@This(), skip_removed: bool, only_changed: bool) !void {
             if (self.it == null) {
-                self.it = try self.tree.iterator(skip_removed, only_changed);
+                self.it = try self.tree.iterator(skip_removed, only_changed, false, self.tree.alloc);
             }
             var it = &self.it.?;
             it.skip_removed = skip_removed;
@@ -1366,7 +1376,7 @@ pub const FileTreeSlate = struct {
 
         pub fn focus_parent(self: *@This(), skip_removed: bool, only_changed: bool) !?*const FileTree.Node {
             if (self.it == null) {
-                self.it = try self.tree.iterator(skip_removed, only_changed);
+                self.it = try self.tree.iterator(skip_removed, only_changed, false, self.tree.alloc);
             }
             var it = &self.it.?;
             it.skip_removed = skip_removed;
@@ -1404,6 +1414,8 @@ pub const FileTreeSlate = struct {
         self.cache.deinit();
         self.it.deinit();
         self.diff_it.deinit();
+        self.searcher.deinit();
+        self.search_collector.deinit();
     }
 
     pub fn update_list(self: *@This(), ctx: RangeContext, change_status: jj_mod.Formatted, files: jj_mod.Formatted, diffs: ?jj_mod.Formatted) !*FileList {
@@ -1440,11 +1452,108 @@ pub const FileTreeSlate = struct {
         return list;
     }
 
+    fn maybe_update_search(self: *@This(), renderer: *Renderer, list: *FileList, skip_removed: bool, only_changed: bool, height: i32, temp: std.mem.Allocator) !void {
+        const query = renderer.text_input.text.items;
+        if (self.input_hash == std.hash.Wyhash.hash(0, query)) return;
+        self.input_hash = std.hash.Wyhash.hash(0, query);
+
+        // Revert previous expansions
+        for (list.search_expanded_nodes.items) |node| {
+            node.collapsed = true;
+        }
+        list.search_expanded_nodes.clearRetainingCapacity();
+
+        if (query.len == 0) return;
+
+        if (list.initial_y == null) {
+            list.initial_y = list.y;
+        }
+
+        // Collect all paths (including hidden ones)
+        var collect_it = try list.tree.iterator(skip_removed, only_changed, true, temp);
+        defer collect_it.deinit();
+
+        var paths = std.ArrayList([]const u8).init(temp);
+        defer paths.deinit();
+
+        while (collect_it.next()) |entry| {
+            try paths.append(entry.node.path);
+        }
+
+        // Find best match
+        var best_score: i32 = std.math.minInt(i32);
+        var best_index: i32 = -1;
+
+        for (paths.items, 0..) |path, i| {
+            const match = try self.searcher.best_match(path, query, .insensitive);
+            if (match) |m| {
+                if (m.score > best_score) {
+                    best_score = m.score;
+                    best_index = @intCast(i);
+                }
+            }
+        }
+
+        if (best_index > -1) {
+            // Found a match. Identify node and expand parents.
+            var expand_it = try list.tree.iterator(skip_removed, only_changed, true, temp);
+            defer expand_it.deinit();
+
+            var count: i32 = 0;
+            var target_node: *FileTree.Node = undefined;
+
+            while (expand_it.next()) |entry| {
+                if (count == best_index) {
+                    target_node = entry.node;
+                    // Expand parents
+                    for (expand_it.indices.items) |frame| {
+                        if (frame.node.collapsed) {
+                            frame.node.collapsed = false;
+                            try list.search_expanded_nodes.append(frame.node);
+                        }
+                        if (frame.node == target_node) break;
+                    }
+                    break;
+                }
+                count += 1;
+            }
+
+            // Find visible index (y) of target_node
+            var visible_it = try list.tree.iterator(skip_removed, only_changed, false, temp);
+            defer visible_it.deinit();
+
+            count = 0;
+            while (visible_it.next()) |entry| {
+                if (entry.node == target_node) {
+                    list.y = count;
+
+                    // Only scroll if out of view
+                    const visible_start = list.skip_y;
+                    const visible_end = list.skip_y + height;
+
+                    if (list.y < visible_start or list.y >= visible_end) {
+                        const half_height = @divTrunc(height, 2);
+                        list.skip_y = @max(0, list.y - half_height);
+                    }
+                    break;
+                }
+                count += 1;
+            }
+        } else if (query.len > 0) {
+            // No match found, revert cursor to initial position
+            if (list.initial_y) |y| {
+                list.y = y;
+            }
+        }
+    }
+
     fn render(
         self: *@This(),
         surface: *Surface,
         renderer: *Renderer,
         app: *App,
+        tropes: anytype,
+        temp: std.mem.Allocator,
     ) !void {
         defer while (self.cache.retaining_pop(100)) |e| {
             var val = e.val;
@@ -1458,11 +1567,17 @@ pub const FileTreeSlate = struct {
         tree.y = @max(0, tree.y);
 
         if (tree.it == null) {
-            tree.it = try tree.tree.iterator(!is_diff_view, tree.only_changed and is_diff_view);
+            tree.it = try tree.tree.iterator(!is_diff_view, tree.only_changed and is_diff_view, false, tree.tree.alloc);
         }
         var it = &tree.it.?;
         it.skip_removed = !is_diff_view;
         it.only_changed = tree.only_changed and is_diff_view;
+
+        // Update search and move cursor to best match
+        if (tropes.file_tree_search_enabled) {
+            try self.maybe_update_search(renderer, tree, it.skip_removed, it.only_changed, @intCast(surface.region.size.y), temp);
+        }
+
         it.reset();
         if (tree.skip_y > tree.y) {
             tree.skip_y = tree.y;
@@ -1754,6 +1869,8 @@ pub const Renderer = struct {
                 .cache = .init(alloc),
                 .it = .init(alloc, &.{}),
                 .diff_it = .init(alloc, &.{}),
+                .searcher = .init(alloc, .{}),
+                .search_collector = .init(alloc),
             },
             .file_show = .{
                 .alloc = alloc,
@@ -1889,7 +2006,15 @@ pub const Renderer = struct {
                     try self.opshow.render(&diffs, app, self.oplog.focused_op);
                 },
                 .file_tree => {
-                    try self.file_tree.render(&status, self, app);
+                    if (tropes.file_tree_search_enabled) {
+                        var search_box = try status.split_y(-3, .none, .top);
+                        try search_box.clear();
+                        try search_box.draw_border(symbols.thin.rounded);
+                        try search_box.draw_border_heading(" Search ");
+                        try self.text_input.draw(&search_box, true);
+                    }
+
+                    try self.file_tree.render(&status, self, app, tropes, temp);
                     if (self.file_tree.cache.get(app.get_change_range(), .touch)) |tree| {
                         const res = app.get_file_tree_show_context(app.file_tree_from, if (tree.focused_node) |node| node.status else null);
                         try self.file_show.render(&diffs, app, self.log.focused_change, res.from, tree.get_focused_file(), res.context);

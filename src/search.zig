@@ -1,7 +1,7 @@
 const std = @import("std");
 const utils = @import("utils.zig");
 
-const CaseSensitivity = enum {
+pub const CaseSensitivity = enum {
     sensitive,
     insensitive,
 };

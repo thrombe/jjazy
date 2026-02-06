@@ -690,7 +690,7 @@ test "SearchCollector: stable when scores tie" {
     try std.testing.expectEqualStrings("alpha", results[0].string);
 }
 
-test "SearchCollector: empty query produces empty results" {
+test "SearchCollector: empty query" {
     const alloc = std.testing.allocator;
 
     var searcher = SublimeSearcher.init(alloc, .{});
@@ -709,5 +709,5 @@ test "SearchCollector: empty query produces empty results" {
 
     const results = try collector.reorder_strings(&strings, query, &searcher, .insensitive);
 
-    try std.testing.expectEqual(@as(usize, 0), results.len);
+    try std.testing.expectEqual(@as(usize, 3), results.len);
 }

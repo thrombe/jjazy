@@ -76,15 +76,15 @@ pub const action_help = [_]struct {
     },
     .{
         .action = .{ .scroll = .{ .target = .diff, .dir = .down } },
-        .help = "Scroll up diff",
+        .help = "Scroll down diff",
     },
     .{
         .action = .{ .scroll = .{ .target = .diff, .dir = .up, .pan = true } },
-        .help = "Scroll up diff",
+        .help = "Pan up diff",
     },
     .{
         .action = .{ .scroll = .{ .target = .diff, .dir = .down, .pan = true } },
-        .help = "Scroll up diff",
+        .help = "Pan down diff",
     },
     .{
         .action = .{ .resize_master = .left },
@@ -346,6 +346,14 @@ pub const action_help = [_]struct {
         .action = .toggle_file_tree_full_context,
         .help = "Toggle full context in file tree diff",
     },
+    .{
+        .action = .focus_file_tree_content,
+        .help = "Focus file content",
+    },
+    .{
+        .action = .focus_file_tree_list,
+        .help = "Focus file list",
+    },
 };
 
 pub const State = union(enum(u8)) {
@@ -356,6 +364,11 @@ pub const State = union(enum(u8)) {
         list,
         diff,
         range_diff,
+
+        content_list,
+        content_diff,
+        content_range_diff,
+
         search_list,
         search_diff,
         search_range_diff,
@@ -369,14 +382,14 @@ pub const State = union(enum(u8)) {
         }
 
         pub fn is_diff(self: @This()) bool {
-            return self == .diff or self == .range_diff or self == .search_diff or self == .search_range_diff;
+            return self == .diff or self == .range_diff or self == .search_diff or self == .search_range_diff or self == .content_diff or self == .content_range_diff;
         }
 
         pub fn base_mode(self: @This()) components_mod.FileTreeSlate.FileList.Mode {
             return switch (self) {
-                .list, .search_list => .list,
-                .diff, .search_diff => .diff,
-                .range_diff, .search_range_diff => .range_diff,
+                .list, .search_list, .content_list => .list,
+                .diff, .search_diff, .content_diff => .diff,
+                .range_diff, .search_range_diff, .content_range_diff => .range_diff,
             };
         }
     },
@@ -515,6 +528,8 @@ pub const Action = union(enum) {
     start_range_diff,
     toggle_file_tree_full_context,
     toggle_file_tree_only_changed,
+    focus_file_tree_content,
+    focus_file_tree_list,
 };
 
 pub const JujutsuServer = struct {
@@ -1389,6 +1404,9 @@ pub const App = struct {
                 .{ .file_tree = .list },
                 .{ .file_tree = .diff },
                 .{ .file_tree = .range_diff },
+                .{ .file_tree = .content_list },
+                .{ .file_tree = .content_diff },
+                .{ .file_tree = .content_range_diff },
                 .command,
                 .{ .bookmark = .view },
                 .{ .bookmark = .view_goto },
@@ -1432,6 +1450,9 @@ pub const App = struct {
                 .{ .file_tree = .list },
                 .{ .file_tree = .diff },
                 .{ .file_tree = .range_diff },
+                .{ .file_tree = .content_list },
+                .{ .file_tree = .content_diff },
+                .{ .file_tree = .content_range_diff },
                 .{ .bookmark = .view },
                 .{ .bookmark = .view_goto },
                 .{ .bookmark = .search },
@@ -1529,6 +1550,13 @@ pub const App = struct {
                 .{ .scroll = .{ .target = .log, .dir = .up } },
             );
 
+            // we need the mouse scrolls for these, but not the rest
+            try map.for_states(&[_]State{
+                .{ .file_tree = .content_list },
+                .{ .file_tree = .content_diff },
+                .{ .file_tree = .content_range_diff },
+            });
+
             try map.add_many(
                 &[_]Key{
                     .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .press } },
@@ -1572,6 +1600,9 @@ pub const App = struct {
                 .{ .file_tree = .list },
                 .{ .file_tree = .diff },
                 .{ .file_tree = .range_diff },
+                .{ .file_tree = .content_list },
+                .{ .file_tree = .content_diff },
+                .{ .file_tree = .content_range_diff },
                 .{ .rebase = .onto },
                 .{ .rebase = .after },
                 .{ .rebase = .before },
@@ -1583,23 +1614,6 @@ pub const App = struct {
                 .abandon,
                 .log_range_diff,
             });
-
-            try map.add_many(
-                &[_]Key{
-                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .press } },
-                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .repeat } },
-                },
-                .diff,
-                .{ .scroll = .{ .target = .diff, .dir = .up } },
-            );
-            try map.add_many(
-                &[_]Key{
-                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .press } },
-                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .repeat } },
-                },
-                .diff,
-                .{ .scroll = .{ .target = .diff, .dir = .down } },
-            );
 
             try map.add_many(
                 &[_]Key{
@@ -1620,23 +1634,6 @@ pub const App = struct {
 
             try map.add_many(
                 &[_]Key{
-                    .{ .functional = .{ .key = .up, .action = .press } },
-                    .{ .functional = .{ .key = .up, .action = .repeat } },
-                },
-                null,
-                .{ .scroll = .{ .target = .diff, .dir = .up } },
-            );
-            try map.add_many(
-                &[_]Key{
-                    .{ .functional = .{ .key = .down, .action = .press } },
-                    .{ .functional = .{ .key = .down, .action = .repeat } },
-                },
-                null,
-                .{ .scroll = .{ .target = .diff, .dir = .down } },
-            );
-
-            try map.add_many(
-                &[_]Key{
                     .{ .key = .{ .key = 'h', .action = .press, .mod = .{ .ctrl = true } } },
                     .{ .key = .{ .key = 'h', .action = .repeat, .mod = .{ .ctrl = true } } },
                 },
@@ -1650,6 +1647,40 @@ pub const App = struct {
                 },
                 null,
                 .{ .resize_master = .right },
+            );
+
+            try map.add_many(
+                &[_]Key{
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .press } },
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_up, .action = .repeat } },
+                },
+                .diff,
+                .{ .scroll = .{ .target = .diff, .dir = .up } },
+            );
+            try map.add_many(
+                &[_]Key{
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .press } },
+                    .{ .mouse = .{ .pos = .{}, .key = .scroll_down, .action = .repeat } },
+                },
+                .diff,
+                .{ .scroll = .{ .target = .diff, .dir = .down } },
+            );
+
+            try map.add_many(
+                &[_]Key{
+                    .{ .functional = .{ .key = .up, .action = .press } },
+                    .{ .functional = .{ .key = .up, .action = .repeat } },
+                },
+                null,
+                .{ .scroll = .{ .target = .diff, .dir = .up } },
+            );
+            try map.add_many(
+                &[_]Key{
+                    .{ .functional = .{ .key = .down, .action = .press } },
+                    .{ .functional = .{ .key = .down, .action = .repeat } },
+                },
+                null,
+                .{ .scroll = .{ .target = .diff, .dir = .down } },
             );
 
             try map.add_many(
@@ -1687,6 +1718,9 @@ pub const App = struct {
                 .log_range_diff,
                 .{ .file_tree = .diff },
                 .{ .file_tree = .range_diff },
+                .{ .file_tree = .content_list },
+                .{ .file_tree = .content_diff },
+                .{ .file_tree = .content_range_diff },
             });
 
             try map.add_many(
@@ -1940,6 +1974,7 @@ pub const App = struct {
                 .{ .file_tree = .diff },
                 .{ .file_tree = .range_diff },
             });
+
             try map.add_one(
                 .{ .key = .{ .key = 'h' } },
                 null,
@@ -1950,6 +1985,48 @@ pub const App = struct {
                 null,
                 .{ .file_tree_collapse = .{ .collapse = false } },
             );
+        }
+        {
+            defer map.reset();
+            try map.for_states(&[_]State{
+                .{ .file_tree = .content_list },
+                .{ .file_tree = .content_diff },
+                .{ .file_tree = .content_range_diff },
+            });
+
+            try map.add_one(
+                .{ .key = .{ .key = 'h' } },
+                null,
+                .focus_file_tree_list,
+            );
+
+            try map.add_many(
+                &[_]Key{
+                    .{ .key = .{ .key = 'j', .action = .press } },
+                    .{ .key = .{ .key = 'j', .action = .repeat } },
+                },
+                null,
+                .{ .scroll = .{ .target = .diff, .dir = .down } },
+            );
+            try map.add_many(
+                &[_]Key{
+                    .{ .key = .{ .key = 'k', .action = .press } },
+                    .{ .key = .{ .key = 'k', .action = .repeat } },
+                },
+                null,
+                .{ .scroll = .{ .target = .diff, .dir = .up } },
+            );
+        }
+        {
+            defer map.reset();
+            try map.for_states(&[_]State{
+                .{ .file_tree = .list },
+                .{ .file_tree = .diff },
+                .{ .file_tree = .range_diff },
+                .{ .file_tree = .content_list },
+                .{ .file_tree = .content_diff },
+                .{ .file_tree = .content_range_diff },
+            });
             try map.add_one(
                 .{ .key = .{ .key = 'o' } },
                 null,
@@ -2435,7 +2512,7 @@ pub const App = struct {
             },
             .oplog, .evolog, .log => .{},
             .file_tree => |state| switch (state) {
-                .list, .diff, .range_diff => .{},
+                .list, .diff, .range_diff, .content_list, .content_diff, .content_range_diff => .{},
                 .search_list, .search_diff, .search_range_diff => .{
                     .file_tree_search_enabled = true,
                     .input_text = true,
@@ -3607,6 +3684,26 @@ pub const App = struct {
                         node.path,
                     });
                 },
+                .focus_file_tree_content => {
+                    self.state = .{
+                        .file_tree = switch (self.state.file_tree) {
+                            .list => .content_list,
+                            .diff => .content_diff,
+                            .range_diff => .content_range_diff,
+                            else => return,
+                        },
+                    };
+                },
+                .focus_file_tree_list => {
+                    self.state = .{
+                        .file_tree = switch (self.state.file_tree) {
+                            .content_list => .list,
+                            .content_diff => .diff,
+                            .content_range_diff => .range_diff,
+                            else => return,
+                        },
+                    };
+                },
                 .file_tree_collapse => |v| {
                     const list = self.renderer.file_tree.cache.get(self.get_change_range(), .touch).?;
                     const node = list.focused_node orelse return;
@@ -3620,6 +3717,8 @@ pub const App = struct {
                                     try self._handle_event(.{ .action = .go_back_a_mode });
                                     return;
                                 }
+                            } else {
+                                try self._handle_event(.{ .action = .focus_file_tree_content });
                             }
                         },
                         .dir => {

@@ -2023,7 +2023,7 @@ pub const Renderer = struct {
                         const indicator = if (is_content_focused) term_mod.symbols.triangle.solid.giant.right else term_mod.symbols.triangle.solid.giant.left;
                         const indicator_pos = lay_mod.Vec2{
                             .x = status.region.origin.x + status.region.size.x,
-                            .y = diffs.region.origin.y + @divFloor(diffs.region.size.y, 2),
+                            .y = diffs.region.origin.y + @divFloor(diffs.region.size.y, 2) - 1,
                         };
 
                         var split_surf = try Surface.init(&self.screen, 0, .{

@@ -2016,7 +2016,7 @@ pub const Renderer = struct {
 
                     {
                         const is_content_focused = switch (state.file_tree) {
-                            .content_list, .content_diff, .content_range_diff => true,
+                            .list_content, .diff_content, .range_diff_content => true,
                             else => false,
                         };
 

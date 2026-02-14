@@ -316,7 +316,7 @@ pub const action_help = [_]struct {
     },
     .{
         .action = .{ .file_tree_collapse = .{ .collapse = false } },
-        .help = "Uncollapse dir",
+        .help = "Uncollapse dir / Focus file content",
     },
     .{
         .action = .{ .file_tree_collapse = .{ .collapse = true } },
@@ -365,13 +365,13 @@ pub const State = union(enum(u8)) {
         diff,
         range_diff,
 
-        content_list,
-        content_diff,
-        content_range_diff,
+        list_content,
+        diff_content,
+        range_diff_content,
 
-        search_list,
-        search_diff,
-        search_range_diff,
+        list_search,
+        diff_search,
+        range_diff_search,
 
         pub fn from(mode: components_mod.FileTreeSlate.FileList.Mode) @This() {
             return switch (mode) {
@@ -382,14 +382,14 @@ pub const State = union(enum(u8)) {
         }
 
         pub fn is_diff(self: @This()) bool {
-            return self == .diff or self == .range_diff or self == .search_diff or self == .search_range_diff or self == .content_diff or self == .content_range_diff;
+            return self == .diff or self == .range_diff or self == .diff_search or self == .range_diff_search or self == .diff_content or self == .range_diff_content;
         }
 
         pub fn base_mode(self: @This()) components_mod.FileTreeSlate.FileList.Mode {
             return switch (self) {
-                .list, .search_list, .content_list => .list,
-                .diff, .search_diff, .content_diff => .diff,
-                .range_diff, .search_range_diff, .content_range_diff => .range_diff,
+                .list, .list_search, .list_content => .list,
+                .diff, .diff_search, .diff_content => .diff,
+                .range_diff, .range_diff_search, .range_diff_content => .range_diff,
             };
         }
     },
@@ -1404,9 +1404,9 @@ pub const App = struct {
                 .{ .file_tree = .list },
                 .{ .file_tree = .diff },
                 .{ .file_tree = .range_diff },
-                .{ .file_tree = .content_list },
-                .{ .file_tree = .content_diff },
-                .{ .file_tree = .content_range_diff },
+                .{ .file_tree = .list_content },
+                .{ .file_tree = .diff_content },
+                .{ .file_tree = .range_diff_content },
                 .command,
                 .{ .bookmark = .view },
                 .{ .bookmark = .view_goto },
@@ -1450,9 +1450,9 @@ pub const App = struct {
                 .{ .file_tree = .list },
                 .{ .file_tree = .diff },
                 .{ .file_tree = .range_diff },
-                .{ .file_tree = .content_list },
-                .{ .file_tree = .content_diff },
-                .{ .file_tree = .content_range_diff },
+                .{ .file_tree = .list_content },
+                .{ .file_tree = .diff_content },
+                .{ .file_tree = .range_diff_content },
                 .{ .bookmark = .view },
                 .{ .bookmark = .view_goto },
                 .{ .bookmark = .search },
@@ -1552,9 +1552,9 @@ pub const App = struct {
 
             // we need the mouse scrolls for these, but not the rest
             try map.for_states(&[_]State{
-                .{ .file_tree = .content_list },
-                .{ .file_tree = .content_diff },
-                .{ .file_tree = .content_range_diff },
+                .{ .file_tree = .list_content },
+                .{ .file_tree = .diff_content },
+                .{ .file_tree = .range_diff_content },
             });
 
             try map.add_many(
@@ -1600,9 +1600,9 @@ pub const App = struct {
                 .{ .file_tree = .list },
                 .{ .file_tree = .diff },
                 .{ .file_tree = .range_diff },
-                .{ .file_tree = .content_list },
-                .{ .file_tree = .content_diff },
-                .{ .file_tree = .content_range_diff },
+                .{ .file_tree = .list_content },
+                .{ .file_tree = .diff_content },
+                .{ .file_tree = .range_diff_content },
                 .{ .rebase = .onto },
                 .{ .rebase = .after },
                 .{ .rebase = .before },
@@ -1718,9 +1718,9 @@ pub const App = struct {
                 .log_range_diff,
                 .{ .file_tree = .diff },
                 .{ .file_tree = .range_diff },
-                .{ .file_tree = .content_list },
-                .{ .file_tree = .content_diff },
-                .{ .file_tree = .content_range_diff },
+                .{ .file_tree = .list_content },
+                .{ .file_tree = .diff_content },
+                .{ .file_tree = .range_diff_content },
             });
 
             try map.add_many(
@@ -1989,9 +1989,9 @@ pub const App = struct {
         {
             defer map.reset();
             try map.for_states(&[_]State{
-                .{ .file_tree = .content_list },
-                .{ .file_tree = .content_diff },
-                .{ .file_tree = .content_range_diff },
+                .{ .file_tree = .list_content },
+                .{ .file_tree = .diff_content },
+                .{ .file_tree = .range_diff_content },
             });
 
             try map.add_one(
@@ -2023,9 +2023,9 @@ pub const App = struct {
                 .{ .file_tree = .list },
                 .{ .file_tree = .diff },
                 .{ .file_tree = .range_diff },
-                .{ .file_tree = .content_list },
-                .{ .file_tree = .content_diff },
-                .{ .file_tree = .content_range_diff },
+                .{ .file_tree = .list_content },
+                .{ .file_tree = .diff_content },
+                .{ .file_tree = .range_diff_content },
             });
             try map.add_one(
                 .{ .key = .{ .key = 'o' } },
@@ -2179,9 +2179,9 @@ pub const App = struct {
                 .{ .bookmark = .search_goto },
                 .{ .git = .fetch_search },
                 .{ .git = .push_search },
-                .{ .file_tree = .search_list },
-                .{ .file_tree = .search_diff },
-                .{ .file_tree = .search_range_diff },
+                .{ .file_tree = .list_search },
+                .{ .file_tree = .diff_search },
+                .{ .file_tree = .range_diff_search },
             });
             try map.add_one(
                 .{ .functional = .{ .key = .escape } },
@@ -2512,8 +2512,8 @@ pub const App = struct {
             },
             .oplog, .evolog, .log => .{},
             .file_tree => |state| switch (state) {
-                .list, .diff, .range_diff, .content_list, .content_diff, .content_range_diff => .{},
-                .search_list, .search_diff, .search_range_diff => .{
+                .list, .diff, .range_diff, .list_content, .diff_content, .range_diff_content => .{},
+                .list_search, .diff_search, .range_diff_search => .{
                     .file_tree_search_enabled = true,
                     .input_text = true,
                 },
@@ -2832,15 +2832,15 @@ pub const App = struct {
                         },
                         .file_tree => |s| switch (s) {
                             .list => {
-                                self.state = .{ .file_tree = .search_list };
+                                self.state = .{ .file_tree = .list_search };
                                 return;
                             },
                             .diff => {
-                                self.state = .{ .file_tree = .search_diff };
+                                self.state = .{ .file_tree = .diff_search };
                                 return;
                             },
                             .range_diff => {
-                                self.state = .{ .file_tree = .search_range_diff };
+                                self.state = .{ .file_tree = .range_diff_search };
                                 return;
                             },
                             else => {},
@@ -2880,7 +2880,7 @@ pub const App = struct {
                             else => {},
                         },
                         .file_tree => |s| switch (s) {
-                            .search_list, .search_diff, .search_range_diff => {
+                            .list_search, .diff_search, .range_diff_search => {
                                 self.state = .{ .file_tree = .from(self.state.file_tree.base_mode()) };
 
                                 if (self.renderer.file_tree.cache.get(self.get_change_range(), .touch)) |list| {
@@ -3687,9 +3687,9 @@ pub const App = struct {
                 .focus_file_tree_content => {
                     self.state = .{
                         .file_tree = switch (self.state.file_tree) {
-                            .list => .content_list,
-                            .diff => .content_diff,
-                            .range_diff => .content_range_diff,
+                            .list => .list_content,
+                            .diff => .diff_content,
+                            .range_diff => .range_diff_content,
                             else => return,
                         },
                     };
@@ -3697,9 +3697,9 @@ pub const App = struct {
                 .focus_file_tree_list => {
                     self.state = .{
                         .file_tree = switch (self.state.file_tree) {
-                            .content_list => .list,
-                            .content_diff => .diff,
-                            .content_range_diff => .range_diff,
+                            .list_content => .list,
+                            .diff_content => .diff,
+                            .range_diff_content => .range_diff,
                             else => return,
                         },
                     };

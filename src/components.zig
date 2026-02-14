@@ -2014,6 +2014,35 @@ pub const Renderer = struct {
                         try self.text_input.draw(&search_box, true);
                     }
 
+                    {
+                        const is_content_focused = switch (state.file_tree) {
+                            .content_list, .content_diff, .content_range_diff => true,
+                            else => false,
+                        };
+
+                        const indicator = if (is_content_focused) term_mod.symbols.triangle.solid.giant.right else term_mod.symbols.triangle.solid.giant.left;
+                        const indicator_pos = lay_mod.Vec2{
+                            .x = status.region.origin.x + status.region.size.x,
+                            .y = diffs.region.origin.y + @divFloor(diffs.region.size.y, 2),
+                        };
+
+                        var split_surf = try Surface.init(&self.screen, 0, .{
+                            .origin = indicator_pos,
+                            .size = .{ .x = 1, .y = 3 },
+                        });
+
+                        if (is_content_focused) {
+                            try split_surf.apply_style(.{ .foreground_color = .from_theme(.info) });
+                            try split_surf.apply_style(.bold);
+                        } else {
+                            try split_surf.apply_style(.{ .foreground_color = .from_theme(.dim_text) });
+                        }
+                        try split_surf.draw_bufln(" ");
+                        try split_surf.draw_bufln(indicator);
+                        try split_surf.draw_bufln(" ");
+                        try split_surf.apply_style(.reset);
+                    }
+
                     try self.file_tree.render(&status, self, app, tropes, temp);
                     if (self.file_tree.cache.get(app.get_change_range(), .touch)) |tree| {
                         const res = app.get_file_tree_show_context(app.file_tree_from, if (tree.focused_node) |node| node.status else null);

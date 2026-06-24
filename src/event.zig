@@ -873,23 +873,23 @@ pub const JujutsuServer = struct {
                     } } } });
                 },
                 .file_content => |payload| {
+                    // NOTE: 'root:"<path>"' makes jj treat the path relative to repo root
                     const cmd_str = switch (payload.mode) {
-                        // NOTE: file path needs to be relative to current path instead of from repo root, but we fix this by just changing the cwd to the workspace root
-                        .plain => try std.fmt.allocPrint(temp, "jj file show -r {s} {s} | bat --color=always --style numbers,plain --file-name {s}", .{
+                        .plain => try std.fmt.allocPrint(temp, "jj file show -r {s} 'root:\"{s}\"' | bat --color=always --style numbers,plain --file-name '{s}'", .{
                             payload.to.id[0..],
                             payload.path,
                             payload.path,
                         }),
                         // jj diff -r lqo --tool delta --config merge-tools.delta.diff-args='["--diff-args=\"-U50\"", "$left", "$right"]'
                         .diff => if (payload.from) |from|
-                            try std.fmt.allocPrint(temp, "jj diff --from {s} --to {s} {s} --tool delta --config merge-tools.delta.diff-args='[\"--diff-args=-U{d}\", \"$left\", \"$right\"]'", .{
+                            try std.fmt.allocPrint(temp, "jj diff --from {s} --to {s} 'root:\"{s}\"' --tool delta --config merge-tools.delta.diff-args='[\"--diff-args=-U{d}\", \"$left\", \"$right\"]'", .{
                                 from.hash[0..],
                                 payload.to.hash[0..],
                                 payload.path,
                                 payload.context,
                             })
                         else
-                            try std.fmt.allocPrint(temp, "jj diff -r {s} {s} --tool delta --config merge-tools.delta.diff-args='[\"--diff-args=-U{d}\", \"$left\", \"$right\"]'", .{
+                            try std.fmt.allocPrint(temp, "jj diff -r {s} 'root:\"{s}\"' --tool delta --config merge-tools.delta.diff-args='[\"--diff-args=-U{d}\", \"$left\", \"$right\"]'", .{
                                 payload.to.id[0..],
                                 payload.path,
                                 payload.context,

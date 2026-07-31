@@ -30,7 +30,7 @@ pub const Schema = struct {
         end: []const u8,
     };
 
-    pub const Tags = struct {
+    pub const Attributes = struct {
         args: ?[]const u8 = null,
     };
 
@@ -42,7 +42,8 @@ pub const Schema = struct {
         hostname: []const u8,
         username: []const u8,
         is_snapshot: bool,
-        tags: Tags,
+        workspace_name: ?[]const u8,
+        attributes: Attributes,
     };
 
     // TODO: make sure `[]?[]const u8` is intentional from jj's side or no.

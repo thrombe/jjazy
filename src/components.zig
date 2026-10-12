@@ -989,10 +989,18 @@ const LogSlate = struct {
 const OpLogSlate = struct {
     y: i32 = 0,
     skip_y: i32 = 0,
+    limit: u32 = limit_chunk,
     alloc: std.mem.Allocator,
     oplog: []const u8,
     ops: jj_mod.Operation.Parsed.Iterator,
     focused_op: jj_mod.Operation = .{},
+
+    const limit_chunk: u32 = 200;
+
+    pub fn calc_limit(self: *const @This(), args: struct { y: ?i32 = null }) u32 {
+        const val = @max(self.y, self.skip_y) + limit_chunk / 4;
+        return (@as(u32, @intCast(@max(0, if (args.y) |y| y else val))) / limit_chunk + 1) * limit_chunk;
+    }
 
     fn deinit(self: *@This()) void {
         self.alloc.free(self.oplog);

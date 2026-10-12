@@ -544,7 +544,7 @@ pub const JujutsuServer = struct {
 
     pub const Request = union(enum) {
         log: struct { n: u32, reset_pos: bool = false },
-        oplog: struct { reset_pos: bool = false },
+        oplog: struct { n: u32, reset_pos: bool = false },
         bookmark,
         diff: struct { change: Change, context: u32 },
         opshow: Operation,
@@ -660,7 +660,6 @@ pub const JujutsuServer = struct {
                     try self.events.send(.{ .jj = .{ .req = request.req, .res = .{ .ok = .from(res) } } });
                 },
                 .oplog => |v| {
-                    _ = v;
                     var cmd = utils_mod.Command.init(temp);
                     defer cmd.deinit();
                     _ = try cmd.add_args(&[_][]const u8{
@@ -671,6 +670,8 @@ pub const JujutsuServer = struct {
                         "log",
                         "--template",
                         Operation.Parsed.template,
+                        "--limit",
+                        try std.fmt.allocPrint(temp, "{d}", .{v.n}),
                     });
                     const res = cmd.exec_capture(self.alloc, temp) catch |e| {
                         utils_mod.dump_error(e);
@@ -2676,6 +2677,12 @@ pub const App = struct {
                     } else if (oplog.y + n < i) {
                         break;
                     }
+
+                    // lazily fetch more operations when nearing the end of what's loaded
+                    if (i > oplog.limit - 50) {
+                        oplog.limit += 200;
+                        try self.jj_request(.{ .oplog = .{ .n = oplog.limit } });
+                    }
                     i += 1;
                 }
 
@@ -2918,7 +2925,10 @@ pub const App = struct {
                 },
                 .refresh_master_content => {
                     switch (self.state) {
-                        .oplog => try self.jj_request(.{ .oplog = .{} }),
+                        .oplog => {
+                            self.renderer.oplog.limit = self.renderer.oplog.calc_limit(.{});
+                            try self.jj_request(.{ .oplog = .{ .n = self.renderer.oplog.limit } });
+                        },
                         .evolog => try self.jj_request(.{ .evolog = self.renderer.log.focused_change }),
                         else => {},
                     }
@@ -3159,7 +3169,8 @@ pub const App = struct {
                 },
                 .switch_state_to_oplog => {
                     self.state = .oplog;
-                    try self.jj_request(.{ .oplog = .{ .reset_pos = true } });
+                    self.renderer.oplog.limit = self.renderer.oplog.calc_limit(.{ .y = 0 });
+                    try self.jj_request(.{ .oplog = .{ .n = self.renderer.oplog.limit, .reset_pos = true } });
                 },
                 .switch_state_to_duplicate => {
                     self.state = .{ .duplicate = .onto };
@@ -3940,7 +3951,13 @@ pub const App = struct {
                                     } });
                                 }
                                 if (cmd.refresh_oplog) {
-                                    try self.jj_request(.{ .oplog = .{ .reset_pos = cmd.reset_oplog_pos } });
+                                    if (cmd.reset_oplog_pos) {
+                                        self.renderer.oplog.limit = self.renderer.oplog.calc_limit(.{ .y = 0 });
+                                    }
+                                    try self.jj_request(.{ .oplog = .{
+                                        .n = self.renderer.oplog.limit,
+                                        .reset_pos = cmd.reset_oplog_pos,
+                                    } });
                                 }
                             }
                         },

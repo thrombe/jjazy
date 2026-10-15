@@ -629,6 +629,18 @@ fn DiffSlate(Op: type) type {
     };
 }
 
+pub const BookmarkRow = struct {
+    name: []const u8,
+    remote: ?[]const u8 = null,
+    conflict: bool = false,
+    /// null = absent/deleted side (no commit to act on)
+    commit_id: ?[]const u8 = null,
+    description: []const u8 = "",
+    side: jj_mod.Schema.BookmarkTargetSide = .normal,
+    /// Fuzzy-search label for this row (includes all variants separately).
+    search_label: []const u8,
+};
+
 const BookmarkSlate = struct {
     alloc: std.mem.Allocator,
     buf: []const u8,
@@ -637,15 +649,14 @@ const BookmarkSlate = struct {
     skip_y: i32 = 0,
 
     arena: std.heap.ArenaAllocator,
-    bookmarks_order: std.ArrayList([]const u8),
-    // ArrayXar prevents memory wastage through realloc in arena allocators
-    bookmarks: std.StringHashMap(utils_mod.ArrayXar(jj_mod.Bookmark.Parsed, 2)),
-    selected_bookmark: ?jj_mod.Bookmark.Parsed = null,
+    rows: std.ArrayList(BookmarkRow),
+    search_labels: std.ArrayList([]const u8),
+    selected: ?BookmarkRow = null,
 
     input_hash: u64 = 0,
     bookmark_searcher: search_mod.SublimeSearcher,
     bookmark_search_collector: search_mod.SearchCollector,
-    searched_bookmarks: []const search_mod.SearchCollector.Match = &.{},
+    searched_rows: []const search_mod.SearchCollector.Match = &.{},
 
     fn init(alloc: std.mem.Allocator) @This() {
         return .{
@@ -653,8 +664,8 @@ const BookmarkSlate = struct {
             .arena = .init(alloc),
             .buf = &.{},
             .it = .init(alloc, &.{}),
-            .bookmarks_order = .init(alloc),
-            .bookmarks = .init(alloc),
+            .rows = .init(alloc),
+            .search_labels = .init(alloc),
             .bookmark_searcher = .init(alloc, .{}),
             .bookmark_search_collector = .init(alloc),
         };
@@ -663,53 +674,97 @@ const BookmarkSlate = struct {
     fn deinit(self: *@This()) void {
         self.alloc.free(self.buf);
         self.it.deinit();
-        self.bookmarks_order.deinit();
-        self.bookmarks.deinit();
+        self.rows.deinit();
+        self.search_labels.deinit();
         self.arena.deinit();
-        self.selected_bookmark = null;
+        self.selected = null;
         self.bookmark_searcher.deinit();
         self.bookmark_search_collector.deinit();
     }
 
     pub fn update(self: *@This(), buf: jj_mod.Formatted, app: *App) !void {
         self.alloc.free(self.buf);
-        self.selected_bookmark = null;
+        self.selected = null;
         self.y = 0;
+        self.skip_y = 0;
         self.buf = buf.buf;
         self.input_hash = 0;
-        try self._update_cache(app);
+        try self._update_cache();
         try self.maybe_update_search(&app.renderer);
     }
 
-    fn _update_cache(self: *@This(), app: *App) !void {
+    fn _update_cache(self: *@This()) !void {
         _ = self.arena.reset(.retain_capacity);
-        self.bookmarks_order.clearRetainingCapacity();
-        self.bookmarks.clearRetainingCapacity();
+        const arena = self.arena.allocator();
+        self.rows.clearRetainingCapacity();
+        self.search_labels.clearRetainingCapacity();
         self.it.reset(self.buf);
         while (try self.it.next()) |bookmark| {
-            if (bookmark.parsed.target.len > 1) {
-                try app._toast(.{ .err = error.ManyTargets }, try std.fmt.allocPrint(
-                    app.alloc,
-                    "bookmark {s} has {d} targets. but jjazy can only handle 1 at the moment",
-                    .{ bookmark.parsed.name, bookmark.parsed.target.len },
-                ));
+            const b = bookmark.parsed;
+            if (b.targets.len == 0) {
+                // Absent / deleted bookmark with no targets — still list it.
+                const label = try self.make_search_label(arena, b.name, b.remote, null, "");
+                try self.rows.append(.{
+                    .name = try arena.dupe(u8, b.name),
+                    .remote = if (b.remote) |r| try arena.dupe(u8, r) else null,
+                    .conflict = b.conflict,
+                    .commit_id = null,
+                    .description = "",
+                    .side = .normal,
+                    .search_label = label,
+                });
+                try self.search_labels.append(label);
                 continue;
             }
 
-            const b = try self.bookmarks.getOrPut(bookmark.parsed.name);
-            if (!b.found_existing) {
-                b.value_ptr.* = .init(self.arena.allocator());
-                try self.bookmarks_order.append(bookmark.parsed.name);
+            for (b.targets) |t| {
+                const label = try self.make_search_label(arena, b.name, b.remote, t.commit_id, t.description);
+                try self.rows.append(.{
+                    .name = try arena.dupe(u8, b.name),
+                    .remote = if (b.remote) |r| try arena.dupe(u8, r) else null,
+                    .conflict = b.conflict,
+                    .commit_id = try arena.dupe(u8, t.commit_id),
+                    .description = try arena.dupe(u8, t.description),
+                    .side = t.side,
+                    .search_label = label,
+                });
+                try self.search_labels.append(label);
             }
-            try b.value_ptr.append(bookmark);
         }
+    }
+
+    fn make_search_label(
+        self: *@This(),
+        arena: std.mem.Allocator,
+        name: []const u8,
+        remote: ?[]const u8,
+        commit_id: ?[]const u8,
+        description: []const u8,
+    ) ![]const u8 {
+        _ = self;
+        var list = std.ArrayList(u8).init(arena);
+        try list.appendSlice(name);
+        if (remote) |r| {
+            try list.append('@');
+            try list.appendSlice(r);
+        }
+        if (commit_id) |c| {
+            try list.append(' ');
+            try list.appendSlice(c[0..@min(c.len, 8)]);
+        }
+        if (description.len > 0) {
+            try list.append(' ');
+            try list.appendSlice(description);
+        }
+        return list.items;
     }
 
     fn maybe_update_search(self: *@This(), renderer: *Renderer) !void {
         if (renderer.text_input.hash == self.input_hash) return;
         self.input_hash = renderer.text_input.hash;
-        self.searched_bookmarks = try self.bookmark_search_collector.reorder_strings(
-            self.bookmarks_order.items,
+        // One search entry per row so every conflict/remote variant can match.
+        self.searched_rows = try self.bookmark_search_collector.reorder_strings(
+            self.search_labels.items,
             renderer.text_input.text.items,
             &self.bookmark_searcher,
             .insensitive,
@@ -721,17 +776,52 @@ const BookmarkSlate = struct {
         self.it.reset(self.buf);
     }
 
-    // TODO: make window width dynamic with a min size
-    fn render(self: *@This(), surface: *Surface, renderer: *Renderer, app: *App, v: struct {
-        update_search: bool = true,
-    }, include: struct {
+    const Include = struct {
         local_only: bool = true,
         remotes: bool = true,
         git_as_remote: bool = false,
-    }, show: struct {
+        /// When false, conflicted bookmarks collapse to one row (view mode).
+        /// When true, each conflict side is its own row (goto mode).
+        expand_conflicts: bool = false,
+    };
+
+    fn same_ref(a: BookmarkRow, b: BookmarkRow) bool {
+        if (!std.mem.eql(u8, a.name, b.name)) return false;
+        const ar = a.remote orelse "";
+        const br = b.remote orelse "";
+        return std.mem.eql(u8, ar, br);
+    }
+
+    fn row_included(self: *const @This(), row: BookmarkRow, include: Include, idx: usize, querying: bool) bool {
+        if (!include.local_only and row.remote == null) return false;
+        if (!include.remotes and row.remote != null) return false;
+        if (!include.git_as_remote and std.mem.eql(u8, row.remote orelse &.{}, "git")) return false;
+        // Absent remotes are noise in the list.
+        if (row.commit_id == null) return false;
+        // Collapse conflict sides unless goto-style expansion is on.
+        if (!include.expand_conflicts and row.conflict) {
+            var k: usize = 0;
+            while (k < idx) : (k += 1) {
+                const prev = if (querying)
+                    self.rows.items[self.searched_rows[k].index]
+                else
+                    self.rows.items[k];
+                if (prev.conflict and same_ref(prev, row)) return false;
+            }
+        }
+        return true;
+    }
+
+    // TODO: make window width dynamic with a min size
+    fn render(self: *@This(), surface: *Surface, renderer: *Renderer, app: *App, v: struct {
+        update_search: bool = true,
+    }, include: Include, show: struct {
         targets: bool = true,
     }) !void {
-        if (v.update_search) {
+        // Only filter via search when actively searching. Otherwise walk `rows`
+        // directly — searched_rows has been stale and hid new bookmarks.
+        const querying = v.update_search and renderer.text_input.text.items.len > 0;
+        if (querying) {
             try self.maybe_update_search(renderer);
         }
         try surface.clear();
@@ -750,49 +840,87 @@ const BookmarkSlate = struct {
 
         var ended = false;
         var i: i32 = 0;
-        for (self.searched_bookmarks, 0..) |match, j| {
-            var it = self.bookmarks.get(match.string).?.iterator(.{});
-            while (it.next()) |bookmark| {
-                if (!include.local_only and bookmark.parsed.remote == null) continue;
-                if (!include.remotes and bookmark.parsed.remote != null) continue;
-                if (!include.git_as_remote and std.mem.eql(u8, bookmark.parsed.remote orelse &.{}, "git")) continue;
 
-                defer i += 1;
-                if (self.skip_y > i) {
-                    continue;
-                }
+        const total: usize = if (querying) self.searched_rows.len else self.rows.items.len;
+        var j: usize = 0;
+        while (j < total) : (j += 1) {
+            const row = if (querying)
+                self.rows.items[self.searched_rows[j].index]
+            else
+                self.rows.items[j];
+            const at_end = j + 1 == total;
 
-                try surface.apply_style(.{ .foreground_color = .from_theme(.info) });
-                try surface.draw_buf(bookmark.parsed.name);
+            if (!self.row_included(row, include, j, querying)) {
+                ended = ended or at_end;
+                continue;
+            }
+
+            defer i += 1;
+            if (self.skip_y > i) {
+                ended = ended or at_end;
+                continue;
+            }
+
+            try surface.apply_style(.{ .foreground_color = .from_theme(.info) });
+            try surface.draw_buf(row.name);
+            try surface.apply_style(.reset);
+
+            if (row.remote) |remote| {
+                try surface.apply_style(.{ .foreground_color = .from_theme(.alt_info) });
+                try surface.draw_buf("@");
+                try surface.draw_buf(remote);
                 try surface.apply_style(.reset);
+            }
 
-                if (show.targets) for (bookmark.parsed.target) |t| if (t) |target| {
+            // Collapsed view: red "conflict" after the name. Expanded goto view:
+            // per-side +/- instead (shown with targets below).
+            if (row.conflict and !include.expand_conflicts) {
+                try surface.draw_buf(" ");
+                try surface.apply_style(.{ .foreground_color = .from_theme(.errors) });
+                try surface.draw_buf("conflict");
+                try surface.apply_style(.reset);
+            }
+
+            if (show.targets) {
+                if (include.expand_conflicts and row.conflict) {
+                    try surface.draw_buf(" ");
+                    try surface.apply_style(.{ .foreground_color = .from_theme(.errors) });
+                    try surface.draw_buf(switch (row.side) {
+                        .added => "+",
+                        .removed => "-",
+                        .normal => "?",
+                    });
+                    try surface.apply_style(.reset);
+                }
+                if (row.commit_id) |commit_id| {
+                    // Collapsed conflicts: name + marker only; sides carry commits in goto.
+                    if (include.expand_conflicts or !row.conflict) {
+                        try surface.draw_buf(" ");
+                        try surface.apply_style(.{ .foreground_color = .from_theme(.default_foreground) });
+                        try surface.draw_buf(commit_id[0..@min(commit_id.len, 8)]);
+                        try surface.apply_style(.reset);
+                    }
+                }
+                if (row.description.len > 0 and (include.expand_conflicts or !row.conflict)) {
                     try surface.draw_buf(" ");
                     try surface.apply_style(.{ .foreground_color = .from_theme(.default_foreground) });
-                    try surface.draw_buf(target[0..8]);
-                    try surface.apply_style(.reset);
-                };
-
-                if (bookmark.parsed.remote) |remote| {
-                    try surface.apply_style(.{ .foreground_color = .from_theme(.alt_info) });
-                    try surface.draw_buf(" @");
-                    try surface.draw_buf(remote);
+                    try surface.draw_buf(row.description);
                     try surface.apply_style(.reset);
                 }
-                try surface.new_line();
-
-                if (i == self.y) {
-                    self.selected_bookmark = bookmark.*;
-                    try gutter.draw_bufln("->");
-                } else {
-                    try gutter.new_line();
-                }
-
-                if (surface.is_full()) break;
             }
-            ended = ended or (it.ended() and self.searched_bookmarks.len == j + 1);
+            try surface.new_line();
+
+            if (i == self.y) {
+                self.selected = row;
+                try gutter.draw_bufln("->");
+            } else {
+                try gutter.new_line();
+            }
+
+            ended = ended or at_end;
             if (surface.is_full()) break;
         }
+        if (total == 0) ended = true;
 
         if (ended and self.y >= i and i > 0) {
             self.y = i - 1;
@@ -2091,7 +2219,7 @@ pub const Renderer = struct {
                 }
 
                 if (std.meta.eql(state, .{ .bookmark = .view_goto }) or std.meta.eql(state, .{ .bookmark = .search_goto })) {
-                    try self.bookmarks.render(&surface, self, app, .{}, .{}, .{});
+                    try self.bookmarks.render(&surface, self, app, .{}, .{ .expand_conflicts = true }, .{});
                 } else if (state == .bookmark) {
                     try self.bookmarks.render(&surface, self, app, .{
                         .update_search = state.bookmark != .create,

@@ -46,12 +46,20 @@ pub const Schema = struct {
         attributes: Attributes,
     };
 
-    // TODO: make sure `[]?[]const u8` is intentional from jj's side or no.
+    pub const BookmarkTargetSide = enum { normal, added, removed };
+
+    pub const BookmarkTarget = struct {
+        commit_id: []const u8,
+        description: []const u8 = "",
+        side: BookmarkTargetSide,
+    };
+
     pub const Bookmark = struct {
         name: []const u8,
-        target: []const ?[]const u8,
         remote: ?[]const u8 = null,
-        tracking_target: ?[]const ?[]const u8 = null,
+        conflict: bool = false,
+        present: bool = true,
+        targets: []const BookmarkTarget = &.{},
     };
 
     // - [Templating language - Jujutsu docs](https://jj-vcs.github.io/jj/latest/templates/#treeentry-type)
@@ -238,7 +246,38 @@ fn Template(typ: type, _template: []const u8, _sep: []const u8) type {
 pub const Bookmark = struct {
     pub const Parsed = Template(
         Schema.Bookmark,
-        "json(self) ++ \"" ++ template_sep.escaped ++ "\n\"",
+        \\concat(
+        \\  "{\"name\":", json(name),
+        \\  ",\"remote\":", json(remote),
+        \\  ",\"conflict\":", if(conflict, "true", "false"),
+        \\  ",\"present\":", if(present, "true", "false"),
+        \\  ",\"targets\":[",
+        \\  if(conflict,
+        \\    separate(",",
+        \\      self.removed_targets().map(|c| concat(
+        \\        "{\"commit_id\":", json(c.commit_id()),
+        \\        ",\"description\":", json(c.description().first_line()),
+        \\        ",\"side\":\"removed\"}"
+        \\      )).join(","),
+        \\      self.added_targets().map(|c| concat(
+        \\        "{\"commit_id\":", json(c.commit_id()),
+        \\        ",\"description\":", json(c.description().first_line()),
+        \\        ",\"side\":\"added\"}"
+        \\      )).join(",")
+        \\    ),
+        \\    if(normal_target,
+        \\      concat(
+        \\        "{\"commit_id\":", json(normal_target.commit_id()),
+        \\        ",\"description\":", json(normal_target.description().first_line()),
+        \\        ",\"side\":\"normal\"}"
+        \\      ),
+        \\      ""
+        \\    )
+        \\  ),
+        \\  "]}"
+        \\) ++ "
+    ++ template_sep.escaped ++
+        "\n\"",
         template_sep.sep,
     );
 };

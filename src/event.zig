@@ -252,7 +252,7 @@ pub const action_help = [_]struct {
     },
     .{
         .action = .{ .move_bookmark_to_selected = .{ .allow_backwards = true } },
-        .help = "Move selected bookmark to selected change (force)",
+        .help = "Force-move bookmark to focused change (resolves conflicts)",
     },
     .{
         .action = .apply_jj_bookmark_delete,
@@ -566,6 +566,7 @@ pub const JujutsuServer = struct {
             reset_log_pos: bool = false,
             refresh_oplog: bool = false,
             reset_oplog_pos: bool = false,
+            refresh_bookmark: bool = false,
         },
     };
 
@@ -3452,8 +3453,11 @@ pub const App = struct {
                         self.state = .log;
                     }
 
-                    const bookmark = self.renderer.bookmarks.selected_bookmark orelse return;
-                    const target = bookmark.parsed.target[0] orelse return;
+                    const row = self.renderer.bookmarks.selected orelse return;
+                    const target = row.commit_id orelse {
+                        try self._toast(.{ .err = error.AbsentBookmarkTarget }, try self.alloc.dupe(u8, "Bookmark target is absent"));
+                        return;
+                    };
 
                     try self.renderer.log.focus_commit(target);
                 },
@@ -3463,14 +3467,11 @@ pub const App = struct {
                         self.state = .log;
                     }
 
-                    const bookmark = self.renderer.bookmarks.selected_bookmark orelse return;
-
-                    // TODO: why multiple targets?
-                    if (bookmark.parsed.target.len != 1 and bookmark.parsed.target[0] != null) {
-                        try self._toast(.{ .err = error.MultipleTargetsFound }, try self.alloc.dupe(u8, "Error executing command"));
+                    const row = self.renderer.bookmarks.selected orelse return;
+                    const target = row.commit_id orelse {
+                        try self._toast(.{ .err = error.AbsentBookmarkTarget }, try self.alloc.dupe(u8, "Bookmark target is absent"));
                         return;
-                    }
-                    const target = bookmark.parsed.target[0].?;
+                    };
 
                     var cmd = utils_mod.Command.init(self.alloc);
                     errdefer cmd.deinit();
@@ -3483,7 +3484,7 @@ pub const App = struct {
                 },
                 .move_bookmark_to_selected => |v| {
                     defer self.state = .log;
-                    const bookmark = self.renderer.bookmarks.selected_bookmark orelse return;
+                    const row = self.renderer.bookmarks.selected orelse return;
 
                     var cmd = utils_mod.Command.init(self.alloc);
                     errdefer cmd.deinit();
@@ -3491,7 +3492,7 @@ pub const App = struct {
                         "jj",
                         "bookmark",
                         "move",
-                        bookmark.parsed.name,
+                        row.name,
                         "--to",
                         self.renderer.log.focused_change.id[0..],
                     });
@@ -3499,28 +3500,28 @@ pub const App = struct {
                         _ = try cmd.arg("--allow-backwards");
                     }
 
-                    try self.jj_request(.{ .command = .{ .cmd = cmd, .refresh_log = true } });
+                    try self.jj_request(.{ .command = .{ .cmd = cmd, .refresh_log = true, .refresh_bookmark = true } });
                 },
                 .apply_jj_bookmark_delete => {
                     defer self.state = .log;
-                    const bookmark = self.renderer.bookmarks.selected_bookmark orelse return;
+                    const row = self.renderer.bookmarks.selected orelse return;
                     var cmd = utils_mod.Command.init(self.alloc);
                     errdefer cmd.deinit();
-                    _ = try cmd.add_args(&[_][]const u8{ "jj", "bookmark", "delete", bookmark.parsed.name });
-                    try self.jj_request(.{ .command = .{ .cmd = cmd, .refresh_log = true } });
+                    _ = try cmd.add_args(&[_][]const u8{ "jj", "bookmark", "delete", row.name });
+                    try self.jj_request(.{ .command = .{ .cmd = cmd, .refresh_log = true, .refresh_bookmark = true } });
                 },
                 .apply_jj_bookmark_forget => |v| {
                     defer self.state = .log;
-                    const bookmark = self.renderer.bookmarks.selected_bookmark orelse return;
+                    const row = self.renderer.bookmarks.selected orelse return;
 
                     var cmd = utils_mod.Command.init(self.alloc);
                     errdefer cmd.deinit();
-                    _ = try cmd.add_args(&[_][]const u8{ "jj", "bookmark", "forget", bookmark.parsed.name });
+                    _ = try cmd.add_args(&[_][]const u8{ "jj", "bookmark", "forget", row.name });
                     if (v.include_remotes) {
                         _ = try cmd.arg("--include-remotes");
                     }
 
-                    try self.jj_request(.{ .command = .{ .cmd = cmd, .refresh_log = true } });
+                    try self.jj_request(.{ .command = .{ .cmd = cmd, .refresh_log = true, .refresh_bookmark = true } });
                 },
                 .apply_jj_bookmark_create_from_input_buffer_on_selected_change => {
                     defer {
@@ -3538,7 +3539,7 @@ pub const App = struct {
                         self.renderer.log.focused_change.id[0..],
                         self.renderer.text_input.text.items,
                     });
-                    try self.jj_request(.{ .command = .{ .cmd = cmd, .refresh_log = true } });
+                    try self.jj_request(.{ .command = .{ .cmd = cmd, .refresh_log = true, .refresh_bookmark = true } });
                 },
                 .apply_jj_git_fetch_new => {
                     defer {
@@ -3566,9 +3567,9 @@ pub const App = struct {
                         },
                     };
                     if (self.state.git == .fetch) {
-                        const bookmark = self.renderer.bookmarks.selected_bookmark orelse return;
-                        req.git_fetch.branch = bookmark.parsed.name;
-                        if (bookmark.parsed.remote) |remote| {
+                        const row = self.renderer.bookmarks.selected orelse return;
+                        req.git_fetch.branch = row.name;
+                        if (row.remote) |remote| {
                             req.git_fetch.remote = remote;
                         }
                     }
@@ -3577,7 +3578,11 @@ pub const App = struct {
                 },
                 .apply_jj_git_push_selected => |v| {
                     defer self.state = .log;
-                    const bookmark = self.renderer.bookmarks.selected_bookmark orelse return;
+                    const row = self.renderer.bookmarks.selected orelse return;
+                    if (row.conflict) {
+                        try self._toast(.{ .err = error.ConflictedBookmark }, try self.alloc.dupe(u8, "Resolve bookmark conflict before pushing"));
+                        return;
+                    }
 
                     var req = JujutsuServer.Request{
                         .git_push = .{
@@ -3586,10 +3591,10 @@ pub const App = struct {
                             .allow_new = false,
                         },
                     };
-                    req.git_push.branch = bookmark.parsed.name;
+                    req.git_push.branch = row.name;
                     if (v.allow_new) {
                         req.git_push.allow_new = true;
-                    } else if (bookmark.parsed.remote) |remote| {
+                    } else if (row.remote) |remote| {
                         req.git_push.remote = remote;
                     }
                     try self.jj_toasted_request(req, "Pushing to remote...");
@@ -3958,6 +3963,9 @@ pub const App = struct {
                                         .n = self.renderer.oplog.limit,
                                         .reset_pos = cmd.reset_oplog_pos,
                                     } });
+                                }
+                                if (cmd.refresh_bookmark) {
+                                    try self.jj_request(.bookmark);
                                 }
                             }
                         },

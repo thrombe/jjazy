@@ -294,6 +294,8 @@ pub const Change = struct {
         template_sep.sep,
     );
 
+    pub const evlog_template = "json(commit) ++ \"" ++ template_sep.escaped ++ "\" ++ builtin_log_compact(commit) ++ builtin_op_log_compact(operation)";
+
     pub fn from_parsed(parsed: *const Parsed) @This() {
         var self: @This() = .{};
         @memcpy(self.id[0..], parsed.parsed.change_id[0..self.id.len]);

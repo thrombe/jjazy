@@ -689,7 +689,7 @@ pub const JujutsuServer = struct {
                         "always",
                         "evolog",
                         "--template",
-                        Change.Parsed.template,
+                        Change.evlog_template,
                         "-r",
                         change.id[0..],
                         "--stat",
